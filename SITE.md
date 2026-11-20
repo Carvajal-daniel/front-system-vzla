@@ -468,3 +468,12 @@ Entregue em poucas linhas:
 ## 22. Diretriz Final
 
 Não entregue um template. Entregue uma obra digital funcional, verificada e inconfundível para a marca, com liberdade criativa dentro de padrões rigorosos de qualidade. Server Components por padrão, Client Components quando necessários, simplicidade na arquitetura e performance comprovada por medição. Se o resultado puder ser confundido com a saída de uma IA comum, ou se uma seção puder ser trocada de site sem ninguém perceber, refaça.
+
+---
+
+## 23. Direção Visual Vigente do Projeto — Clean & Minimalista + Multi-Tema
+
+- **Estética pública e auth:** Design System Clean & Minimalista de inspiração editorial moderna, com alto contraste claro/escuro, botões *pill* (`rounded-full`), *bento cards* com elevação suave no hover e tipografia **`Plus Jakarta Sans`** (interface/títulos) + **`Geist Mono`** (horários, preços, durações e comissões com `tabular-nums`).
+- **Arquitetura de Dashboard SaaS:** Sidebar fixa à esquerda no desktop (e *bottom tab bar* com até 5 itens no mobile), topbar limpa com alternância rápida Claro/Escuro + seletor visual de paleta, **cards de KPI no topo**, agenda limpa e **gaveta lateral deslizante (*slide-over drawer*)** para criação, edição, reagendamento e vínculos sem perder o contexto da lista.
+- **Personalização Visual (Light/Dark + 5 Paletas exclusivas nos Dashboards):** Modo Claro e Modo Escuro com 5 paletas curadas sem tons de marrom (`cobalt` [padrão inicial no modo claro], `rose`, `emerald`, `velvet`, `obsidian`), aplicadas exclusivamente via `data-palette` e `.dark` nos wrappers dos dashboards (`/owner/*` e `/collaborator/*`), mantendo a Landing Page (`/`) e `/login`/`/register` com identidade fixa editorial monocromática (`front.jpg`).
+- **Animações Modernas e Parallax:** `<ParallaxLayer>` (scroll via `requestAnimationFrame`) e `<RevealOnScroll>` (`IntersectionObserver`), elevação sutil de cards no hover e abertura fluida de drawers/modais, sempre subordinadas a `prefers-reduced-motion`.
