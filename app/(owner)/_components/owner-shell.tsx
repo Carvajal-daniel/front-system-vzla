@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
+import { Toaster } from "sonner";
 import {
   Ban,
   CalendarDays,
@@ -57,8 +58,19 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   ];
   const navItems = navGroups.flatMap((group) => group.items);
 
-  const isActive = (href: string) =>
-      href === "/owner" ? pathname === "/owner" : pathname === href || pathname.startsWith(`${href}/`);
+  const isActive = (href: string) => {
+    if (href === "/owner") return pathname === "/owner";
+    // Mantém o item Equipe destacado nas rotas individuais /owner/collaborators/[id] e /owner/team/[id]
+    if (href === "/owner/team") {
+      return (
+        pathname === "/owner/team" ||
+        pathname.startsWith("/owner/team/") ||
+        pathname === "/owner/collaborators" ||
+        pathname.startsWith("/owner/collaborators/")
+      );
+    }
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
 
   const activeItem = navItems.find((item) => isActive(item.href)) ?? navItems[0];
 
@@ -283,6 +295,9 @@ export function OwnerShell({ children }: { children: ReactNode }) {
           })}
         </div>
       </nav>
+
+      {/* Toaster sincronizado com o tema claro/escuro do shell */}
+      <Toaster theme={mode} richColors position="bottom-right" />
     </div>
   );
 }

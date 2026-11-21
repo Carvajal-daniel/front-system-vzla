@@ -1,395 +1,182 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import {
-  CalendarClock,
-  Check,
-  CheckCircle2,
-  Loader2,
-  MoreVertical,
-  UserX,
-  XCircle,
-  Wallet,
-} from "lucide-react";
-import {
-  formatDuration,
-  formatPriceFromCents,
-  formatTimeInTimezone,
-} from "@/lib/format";
+import { useId } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { CalendarClock, ClipboardList, Clock3, MoreHorizontal, Wallet } from "lucide-react";
+import { isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, whatsAppReminder } from "@/lib/agenda";
+import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
-import type {
-  Appointment,
-  AppointmentStatus,
-  UpdatableAppointmentStatus,
-} from "@/lib/types/appointment";
-import {
-  appointmentStatusTone,
-  StatusBadge,
-} from "@/components/ui/status-badge";
-
-const PILL_CLASS_BY_STATUS: Record<AppointmentStatus, string> = {
-  CONFIRMED: "bg-[#0D9488] text-white",
-  PENDING: "bg-[#F59E0B] text-white",
-  COMPLETED: "bg-[#4F46E5] text-white",
-  CANCELED: "bg-[#E11D48] text-white",
-  NO_SHOW: "bg-[#64748B] text-white",
-};
-
-const AVATAR_TINTS = [
-  "bg-blue-500/15 text-blue-700 dark:text-blue-300",
-  "bg-teal-500/15 text-teal-700 dark:text-teal-300",
-  "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-  "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-  "bg-amber-500/15 text-amber-800 dark:text-amber-300",
-];
+import { agendaStrings } from "@/lib/i18n/agenda";
+import { useTheme } from "@/lib/theme-context";
+import type { Appointment, UpdatableAppointmentStatus } from "@/lib/types/appointment";
+import type { PaymentMethod } from "@/lib/types/finance";
+import { AgendaDialog, ProfessionalAvatar } from "./agenda-controls";
+import type { AgendaPerson } from "./agenda-controls";
+import { AgendaStatusBadge, PaidBadge } from "./agenda-status";
 
 export function getClientInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? `${words[0][0]}${words.at(-1)![0]}` : words[0]?.slice(0, 2) ?? "?").toUpperCase();
 }
 
-export function getAvatarTint(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
-  }
-  return AVATAR_TINTS[Math.abs(hash) % AVATAR_TINTS.length];
-}
+export type AgendaPayment = {
+  appointmentId: string; currency: string; collectedInCents: number; netInCents: number;
+  openInCents: number; canCollect: boolean; methods: PaymentMethod[];
+};
 
-export function formatShortDayMonth(
-  iso: string,
-  timeZone: string,
-  locale: string,
-): string {
-  return new Intl.DateTimeFormat(locale, {
-    timeZone,
-    day: "2-digit",
-    month: "short",
-  }).format(new Date(iso));
-}
+type AppointmentActions = {
+  onStatusChange: (status: UpdatableAppointmentStatus) => void;
+  onCancel: () => void;
+  onReschedule?: () => void;
+};
 
-interface AgendaCardProps {
-  appointment: Appointment;
-  timezone: string;
-  currency?: string;
-  onOpenPayments?: () => void;
-  collaboratorName?: string;
-  collaboratorAvatarUrl?: string | null;
-  commissionLabel?: string;
-  busy: boolean;
-  highlighted: boolean;
-  onStatusChange: (
-    appointmentId: string,
-    nextStatus: UpdatableAppointmentStatus,
-  ) => void;
-  onRequestCancel: (appointment: Appointment) => void;
-  onReschedule?: (appointment: Appointment) => void;
-}
+export type AgendaItemProps = {
+  appointment: Appointment; timezone: string; currency: string; person?: AgendaPerson; now: number;
+  busy: boolean; actions: AppointmentActions; payment?: AgendaPayment; paymentError?: boolean;
+  onPayments?: () => void; commissionLabel?: string;
+};
 
-/**
- * Card de agendamento refinado: pill superior colorido por status, hierarquia
- * tipográfica equilibrada (medium/semibold), foto real do profissional, exibição
- * discreta do motivo de cancelamento e ações rápidas apenas em turnos ativos.
- */
-export function AgendaCard({
-  appointment,
-  timezone,
-  currency,
-  onOpenPayments,
-  collaboratorName,
-  collaboratorAvatarUrl,
-  commissionLabel,
-  busy,
-  highlighted,
-  onStatusChange,
-  onRequestCancel,
-  onReschedule,
-}: AgendaCardProps) {
+function AgendaActions({ appointment, now, timezone, busy, actions, inline }: AgendaItemProps & { inline?: boolean }) {
   const { locale, t } = useLocale();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [observedNow, setObservedNow] = useState(0);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const completionHintId = useId();
-  const startTimeMs = Date.parse(appointment.startsAt);
-  const isFuture = startTimeMs > observedNow;
+  const { mode, palette } = useTheme();
+  const hintId = useId();
+  const { status, endsAt } = appointment;
+  if (status !== "PENDING" && status !== "CONFIRMED") return null;
 
-  const isActive =
-    appointment.status === "PENDING" || appointment.status === "CONFIRMED";
+  const blocked = !isReadyToComplete(appointment, now);
+  const hint = agendaStrings(locale).endHint(formatTimeInTimezone(endsAt, timezone, locale));
+  const endAction = () => { if (Date.now() >= Date.parse(endsAt)) actions.onStatusChange("COMPLETED"); };
+  const options = status === "PENDING"
+    ? [{ name: t.common.actionConfirm, run: () => actions.onStatusChange("CONFIRMED") }]
+    : [{ name: t.common.actionComplete, run: endAction, blocked, hint },
+      { name: t.common.actionNoShow, run: () => actions.onStatusChange("NO_SHOW") }];
+  if (actions.onReschedule) options.push({ name: t.owner.reschedule, run: actions.onReschedule });
+  options.push({ name: t.common.actionCancel, run: actions.onCancel });
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    let timer: ReturnType<typeof setTimeout>;
-    function checkStart() {
-      const now = Date.now();
-      if (now >= startTimeMs) {
-        setObservedNow(now);
-        return;
-      }
-      timer = setTimeout(checkStart, Math.min(startTimeMs - now, 2_147_483_647));
-    }
-    timer = setTimeout(checkStart, 0);
-    return () => clearTimeout(timer);
-  }, [menuOpen, startTimeMs]);
+  if (inline) return <div className="flex flex-wrap gap-2">
+    {options.map((option) => <button key={option.name} type="button" disabled={busy || option.blocked} onClick={option.run}
+      aria-describedby={option.blocked ? hintId : undefined} title={option.blocked ? option.hint : undefined}
+      className="cursor-pointer rounded-lg border border-border-subtle bg-surface px-3 py-2 text-xs font-semibold text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-55">
+      {option.name}
+    </button>)}
+    {status === "CONFIRMED" && blocked && <p id={hintId} className="w-full text-xs text-ink-secondary">{hint}</p>}
+  </div>;
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    function handleOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    function handleEsc(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown", handleEsc);
-    return () => {
-      document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown", handleEsc);
-    };
-  }, [menuOpen]);
+  return <Menu.Root>
+    <Menu.Trigger disabled={busy} aria-label={t.common.quickActionsLabel} className="relative z-10 grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink disabled:cursor-not-allowed data-disabled:cursor-not-allowed">
+      <MoreHorizontal size={19} />
+    </Menu.Trigger>
+    <Menu.Portal>
+      <Menu.Positioner align="end" sideOffset={6} className="z-80">
+        <Menu.Popup data-palette={palette} data-theme={mode} className={`${mode === "dark" ? "dark" : ""} w-53 rounded-xl border border-border-subtle bg-surface p-1.5 text-ink shadow-xl outline-none`}>
+          {options.map((option) => <Menu.Item key={option.name} disabled={busy || option.blocked} onClick={option.run}
+            aria-describedby={option.blocked ? hintId : undefined} className="cursor-pointer rounded-lg px-2.5 py-2 text-xs font-medium outline-none data-highlighted:bg-accent-soft data-disabled:cursor-not-allowed data-disabled:text-ink-muted">
+            {option.name}
+          </Menu.Item>)}
+          {status === "CONFIRMED" && blocked && <p id={hintId} className="px-2.5 pb-2 text-[11px] text-ink-secondary">{hint}</p>}
+        </Menu.Popup>
+      </Menu.Positioner>
+    </Menu.Portal>
+  </Menu.Root>;
+}
 
-  const dateShort = formatShortDayMonth(appointment.startsAt, timezone, locale);
-  const startTime = formatTimeInTimezone(appointment.startsAt, timezone, locale);
-  const endTime = formatTimeInTimezone(appointment.endsAt, timezone, locale);
+function AgendaPaymentState({ appointment, payment, paymentError, onPayments }: Pick<AgendaItemProps, "appointment" | "payment" | "paymentError" | "onPayments">) {
+  const { locale, t } = useLocale();
+  const copy = agendaStrings(locale);
+  if (!onPayments) return null;
+  const settled = isAppointmentPaid(payment);
+  const unpaidCompleted = isUnpaidCompleted(appointment, payment);
+  const format = (amount: number) => formatPriceFromCents(amount, locale, payment?.currency);
+  return <div className="relative z-10 flex flex-wrap items-center gap-2 text-xs">
+    {paymentError && <span className="text-ink-secondary">{copy.failedPaymentStatus}</span>}
+    {settled && payment && <PaidBadge label={`${copy.paid} · ${format(payment.collectedInCents)}`} />}
+    {unpaidCompleted && <span className="rounded-md bg-[var(--status-warning-bg)] px-2 py-1 font-semibold text-[var(--status-warning-ink)]">{copy.unpaidCompleted}</span>}
+    {payment && !settled && payment.collectedInCents > 0 && <span className="font-medium text-ink-secondary">{copy.received} {format(payment.collectedInCents)}</span>}
+    {payment && !settled && payment.openInCents > 0 && <span className="font-medium text-ink-secondary">{copy.balance} {format(payment.openInCents)}</span>}
+    {payment && payment.methods.length > 0 && <span className="text-ink-secondary">{payment.methods.map((method) => t.finance.paymentMethods[method]).join(" + ")}</span>}
+    <button type="button" onClick={onPayments}
+      className={`inline-flex min-h-7 cursor-pointer items-center gap-1.5 rounded-lg border px-2 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-accent ${unpaidCompleted ? "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-ink)] hover:underline" : "border-border-subtle text-accent hover:bg-accent-soft"}`}>
+      <Wallet size={13} aria-hidden="true" />{settled ? copy.viewReceipt : unpaidCompleted || payment?.canCollect ? t.finance.registerReceipt : t.finance.paymentHistory}
+    </button>
+  </div>;
+}
 
-  return (
-    <article
-      id={`appointment-card-${appointment.id}`}
-      className={[
-        "card-interactive relative flex flex-col justify-between rounded-2xl border bg-surface p-5 transition-all duration-300",
-        highlighted
-          ? "border-accent ring-2 ring-accent ring-offset-2 ring-offset-canvas shadow-lg shadow-accent/20 animate-pulse"
-          : "border-border-subtle",
-      ].join(" ")}
-    >
-      {/* Topo: Pill de data/horário + menu de ações (somente PENDING/CONFIRMED) */}
-      <div className="flex items-start justify-between gap-2">
-        <span
-          className={[
-            "inline-flex items-center rounded-full px-3 py-1 font-mono text-[11px] font-medium tracking-tight tabular-nums",
-            PILL_CLASS_BY_STATUS[appointment.status],
-          ].join(" ")}
-        >
-          {dateShort}, {startTime} - {endTime}
-        </span>
+export function WhatsAppLink({ appointment, timezone }: Pick<AgendaItemProps, "appointment" | "timezone">) {
+  const { locale } = useLocale();
+  const copy = agendaStrings(locale);
+  const link = whatsAppReminder(appointment, locale, timezone);
+  if (!link) return null;
+  return <a href={link} target="_blank" rel="noopener noreferrer" title={copy.whatsapp} aria-label={copy.whatsapp} data-agenda-quick-action
+    className="relative z-10 grid size-7 shrink-0 cursor-pointer place-items-center rounded-full border border-[#25D366]/35! bg-[#25D366]/12! text-[#25D366]! hover:ring-1 hover:ring-[#25D366]/50">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="size-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.5 12A8.5 8.5 0 0 1 8 19.5l-4.5 1 1.1-4.4A8.5 8.5 0 1 1 20.5 12Z" />
+      <path d="M8.7 8.2c-.6 0-1 .7-1 1.4 0 2.4 3 5.7 5.7 5.9.9 0 1.8-.5 1.9-1.2l-1.9-1.1-.8.8c-1.5-.6-2.7-1.9-3.1-3.1l.6-.8-.8-1.7Z" />
+    </svg>
+  </a>;
+}
 
-        {isActive && (
-          <div ref={menuRef} className="relative">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setObservedNow(Date.now());
-                setMenuOpen((prev) => !prev);
-              }}
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-              aria-label={t.common.quickActionsLabel}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-subtle hover:text-ink cursor-pointer"
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <MoreVertical className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
-
-            {menuOpen && (
-              <div
-                role="menu"
-                aria-label={t.common.quickActionsLabel}
-                className="absolute right-0 top-9 z-30 w-48 rounded-xl border border-border-subtle bg-surface p-1.5 shadow-xl space-y-0.5"
-              >
-                {appointment.status === "PENDING" && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onStatusChange(appointment.id, "CONFIRMED");
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer"
-                  >
-                    <Check
-                      className="h-3.5 w-3.5 text-accent"
-                      aria-hidden="true"
-                    />
-                    {t.common.actionConfirm}
-                  </button>
-                )}
-
-                {(isFuture || appointment.status === "CONFIRMED") && <button
-                  type="button"
-                  role="menuitem"
-                  aria-disabled={isFuture}
-                  aria-describedby={isFuture ? completionHintId : undefined}
-                  onClick={() => {
-                    if (startTimeMs > Date.now()) return;
-                    setMenuOpen(false);
-                    onStatusChange(appointment.id, "COMPLETED");
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer aria-disabled:cursor-not-allowed aria-disabled:text-ink-muted"
-                >
-                  <CheckCircle2
-                    className="h-3.5 w-3.5 text-[var(--status-success-ink)]"
-                    aria-hidden="true"
-                  />
-                  {t.common.actionComplete}
-                </button>}
-                {isFuture && (
-                  <p id={completionHintId} className="px-2.5 pb-2 text-[11px] leading-snug text-ink-muted">
-                    {t.common.completeAfterStart}
-                  </p>
-                )}
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onStatusChange(appointment.id, "NO_SHOW");
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer"
-                >
-                  <UserX
-                    className="h-3.5 w-3.5 text-[var(--status-warning-ink)]"
-                    aria-hidden="true"
-                  />
-                  {t.common.actionNoShow}
-                </button>
-
-                {onReschedule && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onReschedule(appointment);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer"
-                  >
-                    <CalendarClock
-                      className="h-3.5 w-3.5 text-ink-secondary"
-                      aria-hidden="true"
-                    />
-                    {t.owner.reschedule}
-                  </button>
-                )}
-
-                <div className="my-1 border-t border-border-subtle" />
-
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onRequestCancel(appointment);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-[var(--status-danger-ink)] hover:bg-[var(--status-danger-bg)] cursor-pointer"
-                >
-                  <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t.common.actionCancel}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+export function AgendaCard({ onDetails, ...props }: AgendaItemProps & { onDetails: () => void }) {
+  const { locale, t } = useLocale();
+  const copy = agendaStrings(locale);
+  const { appointment, timezone, currency, person, commissionLabel } = props;
+  const start = formatTimeInTimezone(appointment.startsAt, timezone, locale);
+  const end = formatTimeInTimezone(appointment.endsAt, timezone, locale);
+  return <article id={`appointment-card-${appointment.id}`} data-agenda-status={appointment.status} data-agenda-card
+    className="relative space-y-3 rounded-xl border border-s-4 border-border-subtle bg-surface p-3.5 sm:p-4">
+    <button type="button" onClick={onDetails} aria-label={`${copy.openDetails} · ${appointment.clientName} · ${appointment.serviceNameSnapshot}`}
+      className="absolute inset-0 z-1 cursor-pointer rounded-xl focus-visible:outline-2 focus-visible:outline-accent" />
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0 space-y-1">
+        <h4 className="truncate text-sm font-semibold text-ink">{appointment.serviceNameSnapshot}</h4>
+        <p className="text-xs font-medium text-ink-secondary tabular-nums">{start} – {end} · {formatPriceFromCents(appointment.servicePriceInCentsSnapshot, locale, currency)} {commissionLabel && <span className="text-accent">· {commissionLabel}</span>}</p>
       </div>
+      <AgendaActions {...props} />
+    </div>
+    <div className="flex flex-wrap items-center gap-2">
+      <AgendaStatusBadge status={appointment.status} label={t.status[appointment.status]} />
+      {isReadyToComplete(appointment, props.now) && <button type="button" disabled={props.busy}
+        onClick={() => props.actions.onStatusChange("COMPLETED")}
+        className="relative z-10 inline-flex min-h-7 cursor-pointer items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-soft px-2 text-xs font-semibold text-ink hover:border-accent focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55">
+        <Clock3 size={13} aria-hidden="true" />{copy.endedComplete}
+      </button>}
+      {person && <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-ink-secondary"><ProfessionalAvatar person={person} className="size-5" />{person.name}</span>}
+    </div>
+    <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2">
+      <div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{appointment.clientName}</p><p className="truncate text-xs text-ink-secondary tabular-nums">{appointment.clientPhone}</p></div>
+      <WhatsAppLink appointment={appointment} timezone={timezone} />
+    </div>
+    {appointment.notes && <p className="flex items-center gap-1.5 text-xs text-ink-secondary"><ClipboardList size={13} className="shrink-0 text-accent" /><span className="truncate">{appointment.notes}</span></p>}
+    {appointment.cancellationReason && <p className="truncate text-xs text-[var(--status-danger-ink)]">{appointment.cancellationReason}</p>}
+    <AgendaPaymentState {...props} />
+  </article>;
+}
 
-      {/* Corpo: Título do serviço + metadados */}
-      <div className="mt-3.5 space-y-2.5">
-        <h3 className="text-[15px] font-semibold leading-snug text-ink line-clamp-2">
-          {appointment.serviceNameSnapshot}
-        </h3>
+export function AgendaAppointmentDetails({ onClose, error, ...props }: AgendaItemProps & { onClose: () => void; error?: string }) {
+  const { locale, t } = useLocale();
+  const copy = agendaStrings(locale);
+  const { appointment, timezone, currency, person } = props;
+  const period = `${formatDateTimeInTimezone(appointment.startsAt, timezone, locale)} – ${formatTimeInTimezone(appointment.endsAt, timezone, locale)}`;
 
-        <div className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary tabular-nums">
-          <StatusBadge
-            tone={appointmentStatusTone(appointment.status)}
-            label={t.status[appointment.status]}
-          />
-          <span>
-            {formatDuration(appointment.serviceDurationMinutesSnapshot, locale)}
-          </span>
-          <span className="font-medium text-ink">
-            {formatPriceFromCents(
-              appointment.servicePriceInCentsSnapshot,
-              locale,
-              currency,
-            )}
-          </span>
-          {commissionLabel && (
-            <span className="text-[11px] font-medium text-accent">
-              {commissionLabel}
-            </span>
-          )}
-        </div>
-
-        {/* Motivo do cancelamento exibido discretamente quando CANCELED */}
-        {appointment.status === "CANCELED" && appointment.cancellationReason && (
-          <p className="rounded-xl border border-[var(--status-danger-border)]/60 bg-[var(--status-danger-bg)]/50 px-3 py-2 text-[11px] leading-relaxed text-[var(--status-danger-ink)]">
-            <span className="font-medium">{t.common.cancellationReasonTag}:</span>{" "}
-            {appointment.cancellationReason}
-          </p>
-        )}
+  return <AgendaDialog centered title={copy.openDetails} onClose={onClose}>
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-border-subtle bg-subtle/50 p-4">
+        <h3 className="text-lg font-semibold text-ink">{appointment.serviceNameSnapshot}</h3>
+        <p className="mt-1.5 flex items-center gap-2 text-xs text-ink-secondary"><CalendarClock size={15} className="shrink-0 text-accent" />{period}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2"><AgendaStatusBadge status={appointment.status} label={t.status[appointment.status]} />
+          <span className="text-sm font-semibold text-accent">{formatPriceFromCents(appointment.servicePriceInCentsSnapshot, locale, currency)}</span></div>
       </div>
-
-      {/* Rodapé: Cliente + Profissional com foto real */}
-      <div className="mt-4 flex items-center justify-between gap-2.5 border-t border-border-subtle pt-3.5">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span
-            className={[
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-medium",
-              getAvatarTint(appointment.clientName),
-            ].join(" ")}
-          >
-            {getClientInitials(appointment.clientName)}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-ink">
-              {appointment.clientName}
-            </p>
-            <p className="truncate font-mono text-[11px] text-ink-muted tabular-nums">
-              {appointment.clientPhone}
-            </p>
-          </div>
-        </div>
-
-        {collaboratorName && (
-          <div className="inline-flex max-w-[140px] shrink-0 items-center gap-1.5 rounded-full border border-border-subtle bg-subtle/60 py-1 pl-1 pr-2.5">
-            {collaboratorAvatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={collaboratorAvatarUrl}
-                alt={collaboratorName}
-                className="h-5 w-5 shrink-0 rounded-full object-cover"
-              />
-            ) : (
-              <span
-                className={[
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-medium",
-                  getAvatarTint(collaboratorName),
-                ].join(" ")}
-              >
-                {getClientInitials(collaboratorName)}
-              </span>
-            )}
-            <span className="truncate text-[11px] font-medium text-ink-secondary">
-              {collaboratorName}
-            </span>
-          </div>
-        )}
-      </div>
-      {onOpenPayments && (
-        <button type="button" onClick={onOpenPayments}
-          className="mt-3 inline-flex min-h-9 items-center gap-2 self-start rounded-lg border border-border-subtle px-3 text-xs font-semibold text-accent hover:bg-subtle">
-          <Wallet className="size-4" aria-hidden="true" />
-          {appointment.status === "CONFIRMED" || appointment.status === "COMPLETED"
-            ? t.finance.registerReceipt : t.finance.paymentHistory}
-        </button>
-      )}
-    </article>
-  );
+      <dl className="space-y-4 text-sm">
+        <div><dt className="text-xs font-semibold text-ink-secondary">{copy.client}</dt><dd className="mt-1 font-semibold">{appointment.clientName}</dd>
+          <dd className="flex items-center gap-2 text-ink-secondary"><span className="tabular-nums">{appointment.clientPhone}</span><WhatsAppLink appointment={appointment} timezone={timezone} /></dd></div>
+        {person && <div><dt className="text-xs font-semibold text-ink-secondary">{copy.professional}</dt>
+          <dd className="mt-1 flex items-center gap-2"><ProfessionalAvatar person={person} />{person.name}</dd></div>}
+        <div><dt className="text-xs font-semibold text-ink-secondary">{copy.notes}</dt>
+          <dd className="mt-1 whitespace-pre-wrap wrap-break-word rounded-xl bg-subtle p-3 text-ink">{appointment.notes || copy.noNotes}</dd></div>
+        {appointment.cancellationReason && <div><dt className="text-xs font-semibold text-ink-secondary">{t.common.cancellationReasonTag}</dt><dd className="mt-1 text-[var(--status-danger-ink)]">{appointment.cancellationReason}</dd></div>}
+        {props.onPayments && <div><dt className="mb-2 text-xs font-semibold text-ink-secondary">{copy.payment}</dt><dd><AgendaPaymentState {...props} /></dd></div>}
+      </dl>
+      <AgendaActions {...props} inline />
+      {error && <p role="alert" className="rounded-xl bg-[var(--status-danger-bg)] p-3 text-xs text-[var(--status-danger-ink)]">{error}</p>}
+    </div>
+  </AgendaDialog>;
 }

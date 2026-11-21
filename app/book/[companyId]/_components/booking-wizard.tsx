@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Calendar,
   CheckCircle2,
@@ -63,6 +63,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
   >(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
+  const availabilityRequest = useRef<AbortController | null>(null);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotsError, setSlotsError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<AvailabilitySlot | null>(
@@ -79,9 +80,13 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
   const [confirmedCollaboratorName, setConfirmedCollaboratorName] =
     useState<string>("");
 
+  useEffect(() => () => availabilityRequest.current?.abort(), []);
+
   const fetchAvailability = useCallback(
     async (serviceId: string, date: string, collaboratorId: string | null) => {
-      if (!date) return;
+      availabilityRequest.current?.abort();
+      const controller = new AbortController();
+      availabilityRequest.current = controller;
       setSlotsLoading(true);
       setSlotsError(null);
       setSelectedSlot(null);
@@ -91,16 +96,17 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
           `/public/companies/${encodeURIComponent(company.id)}/availability`,
           {
             auth: false,
+            signal: controller.signal,
             query: {
               serviceId,
               date,
-              timezone: company.timezone,
               collaboratorId: collaboratorId ?? undefined,
             },
           },
         );
-        setSlots(res.slots ?? []);
+        if (!controller.signal.aborted) setSlots(res.slots);
       } catch (error) {
+        if (controller.signal.aborted) return;
         setSlots([]);
         setSlotsError(
           error instanceof ApiError
@@ -108,13 +114,14 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
             : t.errors.networkDescription,
         );
       } finally {
-        setSlotsLoading(false);
+        if (!controller.signal.aborted) setSlotsLoading(false);
       }
     },
-    [company.id, company.timezone, t.errors.networkDescription],
+    [company.id, t.errors.networkDescription],
   );
 
   const handleSelectService = (service: PublicService) => {
+    availabilityRequest.current?.abort();
     setSelectedService(service);
     setSelectedCollaboratorId(null);
     setSelectedSlot(null);
@@ -135,6 +142,13 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
 
   const handleDateChange = (nextDate: string) => {
     setSelectedDate(nextDate);
+    if (!nextDate) {
+      availabilityRequest.current?.abort();
+      setSlots([]);
+      setSelectedSlot(null);
+      setSlotsLoading(false);
+      return;
+    }
     if (selectedService && nextDate) {
       void fetchAvailability(
         selectedService.id,
@@ -204,6 +218,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
   };
 
   const handleReset = () => {
+    availabilityRequest.current?.abort();
     setStep(1);
     setSelectedService(null);
     setSelectedCollaboratorId(null);

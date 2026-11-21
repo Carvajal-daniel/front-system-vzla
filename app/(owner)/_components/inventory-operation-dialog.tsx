@@ -60,7 +60,11 @@ export function InventoryOperationDialog({ operation, today, onClose, onSaved }:
     operation.kind === "movement" && !picked ? "/inventory/items?search=" + encodeURIComponent(search) : null, lookupAttempt,
   );
   const directory = useOwnerInventory<Staff[] | { collaborators: Staff[] }>(
-    operation.kind === "movement" && movementType === "COLLABORATOR_WITHDRAWAL" ? "/collaborators" : null, lookupAttempt,
+    operation.kind === "movement" &&
+      (movementType === "COLLABORATOR_WITHDRAWAL" || movementType === "SALE_OUT")
+      ? "/collaborators"
+      : null,
+    lookupAttempt,
   );
   const options = products?.items ?? [];
   const staff = Array.isArray(directory) ? directory : directory?.collaborators ?? [];
@@ -99,7 +103,7 @@ export function InventoryOperationDialog({ operation, today, onClose, onSaved }:
         const body = {
           itemId: product.id, movementType, quantity: units, occurredOn: date, notes,
           ...(sale ? { unitSaleCents: override, paymentMethod } : { unitCostCents: override }),
-          ...(movementType === "COLLABORATOR_WITHDRAWAL" ? { collaboratorId } : {}),
+          ...(movementType === "COLLABORATOR_WITHDRAWAL" || (sale && collaboratorId) ? { collaboratorId } : {}),
           ...(movementType === "ADJUSTMENT" ? { direction } : {}),
           postExpense: movementType === "PURCHASE_IN" && postExpense,
         };
@@ -187,10 +191,16 @@ export function InventoryOperationDialog({ operation, today, onClose, onSaved }:
               placeholder={sale ? product?.salePriceCents == null ? undefined : (product.salePriceCents / 100).toFixed(2)
                 : product ? (product.costPriceCents / 100).toFixed(2) : undefined}
               onChange={(e) => (sale ? setSalePrice : setCost)(e.target.value)} /></label>
-            {sale && <label className={ownerField}>{f.method}<select className={ownerControl} value={paymentMethod}
+            {sale && <label className={ownerField}>{f.method}<select className={ownerControl + " cursor-pointer"} value={paymentMethod}
               onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}>
               {paymentMethods.map((method) => <option key={method} value={method}>{f.paymentMethods[method]}</option>)}
             </select></label>}
+            {sale && <label className={ownerField}>{x.saleSellerProfessional}
+              <select className={ownerControl + " cursor-pointer"} value={collaboratorId} onChange={(e) => setCollaboratorId(e.target.value)}>
+                <option value="">{directory === undefined ? t.common.loading : x.directCounterSale}</option>
+                {staff.filter((person) => person.isActive).map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+              </select>
+            </label>}
             <label className={ownerField}>{x.date}<Input required type="date" max={today} value={date} onChange={(e) => setDate(e.target.value)} /></label>
             {movementType === "PURCHASE_IN" && <label className="flex items-center gap-2 text-xs sm:col-span-2">
               <input type="checkbox" checked={postExpense} onChange={(e) => setPostExpense(e.target.checked)} className="accent-accent" />

@@ -2,17 +2,24 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Wallet, X } from "lucide-react";
+import { PaidBadge } from "@/components/ui/agenda-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, apiRequest } from "@/lib/api-client";
+import { isAppointmentPaid } from "@/lib/agenda";
 import { formatDateTimeInTimezone, formatPriceFromCents, getTodayIsoDateInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
+import { agendaStrings } from "@/lib/i18n/agenda";
 import {
   paymentMethods, type AppointmentCollections, type FinanceAppointment, type PaymentMethod,
 } from "@/lib/types/finance";
 
-const control = "h-10 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink";
+const disabledCursor = "disabled:pointer-events-auto disabled:cursor-not-allowed";
+const control = `h-10 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink ${disabledCursor}`;
+const choice = `${control} cursor-pointer`;
+const optionCursor = "cursor-pointer disabled:cursor-not-allowed";
+const actionCursor = `cursor-pointer ${disabledCursor}`;
 type Candidate = Pick<FinanceAppointment, "id" | "clientName" | "serviceName" | "startsAt">;
 
 function toCents(text: string) {
@@ -53,17 +60,17 @@ export function ReceiptDialog({ appointmentId, candidates = [], timezone, onClos
         <h2 id="receipt-dialog-title" className="flex items-center gap-2 text-lg font-semibold">
           <Wallet className="size-5 text-accent" aria-hidden="true" />{f.registerReceipt}
         </h2>
-        <Button variant="ghost" size="icon-sm" type="button" aria-label={t.common.close}
+        <Button variant="ghost" size="icon-sm" type="button" aria-label={t.common.close} className={actionCursor}
           onClick={onClose} disabled={busy}><X aria-hidden="true" /></Button>
       </div>
       {!appointmentId && candidates.length > 0 && (
         <div className="mb-4 space-y-1">
           <Label htmlFor="receipt-appointment">{f.chooseAppointment}</Label>
-          <select id="receipt-appointment" className={control} value={selected} disabled={busy}
+          <select id="receipt-appointment" className={choice} value={selected} disabled={busy}
             onChange={(event) => setSelected(event.target.value)}>
-            <option value="">{f.chooseAppointment}</option>
+            <option value="" className={optionCursor}>{f.chooseAppointment}</option>
             {candidates.map((item) => (
-              <option key={item.id} value={item.id}>
+              <option key={item.id} value={item.id} className={optionCursor}>
                 {item.clientName} · {item.serviceName} · {formatDateTimeInTimezone(item.startsAt, timezone, locale)}
               </option>
             ))}
@@ -100,7 +107,7 @@ function ReceiptAppointment({ appointmentId, timezone, onChanged, onBusy }: {
 
   if (loadFailed) return (
     <p role="alert" className="text-sm">{t.errors.networkDescription}{" "}
-      <Button type="button" variant="outline" onClick={() => { setLoadFailed(false); setVersion((v) => v + 1); }}>
+      <Button type="button" variant="outline" className={actionCursor} onClick={() => { setLoadFailed(false); setVersion((v) => v + 1); }}>
         {t.common.retry}
       </Button>
     </p>
@@ -128,7 +135,6 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
   const [otherAmount, setOtherAmount] = useState("");
   const [otherMethod, setOtherMethod] = useState<PaymentMethod>("PIX");
   const [refund, setRefund] = useState<{ id: string; amount: string; reason: string; date: string } | null>(null);
-  const [confirmSettlement, setConfirmSettlement] = useState(false);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -136,14 +142,7 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
   const submitting = useRef(false);
   const money = (cents: number) => formatPriceFromCents(cents, locale, data.currency);
   const localDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" });
-  const commissionLabels = {
-    NONE: "",
-    AWAITING_COLLECTION: f.awaitingCommission,
-    READY: f.readyCommission,
-    PAID: f.paidCommission,
-  };
-
-  async function send(path: string, payload: object, success: string, keyed = true) {
+  async function send(path: string, payload: object, success: string) {
     if (submitting.current) return;
     submitting.current = true;
     const fingerprint = JSON.stringify([path, payload]);
@@ -152,16 +151,15 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
     setNotice("");
     setError("");
     try {
-      if (keyed && idempotency.current?.payload !== fingerprint) {
+      if (idempotency.current?.payload !== fingerprint) {
         idempotency.current = { payload: fingerprint, key: crypto.randomUUID() };
       }
       await apiRequest(path, {
         method: "POST",
-        body: keyed ? { ...payload, requestKey: idempotency.current?.key } : payload,
+        body: { ...payload, requestKey: idempotency.current.key },
       });
       idempotency.current = null;
       setRefund(null);
-      setConfirmSettlement(false);
       setSplit(false);
       setAmount("");
       setOtherAmount("");
@@ -209,7 +207,10 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
     <div className="space-y-4">
       <div>
         <p className="text-sm font-semibold">{data.clientName} · {data.serviceName}</p>
-        <p className="mt-1 text-xs text-ink-secondary">{t.status[data.status]}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-ink-secondary">{t.status[data.status]}</span>
+          {isAppointmentPaid(data) && <PaidBadge label={agendaStrings(locale).paid} />}
+        </div>
         {data.historical && <p className="mt-1 text-xs text-ink-muted">{f.legacy}</p>}
       </div>
       <dl className="grid gap-2 rounded-xl bg-subtle p-3 text-xs tabular-nums sm:grid-cols-3">
@@ -225,29 +226,29 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
         <form onSubmit={submitReceipt} className="space-y-3 rounded-xl border border-border-subtle p-3">
           <fieldset disabled={sending} className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1 text-xs"><span>{f.method}</span>
-              <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)} className={control}>
-                {paymentMethods.map((item) => <option key={item} value={item}>{f.paymentMethods[item]}</option>)}
+              <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)} className={choice}>
+                {paymentMethods.map((item) => <option key={item} value={item} className={optionCursor}>{f.paymentMethods[item]}</option>)}
               </select>
             </label>
             <label className="space-y-1 text-xs"><span>{f.amount} · {data.currency}</span>
               <Input required inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} className={control} />
             </label>
             <label className="space-y-1 text-xs"><span>{f.effectiveOn}</span>
-              <Input required type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} className={control} />
+              <Input required type="date" max={today} value={date} onChange={(event) => setDate(event.target.value)} className={choice} />
             </label>
             <div className="flex flex-wrap items-end gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => {
+              <Button type="button" size="sm" variant="outline" className={actionCursor} onClick={() => {
                 if (split) setOtherAmount(currencyInput(data.openInCents - toCents(amount)));
                 else setAmount(currencyInput(data.openInCents));
               }}>{f.useRemainder}</Button>
             </div>
-            <label className="flex items-center gap-2 text-xs sm:col-span-2">
-              <input type="checkbox" className="accent-accent" checked={split} onChange={(event) => setSplit(event.target.checked)} />{f.split}
+            <label className="flex cursor-pointer items-center gap-2 text-xs has-disabled:cursor-not-allowed sm:col-span-2">
+              <input type="checkbox" className="cursor-pointer accent-accent disabled:cursor-not-allowed" checked={split} onChange={(event) => setSplit(event.target.checked)} />{f.split}
             </label>
             {split && <>
               <label className="space-y-1 text-xs"><span>{f.secondMethod}</span>
-                <select value={otherMethod} onChange={(event) => setOtherMethod(event.target.value as PaymentMethod)} className={control}>
-                  {paymentMethods.map((item) => <option key={item} value={item} disabled={method === item}>{f.paymentMethods[item]}</option>)}
+                <select value={otherMethod} onChange={(event) => setOtherMethod(event.target.value as PaymentMethod)} className={choice}>
+                  {paymentMethods.map((item) => <option key={item} value={item} disabled={method === item} className={optionCursor}>{f.paymentMethods[item]}</option>)}
                 </select>
               </label>
               <label className="space-y-1 text-xs"><span>{f.amount} · {data.currency}</span>
@@ -255,36 +256,8 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
               </label>
             </>}
           </fieldset>
-          <Button type="submit" disabled={sending}>{sending ? t.common.saving : f.saveReceipt}</Button>
+          <Button type="submit" disabled={sending} className={actionCursor}>{sending ? t.common.saving : f.saveReceipt}</Button>
         </form>
-      )}
-
-      {data.commissionStatus !== "NONE" && (
-        <section className="space-y-2 rounded-xl border border-border-subtle p-3 text-sm">
-          <p className="font-medium">{commissionLabels[data.commissionStatus]} · {money(data.generatedCommissionInCents ?? 0)}</p>
-          {data.commissionPaidAt && (
-            <p className="text-xs text-ink-muted">{formatDateTimeInTimezone(data.commissionPaidAt, timezone, locale)}</p>
-          )}
-          {data.commissionStatus === "PAID" && data.openInCents > 0 &&
-            <p className="text-xs text-ink-muted">{f.settlePaidWhileOpen}</p>}
-          {data.commissionStatus === "READY" && (confirmSettlement ? (
-            <div className="space-y-2">
-              <p className="text-xs text-ink-secondary">{f.settleConfirm}</p>
-              <div className="flex gap-2">
-                <Button type="button" disabled={sending} onClick={() => void send(
-                  "/finance/appointments/" + data.appointmentId + "/commission-settlement", {}, f.appliedSettlement, false,
-                )}>{t.common.confirm}</Button>
-                <Button type="button" variant="outline" disabled={sending} onClick={() => setConfirmSettlement(false)}>
-                  {t.common.cancel}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <Button type="button" variant="outline" disabled={sending} onClick={() => setConfirmSettlement(true)}>
-              {f.settleCommission}
-            </Button>
-          ))}
-        </section>
       )}
 
       <section aria-label={f.paymentHistory}>
@@ -306,7 +279,7 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
                   <span className="font-semibold tabular-nums">{money(item.reversesReceiptId ? -item.amountInCents : item.amountInCents)}</span>
                 </div>
                 {item.refundableInCents > 0 && refund?.id !== item.id &&
-                  <Button type="button" size="sm" variant="outline" disabled={sending} onClick={() => setRefund({
+                  <Button type="button" size="sm" variant="outline" disabled={sending} className={actionCursor} onClick={() => setRefund({
                     id: item.id, amount: currencyInput(item.refundableInCents), reason: "", date: today,
                   })}>{f.refund}</Button>}
                 {refund?.id === item.id && (
@@ -314,18 +287,18 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
                     <p className="font-medium">{f.refundAvailable} · {money(item.refundableInCents)}</p>
                     <fieldset disabled={sending} className="grid gap-2 sm:grid-cols-2">
                       <label className="space-y-1"><span>{f.amount} · {data.currency}</span>
-                        <Input required inputMode="decimal" value={refund.amount} onChange={(event) => setRefund({ ...refund, amount: event.target.value })} />
+                        <Input required inputMode="decimal" className={disabledCursor} value={refund.amount} onChange={(event) => setRefund({ ...refund, amount: event.target.value })} />
                       </label>
                       <label className="space-y-1"><span>{f.effectiveOn}</span>
-                        <Input required type="date" min={item.effectiveOn} max={today} value={refund.date} onChange={(event) => setRefund({ ...refund, date: event.target.value })} />
+                        <Input required type="date" className={actionCursor} min={item.effectiveOn} max={today} value={refund.date} onChange={(event) => setRefund({ ...refund, date: event.target.value })} />
                       </label>
                       <label className="space-y-1 sm:col-span-2"><span>{f.refundReason}</span>
-                        <Input required maxLength={500} value={refund.reason} onChange={(event) => setRefund({ ...refund, reason: event.target.value })} />
+                        <Input required maxLength={500} className={disabledCursor} value={refund.reason} onChange={(event) => setRefund({ ...refund, reason: event.target.value })} />
                       </label>
                     </fieldset>
                     <div className="flex gap-2">
-                      <Button type="submit" disabled={sending}>{f.refund}</Button>
-                      <Button type="button" variant="outline" disabled={sending} onClick={() => setRefund(null)}>{t.common.cancel}</Button>
+                      <Button type="submit" disabled={sending} className={actionCursor}>{f.refund}</Button>
+                      <Button type="button" variant="outline" disabled={sending} className={actionCursor} onClick={() => setRefund(null)}>{t.common.cancel}</Button>
                     </div>
                   </form>
                 )}

@@ -12,6 +12,7 @@ import {
   UserCircle2,
 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
+import { companyWeekday } from "@/lib/agenda";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { IANA_TIMEZONES } from "@/lib/timezones";
 import type { UpdateCompanyTimezoneResponse, CompanyOperatingDaySchedule } from "@/lib/types/auth";
@@ -37,13 +38,6 @@ function buildInitialCompanySchedule(
   savedSchedule?: CompanyOperatingDaySchedule[] | null,
   operatingDaysStr?: string | null,
 ): CompanyDayScheduleState[] {
-  const allowedDays = operatingDaysStr
-    ? operatingDaysStr
-        .split(",")
-        .map((d) => Number(d.trim()))
-        .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
-    : [1, 2, 3, 4, 5, 6];
-
   const defaultHours = [
     { day: 0, open: "09:00", close: "15:00" }, // Domingo
     { day: 1, open: "08:00", close: "19:00" }, // Segunda
@@ -55,21 +49,12 @@ function buildInitialCompanySchedule(
   ];
 
   return defaultHours.map(({ day, open, close }) => {
-    const existing = savedSchedule?.find((s) => s.dayOfWeek === day);
-    if (existing) {
-      return {
-        dayOfWeek: day,
-        isOpen: existing.isOpen,
-        openTime: existing.openTime ? existing.openTime.slice(0, 5) : open,
-        closeTime: existing.closeTime ? existing.closeTime.slice(0, 5) : close,
-      };
-    }
-    const isOpen = allowedDays.includes(day);
+    const { isOpen, hours } = companyWeekday({ operatingSchedule: savedSchedule, operatingDays: operatingDaysStr }, day);
     return {
       dayOfWeek: day,
       isOpen,
-      openTime: open,
-      closeTime: close,
+      openTime: hours?.openTime?.slice(0, 5) || open,
+      closeTime: hours?.closeTime?.slice(0, 5) || close,
     };
   });
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Ban, Globe2, Loader2, Plus, Trash2, User } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Ban, Globe2, Loader2, Plus, Trash2, User, X } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
   formatDateTimeInTimezone,
@@ -27,8 +28,13 @@ import { Modal } from "@/components/ui/modal";
 import { StatusBadge } from "@/components/ui/status-badge";
 
 export function BlocksPanel() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const filterCollaboratorId = searchParams.get("collaboratorId")?.trim() ?? "";
+
   const { session } = useSession();
   const { locale, t } = useLocale();
+  const td = t.owner.teamDirectory;
   const timezone = session.company.timezone;
 
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
@@ -107,11 +113,38 @@ export function BlocksPanel() {
     return map;
   }, [collaborators]);
 
+  // Pré-seleciona o colaborador no formulário quando o filtro via query param estiver ativo
+  useEffect(() => {
+    if (filterCollaboratorId) {
+      setCollaboratorId(filterCollaboratorId);
+    }
+  }, [filterCollaboratorId]);
+
+  const filteredBlocks = useMemo(() => {
+    if (!filterCollaboratorId) return blocks;
+    return blocks.filter((b) => b.collaboratorId === filterCollaboratorId);
+  }, [blocks, filterCollaboratorId]);
+
+  const filteredCollaboratorName = filterCollaboratorId
+    ? (collaboratorMap.get(filterCollaboratorId) ?? filterCollaboratorId)
+    : null;
+
   const kpis = useMemo(() => {
-    const total = blocks.length;
-    const globalCount = blocks.filter((b) => b.collaboratorId === null).length;
+    const total = filteredBlocks.length;
+    const globalCount = filteredBlocks.filter((b) => b.collaboratorId === null).length;
     return { total, globalCount, individualCount: total - globalCount };
-  }, [blocks]);
+  }, [filteredBlocks]);
+
+  const handleOpenNewBlock = () => {
+    setFormError(null);
+    setCollaboratorId(filterCollaboratorId || "");
+    setDrawerOpen(true);
+  };
+
+  const handleClearCollaboratorFilter = () => {
+    setCollaboratorId("");
+    router.replace("/owner/blocks");
+  };
 
   const handleCreateBlock = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -220,15 +253,32 @@ export function BlocksPanel() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-title-sm font-bold text-ink">
-          {t.owner.blocksTitle}
-        </h2>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h2 className="text-title-sm font-bold text-ink">
+            {t.owner.blocksTitle}
+          </h2>
+
+          {filteredCollaboratorName && (
+            <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent-soft px-3 py-1 text-xs font-semibold text-accent">
+              <span>
+                {td.blocksFilteredByPrefix} {filteredCollaboratorName}
+              </span>
+              <button
+                type="button"
+                onClick={handleClearCollaboratorFilter}
+                aria-label={td.clearBlockFilterBtn}
+                title={td.clearBlockFilterBtn}
+                className="cursor-pointer inline-flex items-center gap-0.5 rounded-full bg-accent/15 px-1.5 py-0.5 text-[11px] hover:bg-accent/25 transition-colors"
+              >
+                <X className="h-3 w-3" />
+                <span>{td.clearBlockFilterBtn}</span>
+              </button>
+            </span>
+          )}
+        </div>
         <Button
           type="button"
-          onClick={() => {
-            setFormError(null);
-            setDrawerOpen(true);
-          }}
+          onClick={handleOpenNewBlock}
           className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
@@ -245,7 +295,7 @@ export function BlocksPanel() {
           retryLabel={t.common.retry}
           onRetry={() => void loadData()}
         />
-      ) : blocks.length === 0 ? (
+      ) : filteredBlocks.length === 0 ? (
         <EmptyState
           title={t.common.noData}
           description={t.owner.blocksTitle}
@@ -253,7 +303,7 @@ export function BlocksPanel() {
           action={
             <Button
               type="button"
-              onClick={() => setDrawerOpen(true)}
+              onClick={handleOpenNewBlock}
               className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
@@ -263,7 +313,7 @@ export function BlocksPanel() {
         />
       ) : (
         <div className="space-y-3">
-          {blocks.map((block) => (
+          {filteredBlocks.map((block) => (
             <article
               key={block.id}
               className="card-interactive flex flex-col gap-3 rounded-2xl border border-border-subtle bg-surface p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"

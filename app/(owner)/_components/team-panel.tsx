@@ -1,36 +1,40 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
+  CalendarCheck,
+  CalendarOff,
   Check,
   Copy,
   Loader2,
-  MessageCircle,
-  Pencil,
   Plus,
-  Power,
-  Trash2,
+  Search,
+  SlidersHorizontal,
+  Star,
+  TrendingUp,
+  Trophy,
   UserCheck,
-  Users,
+  UserRound,
   UserX,
+  Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
   formatPercentage,
-  formatPhoneToE164,
-  isValidInternationalPhone,
+  formatPrice,
   stripNonDigits,
 } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
-import type { PhoneCountryCode } from "@/lib/types/public-booking";
-import type {
-  Service,
-  ServiceCollaboratorsResponse,
-} from "@/lib/types/service";
-import type {
-  Collaborator,
-  CollaboratorsListResponse,
-  CreateCollaboratorPayload,
+import {
+  getCollaboratorFutureAppointmentsCount,
+  resolveCollaboratorAvatarUrl,
+  updateCollaboratorStatus,
+  type Collaborator,
+  type CollaboratorsListResponse,
+  type TeamKpis,
 } from "@/lib/types/team";
 import { useSession } from "@/components/ui/auth-guard";
 import { Button } from "@/components/ui/button";
@@ -38,98 +42,55 @@ import { CardListSkeleton } from "@/components/ui/card-list-skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
-import { PhoneInput } from "@/components/ui/phone-input";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
+import {
+  NewCollaboratorModal,
+  type GeneratedInvite,
+} from "./new-collaborator-modal";
+import { RankingCriteriaModal } from "./ranking-criteria-modal";
+import { DeactivationModal } from "./collaborator-profile/deactivation-modal";
 
-interface GeneratedInvite {
-  name: string;
-  email: string;
-  phoneE164: string;
-  tempPassword: string;
-  loginUrl: string;
-}
+type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
 
-/**
- * Gera senha temporária forte (12 caracteres, garantindo maiúscula, minúscula,
- * dígito e caractere especial) compatível com a validação 6..15 chars do backend.
- */
-function generateStrongTemporaryPassword(): string {
-  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const lower = "abcdefghijkmnopqrstuvwxyz";
-  const digits = "23456789";
-  const special = "!@#$%&*";
-  const all = upper + lower + digits + special;
-
-  const bytes = new Uint8Array(12);
-  window.crypto.getRandomValues(bytes);
-
-  const chars = [
-    upper[bytes[0] % upper.length],
-    lower[bytes[1] % lower.length],
-    digits[bytes[2] % digits.length],
-    special[bytes[3] % special.length],
-  ];
-
-  for (let i = 4; i < 12; i++) {
-    chars.push(all[bytes[i] % all.length]);
-  }
-
-  return chars.join("");
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 export function TeamPanel() {
+  const router = useRouter();
   const { session } = useSession();
   const { locale, t } = useLocale();
+  const td = t.owner.teamDirectory;
+
+  const currency = session.company.currency ?? "BRL";
 
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [teamKpis, setTeamKpis] = useState<TeamKpis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [countryCode, setCountryCode] = useState<PhoneCountryCode>("+55");
-  const [phoneDigits, setPhoneDigits] = useState("");
-  const [specialty, setSpecialty] = useState("");
-  const [commissionPercentage, setCommissionPercentage] = useState("40");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  // Busca e filtros
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
-  // Modal de Convite Gerado
+  // Modais
+  const [createOpen, setCreateOpen] = useState(false);
+  const [criteriaOpen, setCriteriaOpen] = useState(false);
   const [invite, setInvite] = useState<GeneratedInvite | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
 
-  // Modal de Confirmação de Exclusão com Transferência
-  const [deleteTarget, setDeleteTarget] = useState<Collaborator | null>(null);
-  const [transferToId, setTransferToId] = useState<string>("");
-  const [hasAppointmentConflict, setHasAppointmentConflict] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  // Novo Colaborador: serviços selecionados na criação
-  const [createServices, setCreateServices] = useState<Service[]>([]);
-  const [selectedServiceIdsForNew, setSelectedServiceIdsForNew] = useState<Set<string>>(
-    () => new Set(),
-  );
-
-  // Drawer de Edição de Colaborador (nome, especialidade, comissão e serviços vinculados)
-  const [editTarget, setEditTarget] = useState<Collaborator | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editSpecialty, setEditSpecialty] = useState("");
-  const [editCommission, setEditCommission] = useState("40");
-  const [editSaving, setEditSaving] = useState(false);
-  const [editError, setEditError] = useState<string | null>(null);
-  const [allServices, setAllServices] = useState<Service[]>([]);
-  const [linkedServiceIds, setLinkedServiceIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [togglingServiceId, setTogglingServiceId] = useState<string | null>(
-    null,
-  );
+  // Atalho rápido de afastamento / reativação nos cards
+  const [leaveTarget, setLeaveTarget] = useState<{
+    id: string;
+    name: string;
+    futureCount: number;
+  } | null>(null);
+  const [checkingLeaveId, setCheckingLeaveId] = useState<string | null>(null);
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
   const loadTeam = useCallback(async () => {
     setLoading(true);
@@ -139,6 +100,7 @@ export function TeamPanel() {
         auth: true,
       });
       setCollaborators(res.collaborators ?? []);
+      setTeamKpis(res.teamKpis ?? null);
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : t.errors.networkDescription,
@@ -149,888 +111,649 @@ export function TeamPanel() {
   }, [t.errors.networkDescription]);
 
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const res = await apiRequest<CollaboratorsListResponse>(
-          "/collaborators",
-          { auth: true },
-        );
-        if (!active) return;
-        setCollaborators(res.collaborators ?? []);
-      } catch (err) {
-        if (!active) return;
-        setError(
-          err instanceof ApiError ? err.message : t.errors.networkDescription,
-        );
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
+    void loadTeam();
+  }, [loadTeam]);
+
+  // Fallback seguro caso o backend ainda não retorne teamKpis
+  const computedKpis = useMemo<TeamKpis>(() => {
+    if (teamKpis) return teamKpis;
+    const activeCount = collaborators.filter(
+      (c) => (c.status ? c.status === "ACTIVE" : c.isActive),
+    ).length;
+    return {
+      totalCollaborators: collaborators.length,
+      activeCollaborators: activeCount,
+      totalCompletedAppointmentsMonth: collaborators.reduce(
+        (sum, c) => sum + (c.completedAppointmentsMonth ?? 0),
+        0,
+      ),
+      totalRevenueMonthInCents: collaborators.reduce(
+        (sum, c) => sum + (c.revenueMonthInCents ?? 0),
+        0,
+      ),
+      averageTeamRating: 5.0,
     };
-  }, [t.errors.networkDescription]);
+  }, [teamKpis, collaborators]);
 
-  const openNewCollaboratorModal = async () => {
-    setDrawerOpen(true);
-    setFormError(null);
-    try {
-      const res = await apiRequest<Service[] | { services?: Service[] }>("/services", {
-        auth: true,
-      });
-      const list = Array.isArray(res) ? res : (res.services ?? []);
-      setCreateServices(list.filter((s) => s.active));
-      // Por padrão seleciona todos os serviços ativos da barbearia
-      setSelectedServiceIdsForNew(new Set(list.filter((s) => s.active).map((s) => s.id)));
-    } catch {
-      // Ignora erro de serviços na abertura
-    }
-  };
+  const filteredCollaborators = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return collaborators.filter((collab) => {
+      const isActive = collab.status ? collab.status === "ACTIVE" : collab.isActive;
+      if (statusFilter === "ACTIVE" && !isActive) return false;
+      if (statusFilter === "INACTIVE" && isActive) return false;
 
-  const kpis = useMemo(() => {
-    const total = collaborators.length;
-    const activeCount = collaborators.filter((c) => c.isActive).length;
-    return { total, activeCount, inactiveCount: total - activeCount };
-  }, [collaborators]);
-
-  const handleCreate = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setFormError(null);
-
-    if (!isValidInternationalPhone(countryCode, phoneDigits)) {
-      setFormError(t.errors.invalidPhone);
-      return;
-    }
-
-    setSubmitting(true);
-    const tempPassword = generateStrongTemporaryPassword();
-    const phoneE164 = formatPhoneToE164(countryCode, phoneDigits);
-
-    const payload: CreateCollaboratorPayload = {
-      name: name.trim(),
-      email: email.trim(),
-      password: tempPassword,
-      phone: phoneE164,
-      specialty: specialty.trim(),
-      commissionPercentage: Number(commissionPercentage) || 0,
-    };
-
-    try {
-      const created = await apiRequest<Collaborator>("/collaborators", {
-        method: "POST",
-        auth: true,
-        body: payload,
-      });
-
-      // Vincula os serviços selecionados na criação
-      if (created?.id && selectedServiceIdsForNew.size > 0) {
-        await Promise.allSettled(
-          Array.from(selectedServiceIdsForNew).map((svcId) =>
-            apiRequest(`/services/${encodeURIComponent(svcId)}/collaborators`, {
-              method: "POST",
-              auth: true,
-              body: {
-                collaboratorId: created.id,
-                commissionPercentage: payload.commissionPercentage,
-              },
-            }),
-          ),
-        );
-      }
-
-      const loginUrl =
-        typeof window !== "undefined"
-          ? `${window.location.origin}/login`
-          : "/login";
-
-      setInvite({
-        name: payload.name,
-        email: payload.email,
-        phoneE164,
-        tempPassword,
-        loginUrl,
-      });
-      setInviteCopied(false);
-      setDrawerOpen(false);
-      setName("");
-      setEmail("");
-      setPhoneDigits("");
-      setSpecialty("");
-      setCommissionPercentage("40");
-      void loadTeam();
-    } catch (err) {
-      setFormError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
+      if (!q) return true;
+      return (
+        collab.name.toLowerCase().includes(q) ||
+        collab.specialty.toLowerCase().includes(q)
       );
-    } finally {
-      setSubmitting(false);
-    }
+    });
+  }, [collaborators, searchQuery, statusFilter]);
+
+  const handleCreated = (generatedInvite: GeneratedInvite) => {
+    setCreateOpen(false);
+    setInvite(generatedInvite);
+    setInviteCopied(false);
+    void loadTeam();
   };
 
-  const buildInviteText = (data: GeneratedInvite) => {
-    if (locale === "es") {
-      return `¡Hola ${data.name}! Te invitamos al portal de ${session.company.companyName}.\nAcceso: ${data.loginUrl}\nCorreo: ${data.email}\nContraseña temporal: ${data.tempPassword}`;
-    }
-    return `Olá ${data.name}! Você foi convidado(a) para o portal de ${session.company.companyName}.\nAcesso: ${data.loginUrl}\nE-mail: ${data.email}\nSenha temporária: ${data.tempPassword}`;
-  };
+  const buildInviteMessage = (inv: GeneratedInvite) =>
+    `${inv.name}, seu acesso ao portal está pronto!\nLink: ${inv.loginUrl}\nE-mail: ${inv.email}\nSenha: ${inv.tempPassword}`;
 
   const handleCopyInvite = async () => {
     if (!invite) return;
     try {
-      await navigator.clipboard.writeText(buildInviteText(invite));
+      await navigator.clipboard.writeText(buildInviteMessage(invite));
       setInviteCopied(true);
-      setTimeout(() => setInviteCopied(false), 2500);
+      window.setTimeout(() => setInviteCopied(false), 2500);
     } catch {
-      // Fallback silencioso
+      // Clipboard indisponível
     }
   };
 
-  const handleToggleStatus = async (collab: Collaborator) => {
-    setTogglingId(collab.id);
+  const handleSendInviteWhatsApp = () => {
+    if (!invite) return;
+    const digits = stripNonDigits(invite.phoneE164);
+    const text = encodeURIComponent(buildInviteMessage(invite));
+    window.open(`https://wa.me/${digits}?text=${text}`, "_blank", "noopener,noreferrer");
+  };
+
+  const handleOpenQuickLeave = async (collab: Collaborator) => {
+    setCheckingLeaveId(collab.id);
     try {
-      const updated = await apiRequest<Collaborator>(
-        `/collaborators/${encodeURIComponent(collab.id)}/status`,
-        {
-          method: "PATCH",
-          auth: true,
-          body: { isActive: !collab.isActive },
-        },
-      );
-      setCollaborators((prev) =>
-        prev.map((item) => (item.id === collab.id ? updated : item)),
-      );
+      const res = await getCollaboratorFutureAppointmentsCount(collab.id);
+      setLeaveTarget({
+        id: collab.id,
+        name: collab.name,
+        futureCount: res.futureAppointmentsCount ?? 0,
+      });
     } catch (err) {
-      setError(
+      toast.error(
         err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
       );
     } finally {
-      setTogglingId(null);
+      setCheckingLeaveId(null);
     }
   };
 
-  const openEditDrawer = (collab: Collaborator) => {
-    setEditTarget(collab);
-    setEditName(collab.name);
-    setEditSpecialty(collab.specialty);
-    setEditCommission(String(collab.commissionPercentage));
-    setEditError(null);
-    setServicesLoading(true);
-    setLinkedServiceIds(new Set());
-
-    // Carrega os serviços da empresa e identifica quais estão vinculados a este colaborador
-    void (async () => {
-      try {
-        const res = await apiRequest<Service[] | { services?: Service[] }>(
-          "/services",
-          { auth: true },
-        );
-        const list = Array.isArray(res) ? res : (res.services ?? []);
-        setAllServices(list);
-        const linked = new Set<string>();
-        await Promise.all(
-          list.map(async (svc) => {
-            try {
-              const sc = await apiRequest<ServiceCollaboratorsResponse>(
-                `/services/${encodeURIComponent(svc.id)}/collaborators`,
-                { auth: true },
-              );
-              if (
-                (sc.collaborators ?? []).some(
-                  (item) => item.collaboratorId === collab.id,
-                )
-              ) {
-                linked.add(svc.id);
-              }
-            } catch {
-              // Ignora erro individual de vínculo
-            }
-          }),
-        );
-        setLinkedServiceIds(linked);
-      } catch {
-        // Mantém a edição de dados básicos funcional mesmo se falhar o carregamento dos serviços
-      } finally {
-        setServicesLoading(false);
-      }
-    })();
-  };
-
-  const handleToggleCollaboratorService = async (serviceId: string) => {
-    if (!editTarget) return;
-    setTogglingServiceId(serviceId);
-    setEditError(null);
-    const isLinked = linkedServiceIds.has(serviceId);
+  const handleQuickReactivate = async (collab: Collaborator) => {
+    setReactivatingId(collab.id);
     try {
-      if (isLinked) {
-        await apiRequest(
-          `/services/${encodeURIComponent(serviceId)}/collaborators/${encodeURIComponent(editTarget.id)}`,
-          { method: "DELETE", auth: true },
-        );
-        setLinkedServiceIds((prev) => {
-          const next = new Set(prev);
-          next.delete(serviceId);
-          return next;
-        });
-      } else {
-        await apiRequest(
-          `/services/${encodeURIComponent(serviceId)}/collaborators`,
-          {
-            method: "POST",
-            auth: true,
-            body: {
-              collaboratorId: editTarget.id,
-              commissionPercentage:
-                Number(editCommission) || editTarget.commissionPercentage || 0,
-            },
-          },
-        );
-        setLinkedServiceIds((prev) => new Set(prev).add(serviceId));
-      }
+      await updateCollaboratorStatus(collab.id, true);
+      toast.success(t.owner.collaboratorProfile.reactivatedToast);
+      await loadTeam();
     } catch (err) {
-      setEditError(
+      toast.error(
         err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
       );
     } finally {
-      setTogglingServiceId(null);
+      setReactivatingId(null);
     }
   };
 
-  const handleSaveEdit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!editTarget) return;
-    setEditSaving(true);
-    setEditError(null);
-    try {
-      const updated = await apiRequest<Collaborator>(
-        `/collaborators/${encodeURIComponent(editTarget.id)}`,
-        {
-          method: "PATCH",
-          auth: true,
-          body: {
-            name: editName.trim(),
-            specialty: editSpecialty.trim(),
-            commissionPercentage: Number(editCommission) || 0,
-          },
-        },
-      );
-      setCollaborators((prev) =>
-        prev.map((item) => (item.id === updated.id ? updated : item)),
-      );
-      setEditTarget(null);
-    } catch (err) {
-      setEditError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
-    } finally {
-      setEditSaving(false);
-    }
-  };
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div
+              key={idx}
+              className="h-24 rounded-2xl border border-border-subtle bg-surface animate-pulse"
+            />
+          ))}
+        </div>
+        <CardListSkeleton count={4} />
+      </div>
+    );
+  }
 
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      const url = transferToId
-        ? `/collaborators/${encodeURIComponent(deleteTarget.id)}?transferToCollaboratorId=${encodeURIComponent(transferToId)}`
-        : `/collaborators/${encodeURIComponent(deleteTarget.id)}`;
-
-      await apiRequest<void>(url, { method: "DELETE", auth: true });
-      setCollaborators((prev) =>
-        prev.filter((item) => item.id !== deleteTarget.id),
-      );
-      setDeleteTarget(null);
-      setTransferToId("");
-      setHasAppointmentConflict(false);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setHasAppointmentConflict(true);
-        setDeleteError(t.common.transferAppointmentsNotice);
-      } else {
-        setDeleteError(
-          err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-        );
-      }
-    } finally {
-      setDeleting(false);
-    }
-  };
+  if (error) {
+    return (
+      <ErrorState
+        title={t.errors.unexpectedTitle}
+        description={error}
+        retryLabel={t.common.retry}
+        onRetry={() => void loadTeam()}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 sm:grid-cols-3">
-        <div className="card-interactive rounded-2xl border border-border-subtle bg-surface p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink-muted">
-              {t.owner.teamTitle}
-            </span>
-            <Users className="h-4 w-4 text-accent" aria-hidden="true" />
-          </div>
-          <p className="mt-2 font-mono text-2xl font-bold text-ink tabular-nums">
-            {kpis.total}
-          </p>
+      {/* Header Principal */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">
+            {t.owner.teamTitle}
+          </h1>
+          <p className="text-sm text-ink-muted mt-0.5">{td.subtitle}</p>
         </div>
 
-        <div className="card-interactive rounded-2xl border border-border-subtle bg-surface p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink-muted">
-              {t.common.active}
-            </span>
-            <UserCheck
-              className="h-4 w-4 text-[var(--status-success-ink)]"
-              aria-hidden="true"
-            />
-          </div>
-          <p className="mt-2 font-mono text-2xl font-bold text-ink tabular-nums">
-            {kpis.activeCount}
-          </p>
-        </div>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setCriteriaOpen(true)}
+            className="cursor-pointer border-border-strong bg-surface text-ink hover:bg-subtle"
+          >
+            <SlidersHorizontal className="h-4 w-4 mr-1.5 text-accent" />
+            {td.criteriaAndAwardsBtn}
+          </Button>
 
-        <div className="card-interactive rounded-2xl border border-border-subtle bg-surface p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink-muted">
-              {t.common.inactive}
-            </span>
-            <UserX className="h-4 w-4 text-ink-muted" aria-hidden="true" />
-          </div>
-          <p className="mt-2 font-mono text-2xl font-bold text-ink tabular-nums">
-            {kpis.inactiveCount}
-          </p>
+          <Button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="cursor-pointer bg-accent text-accent-ink hover:bg-accent-hover"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            {t.owner.newCollaborator}
+          </Button>
         </div>
-      </section>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-title-sm font-bold text-ink">
-          {t.owner.teamTitle}
-        </h2>
-        <Button
-          type="button"
-          onClick={() => void openNewCollaboratorModal()}
-          className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          {t.owner.newCollaborator}
-        </Button>
       </div>
 
-      {loading ? (
-        <CardListSkeleton count={3} />
-      ) : error ? (
-        <ErrorState
-          title={t.errors.networkTitle}
-          description={error}
-          retryLabel={t.common.retry}
-          onRetry={() => void loadTeam()}
-        />
-      ) : collaborators.length === 0 ? (
+      {/* 4 Cards de KPIs Consolidados */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 flex items-center gap-3.5 transition-colors">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <Users className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-ink-muted truncate">
+              {td.kpiActiveTeam}
+            </p>
+            <p className="text-xl font-semibold text-ink mt-0.5 tabular-nums">
+              {computedKpis.activeCollaborators}
+              <span className="text-sm font-normal text-ink-muted">
+                {" "}
+                / {computedKpis.totalCollaborators}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 flex items-center gap-3.5 transition-colors">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <CalendarCheck className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-ink-muted truncate">
+              {td.kpiMonthlyAppointments}
+            </p>
+            <p className="text-xl font-semibold text-ink mt-0.5 tabular-nums">
+              {computedKpis.totalCompletedAppointmentsMonth}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 flex items-center gap-3.5 transition-colors">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <TrendingUp className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-ink-muted truncate">
+              {td.kpiMonthlyRevenue}
+            </p>
+            <p className="text-xl font-semibold text-ink mt-0.5 tabular-nums truncate">
+              {formatPrice(
+                computedKpis.totalRevenueMonthInCents / 100,
+                locale,
+                currency,
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 flex items-center gap-3.5 transition-colors">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-500">
+            <Star className="h-5 w-5 fill-amber-500" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-ink-muted truncate">
+              {td.kpiAverageRating}
+            </p>
+            <p className="text-xl font-semibold text-ink mt-0.5 tabular-nums flex items-center gap-1">
+              {computedKpis.averageTeamRating.toFixed(1)}
+              <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Barra de Busca e Filtros */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-muted" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={td.searchPlaceholder}
+            className="pl-10 bg-surface"
+          />
+        </div>
+
+        <div className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface p-1 self-start sm:self-auto">
+          {(
+            [
+              { key: "ALL", label: td.filterAll },
+              { key: "ACTIVE", label: td.filterActive },
+              { key: "INACTIVE", label: td.filterInactive },
+            ] as const
+          ).map((pill) => {
+            const selected = statusFilter === pill.key;
+            return (
+              <button
+                key={pill.key}
+                type="button"
+                onClick={() => setStatusFilter(pill.key)}
+                className={[
+                  "cursor-pointer rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all",
+                  selected
+                    ? "bg-accent text-accent-ink shadow-xs"
+                    : "text-ink-secondary hover:text-ink hover:bg-subtle",
+                ].join(" ")}
+              >
+                {pill.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Grid de Cards Verticais (Formato Retrato) */}
+      {collaborators.length === 0 ? (
         <EmptyState
-          title={t.common.noData}
-          description={t.owner.teamTitle}
-          icon={<Users className="h-6 w-6" aria-hidden="true" />}
+          icon={<Users className="h-6 w-6" />}
+          title={t.owner.teamTitle}
+          description={td.subtitle}
           action={
             <Button
               type="button"
-              onClick={() => setDrawerOpen(true)}
-              className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
+              onClick={() => setCreateOpen(true)}
+              className="cursor-pointer"
             >
-              <Plus className="h-4 w-4" aria-hidden="true" />
+              <Plus className="h-4 w-4 mr-1.5" />
               {t.owner.newCollaborator}
             </Button>
           }
         />
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {collaborators.map((collab) => (
-            <article
-              key={collab.id}
-              className="card-interactive flex flex-col justify-between gap-4 rounded-2xl border border-border-subtle bg-surface p-5"
+      ) : filteredCollaborators.length === 0 ? (
+        <EmptyState
+          icon={<Search className="h-6 w-6" />}
+          title={td.emptyFilterTitle}
+          description={td.emptyFilterDescription}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSearchQuery("");
+                setStatusFilter("ALL");
+              }}
+              className="cursor-pointer"
             >
-              <div className="space-y-2.5 min-w-0">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    {collab.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={collab.avatarUrl}
-                        alt={collab.name}
-                        className="h-11 w-11 shrink-0 rounded-full object-cover border border-border-subtle shadow-xs"
-                      />
-                    ) : (
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-bold text-accent">
-                        {collab.name.slice(0, 2).toUpperCase()}
+              {td.clearFilters}
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+          {filteredCollaborators.map((collab) => {
+            const avatarSrc = resolveCollaboratorAvatarUrl(collab.avatarUrl);
+            const isActive = collab.status
+              ? collab.status === "ACTIVE"
+              : collab.isActive;
+            const rankPos = collab.rankingPosition ?? 0;
+            const rankScore = Math.round(collab.rankingScore ?? 0);
+            const avgRating = collab.averageRating ?? 0;
+            const totalReviews = collab.totalReviews ?? 0;
+            const awardsCount = collab.awardsCount ?? 0;
+            const completedMonth = collab.completedAppointmentsMonth ?? 0;
+            const commissionMonth = collab.commissionMonthInCents ?? 0;
+            const commissionRate =
+              collab.defaultCommissionRate && collab.defaultCommissionRate > 0
+                ? collab.defaultCommissionRate
+                : collab.commissionPercentage;
+
+            const rawWhatsapp = collab.whatsapp || collab.phone;
+            const whatsappDigits = rawWhatsapp ? stripNonDigits(rawWhatsapp) : "";
+            const hasWhatsapp = whatsappDigits.length >= 8;
+            const profileHref = `/owner/collaborators/${encodeURIComponent(collab.id)}`;
+            const blocksHref = `/owner/blocks?collaboratorId=${encodeURIComponent(collab.id)}`;
+
+            return (
+              <article
+                key={collab.id}
+                className={[
+                  "group flex flex-col overflow-hidden rounded-2xl border border-border-subtle bg-surface shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-md",
+                  !isActive ? "opacity-75" : "",
+                ].join(" ")}
+              >
+                {/* Cabeçalho Retrato (Foto ou Gradiente com Iniciais) */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => router.push(profileHref)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(profileHref);
+                    }
+                  }}
+                  className="cursor-pointer relative h-48 w-full overflow-hidden bg-subtle select-none"
+                >
+                  {avatarSrc ? (
+                    <img
+                      src={avatarSrc}
+                      alt={collab.name}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
+                  ) : (
+                    <div
+                      className="flex h-full w-full items-center justify-center"
+                      style={{
+                        background:
+                          "linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 18%, var(--surface-subtle)) 0%, var(--surface-elevated) 100%)",
+                      }}
+                    >
+                      <span className="text-4xl font-semibold tracking-tight text-accent/85">
+                        {getInitials(collab.name)}
                       </span>
-                    )}
+                    </div>
+                  )}
+
+                  {/* Gradiente sutil inferior para legibilidade */}
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-slate-950/35 to-transparent" />
+
+                  {/* Badge de Ranking (Canto Superior Esquerdo) */}
+                  {rankPos > 0 && (
+                    <div
+                      className={[
+                        "absolute top-3 left-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold shadow-xs backdrop-blur-md",
+                        rankPos === 1
+                          ? "bg-amber-400/95 text-slate-950"
+                          : "bg-slate-900/75 text-white",
+                      ].join(" ")}
+                    >
+                      {(rankPos === 1 || awardsCount > 0) && (
+                        <Trophy className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span>#{rankPos}</span>
+                    </div>
+                  )}
+
+                  {/* Pill de Status (Canto Superior Direito) */}
+                  <span
+                    className={[
+                      "absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-xs backdrop-blur-md",
+                      isActive
+                        ? "bg-emerald-500/90 text-white"
+                        : "bg-slate-700/85 text-slate-100",
+                    ].join(" ")}
+                  >
+                    <span
+                      className={[
+                        "h-1.5 w-1.5 rounded-full",
+                        isActive ? "bg-emerald-100" : "bg-slate-300",
+                      ].join(" ")}
+                    />
+                    {isActive ? t.common.active : t.common.inactive}
+                  </span>
+                </div>
+
+                {/* Corpo de Identidade & Avaliação */}
+                <div className="flex flex-1 flex-col p-4">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => router.push(profileHref)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(profileHref);
+                      }
+                    }}
+                    className="cursor-pointer min-w-0"
+                  >
+                    <h2 className="truncate text-base font-semibold text-ink group-hover:text-accent transition-colors">
+                      {collab.name}
+                    </h2>
+                    <p className="truncate text-xs text-ink-muted mt-0.5">
+                      {collab.specialty}
+                    </p>
+                  </div>
+
+                  {/* Linha de Estrelas e Score de Ranking */}
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="inline-flex items-center gap-1 text-xs font-medium text-ink">
+                      <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 shrink-0" />
+                      {totalReviews > 0 ? (
+                        <>
+                          <span className="tabular-nums">
+                            {avgRating.toFixed(1)}
+                          </span>
+                          <span className="text-ink-muted">
+                            ({totalReviews})
+                          </span>
+                        </>
+                      ) : (
+                        <span className="rounded-md bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">
+                          {td.newBadge}
+                        </span>
+                      )}
+                    </div>
+
+                    <span className="inline-flex items-center rounded-full border border-border-subtle bg-subtle px-2 py-0.5 text-[11px] font-medium text-ink-secondary tabular-nums">
+                      {rankScore} {td.rankingPts}
+                    </span>
+                  </div>
+
+                  {/* Mini-Métricas do Mês (2 colunas compactas) */}
+                  <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-border-subtle bg-subtle/60 p-2.5">
                     <div className="min-w-0">
-                      <h3 className="text-base font-bold text-ink truncate">
-                        {collab.name}
-                      </h3>
-                      <p className="text-xs text-ink-secondary truncate">
-                        {collab.specialty}
+                      <p className="text-[11px] text-ink-muted truncate">
+                        {td.appointmentsMonthLabel}
+                      </p>
+                      <p className="text-sm font-semibold text-ink tabular-nums mt-0.5">
+                        {completedMonth}
+                      </p>
+                    </div>
+
+                    <div className="min-w-0 border-l border-border-subtle pl-2.5">
+                      <p className="text-[11px] text-ink-muted truncate">
+                        {td.commissionMonthLabel}
+                      </p>
+                      <p className="text-sm font-semibold text-ink tabular-nums mt-0.5 truncate">
+                        {formatPrice(commissionMonth / 100, locale, currency)}
+                      </p>
+                      <p className="text-[10px] text-ink-muted tabular-nums">
+                        {formatPercentage(commissionRate, locale)}
                       </p>
                     </div>
                   </div>
-                  <StatusBadge
-                    tone={collab.isActive ? "success" : "neutral"}
-                    label={collab.isActive ? t.common.active : t.common.inactive}
-                  />
-                </div>
-                <p className="text-xs text-ink-muted truncate">{collab.email}</p>
-                <p className="font-mono text-xs text-ink-secondary tabular-nums">
-                  {collab.phone} ·{" "}
-                  <strong className="text-ink">
-                    {formatPercentage(collab.commissionPercentage, locale)}
-                  </strong>
-                </p>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => openEditDrawer(collab)}
-                  className="min-h-11 rounded-xl px-3.5 text-xs cursor-pointer"
-                >
-                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t.common.edit}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={togglingId === collab.id}
-                  onClick={() => void handleToggleStatus(collab)}
-                  className="min-h-11 flex-1 rounded-xl text-xs cursor-pointer"
-                >
-                  {togglingId === collab.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Power className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  {collab.isActive ? t.common.inactive : t.common.active}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  aria-label={t.common.delete}
-                  onClick={() => {
-                    setDeleteError(null);
-                    setDeleteTarget(collab);
-                  }}
-                  className="min-h-11 rounded-xl border-[var(--status-danger-border)] px-3 text-[var(--status-danger-ink)] hover:bg-[var(--status-danger-bg)] cursor-pointer"
-                >
-                  <Trash2 className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </article>
-          ))}
+                  {/* Rodapé de Ações Rápidas */}
+                  <div className="mt-4 pt-3 border-t border-border-subtle flex items-center gap-2">
+                    <Link
+                      href={profileHref}
+                      className="cursor-pointer flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-medium text-accent-ink hover:bg-accent-hover transition-colors"
+                    >
+                      <UserRound className="h-3.5 w-3.5" />
+                      {td.viewProfile}
+                    </Link>
+
+                    {hasWhatsapp ? (
+                      <a
+                        href={`https://wa.me/${whatsappDigits}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={td.whatsappAction}
+                        aria-label={td.whatsappAction}
+                        className="cursor-pointer inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle text-[#25D366] hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-colors"
+                      >
+                        <WhatsAppIcon className="h-4 w-4" />
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        title={td.whatsappUnavailable}
+                        aria-label={td.whatsappUnavailable}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle text-ink-muted opacity-40 cursor-not-allowed"
+                      >
+                        <WhatsAppIcon className="h-4 w-4" />
+                      </button>
+                    )}
+
+                    <Link
+                      href={blocksHref}
+                      title={td.quickBlockAction}
+                      aria-label={td.quickBlockAction}
+                      className="cursor-pointer inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle text-ink-secondary hover:text-ink hover:border-border-strong transition-colors"
+                    >
+                      <CalendarOff className="h-4 w-4" />
+                    </Link>
+
+                    {isActive ? (
+                      <button
+                        type="button"
+                        disabled={checkingLeaveId === collab.id}
+                        onClick={() => void handleOpenQuickLeave(collab)}
+                        title={td.quickLeaveAction}
+                        aria-label={td.quickLeaveAction}
+                        className="cursor-pointer inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle text-ink-secondary hover:text-red-600 dark:hover:text-red-400 hover:border-red-500/40 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                      >
+                        {checkingLeaveId === collab.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <UserX className="h-4 w-4" />
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={reactivatingId === collab.id}
+                        onClick={() => void handleQuickReactivate(collab)}
+                        title={td.quickReactivateAction}
+                        aria-label={td.quickReactivateAction}
+                        className="cursor-pointer inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle text-emerald-600 dark:text-emerald-400 hover:border-emerald-500/40 hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                      >
+                        {reactivatingId === collab.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <UserCheck className="h-4 w-4" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
-      {/* Modal: Novo Colaborador */}
+      {/* Modal de Cadastro Enriquecido (+ Novo Colaborador) */}
+      <NewCollaboratorModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+      />
+
+      {/* Modal de Critérios do Funcionário do Mês & Premiação */}
+      <RankingCriteriaModal
+        open={criteriaOpen}
+        onClose={() => setCriteriaOpen(false)}
+        onUpdated={loadTeam}
+      />
+
+      {/* Modal Rápido de Afastamento / Desativação Estruturada */}
+      {leaveTarget && (
+        <DeactivationModal
+          open={true}
+          collaboratorId={leaveTarget.id}
+          collaboratorName={leaveTarget.name}
+          futureCount={leaveTarget.futureCount}
+          title={t.owner.collaboratorProfile.quickLeaveModalTitle}
+          onClose={() => setLeaveTarget(null)}
+          onDeactivated={loadTeam}
+        />
+      )}
+
+      {/* Modal de Convite Gerado (Pós-criação) */}
       <Modal
-        open={drawerOpen}
-        title={t.owner.newCollaborator}
-        maxWidth="max-w-xl"
-        onClose={() => setDrawerOpen(false)}
-      >
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="collab-name">{t.auth.nameLabel}</Label>
-            <Input
-              id="collab-name"
-              required
-              minLength={2}
-              maxLength={80}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="collab-email">{t.auth.emailLabel}</Label>
-            <Input
-              id="collab-email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          <PhoneInput
-            id="collab-phone"
-            label={t.auth.phoneLabel}
-            countryCode={countryCode}
-            value={phoneDigits}
-            onCountryCodeChange={setCountryCode}
-            onChange={setPhoneDigits}
-          />
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="collab-specialty">{t.common.specialty}</Label>
-              <Input
-                id="collab-specialty"
-                required
-                minLength={1}
-                value={specialty}
-                onChange={(e) => setSpecialty(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="collab-commission">
-                {t.owner.commissions} (%)
-              </Label>
-              <Input
-                id="collab-commission"
-                type="number"
-                min={0}
-                max={100}
-                step="0.5"
-                required
-                value={commissionPercentage}
-                onChange={(e) => setCommissionPercentage(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5 tabular-nums"
-              />
-            </div>
-          </div>
-
-          {/* Vínculo de Serviços na Criação */}
-          {createServices.length > 0 && (
-            <div className="space-y-2 rounded-xl border border-border-subtle bg-subtle/50 p-3.5">
-              <Label className="text-xs font-bold text-ink">
-                {t.common.manageServices} ({t.common.all})
-              </Label>
-              <div className="grid gap-2 max-h-40 overflow-y-auto pr-1">
-                {createServices.map((svc) => {
-                  const isChecked = selectedServiceIdsForNew.has(svc.id);
-                  return (
-                    <label
-                      key={svc.id}
-                      className="flex items-center gap-2.5 rounded-lg bg-surface px-3 py-2 text-xs font-medium text-ink cursor-pointer border border-border-subtle hover:border-border-strong transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={(e) => {
-                          const next = new Set(selectedServiceIdsForNew);
-                          if (e.target.checked) next.add(svc.id);
-                          else next.delete(svc.id);
-                          setSelectedServiceIdsForNew(next);
-                        }}
-                        className="h-4 w-4 rounded border-border-strong accent-[var(--accent)]"
-                      />
-                      <span className="truncate flex-1">{svc.name}</span>
-                      <span className="text-[11px] text-ink-muted tabular-nums">
-                        {svc.durationMinutes} min
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {formError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {formError}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={submitting}
-            className="min-h-11 w-full rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {submitting && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-      </Modal>
-
-      {/* Modal: Convite Gerado */}
-      <Modal
-        open={Boolean(invite)}
-        title={t.owner.inviteTitle}
+        open={invite !== null}
         onClose={() => setInvite(null)}
+        title={t.owner.inviteTitle}
       >
         {invite && (
           <div className="space-y-4">
-            <p className="text-sm text-ink-secondary">
-              {t.owner.inviteSubtitle}
-            </p>
+            <p className="text-sm text-ink-secondary">{t.owner.inviteSubtitle}</p>
 
             <div className="rounded-xl border border-border-subtle bg-subtle p-4 space-y-2 text-xs">
-              <div>
-                <p className="text-ink-muted">{t.auth.emailLabel}</p>
-                <p className="font-mono font-semibold text-ink break-all">
-                  {invite.email}
-                </p>
+              <div className="flex justify-between gap-2">
+                <span className="text-ink-muted">{t.auth.nameLabel}:</span>
+                <span className="font-medium text-ink">{invite.name}</span>
               </div>
-              <div>
-                <p className="text-ink-muted">{t.owner.tempPasswordLabel}</p>
-                <p className="font-mono text-sm font-bold text-accent select-all">
+              <div className="flex justify-between gap-2">
+                <span className="text-ink-muted">{t.auth.emailLabel}:</span>
+                <span className="font-mono text-ink">{invite.email}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-ink-muted">{t.owner.tempPasswordLabel}:</span>
+                <span className="font-mono font-semibold text-ink">
                   {invite.tempPassword}
-                </p>
+                </span>
               </div>
-              <div>
-                <p className="text-ink-muted">{t.owner.loginLinkLabel}</p>
-                <p className="font-mono text-ink break-all">{invite.loginUrl}</p>
+              <div className="flex justify-between gap-2">
+                <span className="text-ink-muted">{t.owner.loginLinkLabel}:</span>
+                <span className="font-mono text-ink truncate max-w-[200px]">
+                  {invite.loginUrl}
+                </span>
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 type="button"
-                onClick={() => void handleCopyInvite()}
-                className="min-h-11 flex-1 rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
+                variant="outline"
+                onClick={handleCopyInvite}
+                className="cursor-pointer"
               >
                 {inviteCopied ? (
-                  <Check className="h-4 w-4" aria-hidden="true" />
+                  <Check className="h-4 w-4 mr-1.5 text-emerald-500" />
                 ) : (
-                  <Copy className="h-4 w-4" aria-hidden="true" />
+                  <Copy className="h-4 w-4 mr-1.5" />
                 )}
                 {inviteCopied ? t.common.copied : t.owner.copyInvite}
               </Button>
 
-              <a
-                href={`https://wa.me/${stripNonDigits(invite.phoneE164)}?text=${encodeURIComponent(buildInviteText(invite))}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-full border border-border-strong bg-surface px-4 text-sm font-semibold text-ink transition-colors hover:bg-subtle"
+              <Button
+                type="button"
+                onClick={handleSendInviteWhatsApp}
+                className="cursor-pointer bg-[#25D366] text-slate-950 hover:bg-[#1ebe5d]"
               >
-                <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                <WhatsAppIcon className="h-4 w-4 mr-1.5" />
                 {t.owner.sendWhatsApp}
-              </a>
-            </div>
-          </div>
-        )}
-      </Modal>
-      {/* Modal: Editar Colaborador */}
-      <Modal
-        open={Boolean(editTarget)}
-        title={t.common.editCollaborator}
-        maxWidth="max-w-xl"
-        onClose={() => setEditTarget(null)}
-      >
-        <form onSubmit={handleSaveEdit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="edit-collab-name">{t.auth.nameLabel}</Label>
-            <Input
-              id="edit-collab-name"
-              required
-              minLength={2}
-              maxLength={80}
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-collab-specialty">{t.common.specialty}</Label>
-              <Input
-                id="edit-collab-specialty"
-                required
-                minLength={1}
-                value={editSpecialty}
-                onChange={(e) => setEditSpecialty(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-collab-commission">
-                {t.owner.commissions} (%)
-              </Label>
-              <Input
-                id="edit-collab-commission"
-                type="number"
-                min={0}
-                max={100}
-                step="0.5"
-                required
-                value={editCommission}
-                onChange={(e) => setEditCommission(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5 tabular-nums"
-              />
-            </div>
-          </div>
-
-          {editError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {editError}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={editSaving}
-            className="min-h-11 w-full rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {editSaving && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-
-        {/* Serviços habilitados para este colaborador */}
-        <div className="mt-6 border-t border-border-subtle pt-5 space-y-3">
-          <h3 className="text-sm font-bold text-ink">
-            {t.common.manageServices}
-          </h3>
-          {servicesLoading ? (
-            <div className="flex items-center gap-2 text-xs text-ink-muted py-2">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              {t.common.loading}
-            </div>
-          ) : allServices.length === 0 ? (
-            <p className="text-xs text-ink-muted">{t.common.noData}</p>
-          ) : (
-            <ul className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {allServices.map((svc) => {
-                const checked = linkedServiceIds.has(svc.id);
-                const busy = togglingServiceId === svc.id;
-                return (
-                  <li
-                    key={svc.id}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-subtle px-3.5 py-2.5"
-                  >
-                    <label
-                      htmlFor={`edit-svc-${svc.id}`}
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-sm font-medium text-ink"
-                    >
-                      <input
-                        id={`edit-svc-${svc.id}`}
-                        type="checkbox"
-                        checked={checked}
-                        disabled={busy}
-                        onChange={() =>
-                          void handleToggleCollaboratorService(svc.id)
-                        }
-                        className="h-4 w-4 rounded border-border-strong accent-[var(--accent)]"
-                      />
-                      <span className="truncate">{svc.name}</span>
-                    </label>
-                    {busy && (
-                      <Loader2
-                        className="h-3.5 w-3.5 shrink-0 animate-spin text-accent"
-                        aria-hidden="true"
-                      />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </Modal>
-
-      {/* Modal: Confirmar Exclusão de Colaborador */}
-      <Modal
-        open={Boolean(deleteTarget)}
-        title={t.common.confirmDeleteTitle}
-        onClose={() => {
-          setDeleteTarget(null);
-          setTransferToId("");
-          setHasAppointmentConflict(false);
-          setDeleteError(null);
-        }}
-      >
-        {deleteTarget && (
-          <div className="space-y-4">
-            <p className="text-sm text-ink-secondary">
-              {t.common.confirmDeleteCollaborator}
-            </p>
-            <p className="rounded-xl bg-subtle px-3.5 py-2.5 text-sm font-semibold text-ink">
-              {deleteTarget.name} ({deleteTarget.specialty})
-            </p>
-
-            {/* Seletor de transferência de agendamentos */}
-            {collaborators.filter((c) => c.id !== deleteTarget.id && c.isActive).length > 0 && (
-              <div
-                className={[
-                  "space-y-2 rounded-xl border bg-subtle/60 p-3.5 transition-all",
-                  hasAppointmentConflict
-                    ? "border-amber-500/60 ring-2 ring-amber-500/20"
-                    : "border-border-subtle",
-                ].join(" ")}
-              >
-                <Label htmlFor="transfer-collab-select" className="text-xs font-bold text-ink">
-                  {t.common.transferToSelectLabel}
-                </Label>
-                <select
-                  id="transfer-collab-select"
-                  value={transferToId}
-                  onChange={(e) => {
-                    setTransferToId(e.target.value);
-                    setDeleteError(null);
-                  }}
-                  className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-xs text-ink cursor-pointer"
-                >
-                  <option value="">{t.common.all} ({t.common.delete})</option>
-                  {collaborators
-                    .filter((c) => c.id !== deleteTarget.id && c.isActive)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.specialty})
-                      </option>
-                    ))}
-                </select>
-                <p className="text-[11px] text-ink-muted">
-                  {t.common.transferAppointmentsNotice}
-                </p>
-              </div>
-            )}
-
-            {deleteError && (
-              <p
-                role="alert"
-                className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-              >
-                {deleteError}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setDeleteTarget(null);
-                  setTransferToId("");
-                  setHasAppointmentConflict(false);
-                  setDeleteError(null);
-                }}
-                className="min-h-11 rounded-full px-5 cursor-pointer"
-              >
-                {t.common.cancel}
-              </Button>
-              <Button
-                type="button"
-                disabled={deleting}
-                onClick={() => void handleConfirmDelete()}
-                className="min-h-11 rounded-full bg-[var(--status-danger-ink)] px-5 text-white hover:opacity-90 cursor-pointer"
-              >
-                {deleting && (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                )}
-                {transferToId
-                  ? t.common.transferAndDeleteAction
-                  : t.common.delete}
               </Button>
             </div>
           </div>

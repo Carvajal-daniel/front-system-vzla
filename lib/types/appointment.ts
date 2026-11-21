@@ -22,6 +22,7 @@ export interface Appointment {
   endsAt: string;
   status: AppointmentStatus;
   cancellationReason: string | null;
+  notes?: string | null;
   serviceNameSnapshot: string;
   servicePriceInCentsSnapshot: number;
   serviceDurationMinutesSnapshot: number;
@@ -44,6 +45,7 @@ export interface CreateAppointmentPayload {
   clientName: string;
   clientPhone: string;
   initialStatus?: "PENDING" | "CONFIRMED";
+  notes?: string;
 }
 
 export interface UpdateAppointmentStatusPayload {

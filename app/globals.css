@@ -2,7 +2,77 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+@source "../components/ui";
+
 @custom-variant dark (&:is(.dark *));
+
+[data-agenda-status="CONFIRMED"] {
+  --appointment-accent: #16a34a;
+  --appointment-ink: #14532d;
+  --appointment-dark: #86efac;
+}
+
+[data-agenda-status="PENDING"] {
+  --appointment-accent: #eab308;
+  --appointment-ink: #713f12;
+  --appointment-dark: #fde047;
+}
+
+[data-agenda-status="CANCELED"] {
+  --appointment-accent: #ef4444;
+  --appointment-ink: #991b1b;
+  --appointment-dark: #fca5a5;
+}
+
+[data-agenda-status="NO_SHOW"] {
+  --appointment-accent: #f97316;
+  --appointment-ink: #9a3412;
+  --appointment-dark: #fdba74;
+}
+
+[data-agenda-status="COMPLETED"] {
+  --appointment-accent: #3b82f6;
+  --appointment-ink: #1e40af;
+  --appointment-dark: #93c5fd;
+}
+
+[data-agenda-status] {
+  --appointment-fill: color-mix(in srgb, var(--appointment-accent) 13%, var(--surface-elevated));
+}
+
+.dark [data-agenda-status] {
+  --appointment-ink: var(--appointment-dark);
+  --appointment-fill: color-mix(in srgb, var(--appointment-accent) 20%, var(--surface-elevated));
+}
+
+[data-agenda-event],
+[data-agenda-status-badge] {
+  background-color: var(--appointment-fill);
+  color: var(--appointment-ink);
+}
+
+[data-agenda-event],
+[data-agenda-card] {
+  border-inline-start-color: var(--appointment-accent);
+}
+
+[data-agenda-event] {
+  container-type: inline-size;
+}
+
+[data-agenda-status-badge] {
+  border-color: var(--appointment-accent);
+}
+
+[data-agenda-status-dot] {
+  background-color: var(--appointment-accent);
+}
+
+@container (max-width: 4.5rem) {
+  [data-agenda-compact-paid-label] {
+    display: none;
+  }
+}
 
 /* ============================================================================
  * Design System Clean & Minimalista
