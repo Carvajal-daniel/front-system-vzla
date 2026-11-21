@@ -52,6 +52,7 @@ import {
   getClientInitials,
 } from "@/components/ui/agenda-card";
 import { useSession } from "@/components/ui/auth-guard";
+import { ReceiptDialog } from "./receipt-dialog";
 import { Button } from "@/components/ui/button";
 import { CardListSkeleton } from "@/components/ui/card-list-skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -108,6 +109,7 @@ function getIsoDateInTimezone(isoUtcString: string, timeZone: string): string {
 
 export function AppointmentsPanel() {
   const { session } = useSession();
+  const [receiptAppointmentId, setReceiptAppointmentId] = useState<string | null>(null);
   const { locale, t } = useLocale();
   const searchParams = useSearchParams();
   const timezone = session.company.timezone;
@@ -471,6 +473,11 @@ export function AppointmentsPanel() {
     nextStatus: UpdatableAppointmentStatus,
     cancellationReason?: string,
   ) => {
+    const target = appointments.find((appointment) => appointment.id === appointmentId);
+    if (nextStatus === "COMPLETED" && target && Date.parse(target.startsAt) > Date.now()) {
+      setActionError(t.common.completeAfterStart);
+      return false;
+    }
     setUpdatingId(appointmentId);
     setActionError(null);
     try {
@@ -490,7 +497,13 @@ export function AppointmentsPanel() {
       );
       return true;
     } catch (err) {
-      setActionError(translateApiError(err));
+      if (err instanceof ApiError && err.message === "Cannot complete an appointment before its scheduled date and time.") {
+        setActionError(t.common.completeAfterStart);
+      } else if (err instanceof ApiError && err.message === "The appointment changed. Refresh and try again.") {
+        setActionError(t.common.appointmentChanged);
+      } else {
+        setActionError(translateApiError(err));
+      }
       return false;
     } finally {
       setUpdatingId(null);
@@ -685,7 +698,7 @@ export function AppointmentsPanel() {
             <span className="hidden sm:inline-flex items-center rounded-full bg-subtle px-2.5 py-0.5 font-mono text-xs font-medium text-ink-secondary tabular-nums">
               {t.owner.revenueForecast}:{" "}
               <span className="ml-1 font-semibold text-ink">
-                {formatPriceFromCents(kpis.revenueCents, locale)}
+                {formatPriceFromCents(kpis.revenueCents, locale, session.company.currency)}
               </span>
             </span>
           </div>
@@ -1093,6 +1106,8 @@ export function AppointmentsPanel() {
                     key={appt.id}
                     appointment={appt}
                     timezone={timezone}
+                    currency={session.company.currency}
+                    onOpenPayments={appt.status === "PENDING" ? undefined : () => setReceiptAppointmentId(appt.id)}
                     collaboratorName={collab?.name}
                     collaboratorAvatarUrl={collab?.avatarUrl}
                     busy={updatingId === appt.id}
@@ -1111,6 +1126,10 @@ export function AppointmentsPanel() {
       </div>
 
       {/* Modal: Motivo de cancelamento */}
+      {receiptAppointmentId && (
+        <ReceiptDialog appointmentId={receiptAppointmentId} timezone={timezone}
+          onClose={() => setReceiptAppointmentId(null)} />
+      )}
       <Modal
         open={Boolean(cancelTarget)}
         title={t.common.cancelModalTitle}
@@ -1198,7 +1217,7 @@ export function AppointmentsPanel() {
               <option value="">—</option>
               {activeServices.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name} ({formatPriceFromCents(s.priceInCents, locale)})
+                  {s.name} ({formatPriceFromCents(s.priceInCents, locale, session.company.currency)})
                 </option>
               ))}
             </select>

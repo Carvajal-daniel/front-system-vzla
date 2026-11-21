@@ -284,6 +284,11 @@ export function MyAppointmentsPanel() {
     nextStatus: UpdatableAppointmentStatus,
     cancellationReason?: string,
   ) => {
+    const target = appointments.find((appointment) => appointment.id === appointmentId);
+    if (nextStatus === "COMPLETED" && target && Date.parse(target.startsAt) > Date.now()) {
+      setActionError(t.common.completeAfterStart);
+      return false;
+    }
     setUpdatingId(appointmentId);
     setActionError(null);
     try {
@@ -303,9 +308,13 @@ export function MyAppointmentsPanel() {
       );
       return true;
     } catch (err) {
-      setActionError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
+      if (err instanceof ApiError && err.message === "Cannot complete an appointment before its scheduled date and time.") {
+        setActionError(t.common.completeAfterStart);
+      } else if (err instanceof ApiError && err.message === "The appointment changed. Refresh and try again.") {
+        setActionError(t.common.appointmentChanged);
+      } else {
+        setActionError(err instanceof ApiError ? err.message : t.errors.unexpectedDescription);
+      }
       return false;
     } finally {
       setUpdatingId(null);
@@ -407,7 +416,7 @@ export function MyAppointmentsPanel() {
             <span className="hidden sm:inline-flex items-center rounded-full bg-subtle px-2.5 py-0.5 font-mono text-xs font-medium text-ink-secondary tabular-nums">
               {t.owner.commissions}:{" "}
               <span className="ml-1 font-semibold text-accent">
-                {formatPriceFromCents(kpis.estimatedCommissionCents, locale)}
+                {formatPriceFromCents(kpis.estimatedCommissionCents, locale, session.company.currency)}
               </span>
             </span>
           </div>
@@ -764,9 +773,10 @@ export function MyAppointmentsPanel() {
                     key={appt.id}
                     appointment={appt}
                     timezone={timezone}
+                    currency={session.company.currency}
                     collaboratorName={session.name}
                     collaboratorAvatarUrl={session.avatarUrl}
-                    commissionLabel={`+${formatPriceFromCents(commissionCents, locale)}`}
+                    commissionLabel={`+${formatPriceFromCents(commissionCents, locale, session.company.currency)}`}
                     busy={updatingId === appt.id}
                     highlighted={highlightedId === appt.id}
                     onStatusChange={(id, status) =>

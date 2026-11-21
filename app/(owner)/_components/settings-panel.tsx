@@ -15,6 +15,7 @@ import { ApiError, apiRequest } from "@/lib/api-client";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { IANA_TIMEZONES } from "@/lib/timezones";
 import type { UpdateCompanyTimezoneResponse, CompanyOperatingDaySchedule } from "@/lib/types/auth";
+import type { Currency } from "@/lib/types/finance";
 import { useSession } from "@/components/ui/auth-guard";
 import { AvatarPicker } from "@/components/ui/avatar-picker";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,10 @@ export function SettingsPanel() {
   const [tzSaving, setTzSaving] = useState(false);
   const [tzSaved, setTzSaved] = useState(false);
   const [tzError, setTzError] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<Currency>(session.company.currency ?? "BRL");
+  const [currencySaving, setCurrencySaving] = useState(false);
+  const [currencySaved, setCurrencySaved] = useState(false);
+  const [currencyError, setCurrencyError] = useState<string | null>(null);
 
   // Senha
   const [currentPassword, setCurrentPassword] = useState("");
@@ -208,6 +213,23 @@ export function SettingsPanel() {
       );
     } finally {
       setPwSaving(false);
+    }
+  };
+
+  const handleSaveCurrency = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setCurrencySaving(true);
+    setCurrencySaved(false);
+    setCurrencyError(null);
+    try {
+      await apiRequest("/companies/me/currency", { method: "PATCH", body: { currency } });
+      await refreshSession();
+      setCurrencySaved(true);
+    } catch (error) {
+      setCurrencyError(error instanceof ApiError && error.message === "FINANCE_CURRENCY_LOCKED"
+        ? t.finance.FINANCE_CURRENCY_LOCKED : t.errors.unexpectedDescription);
+    } finally {
+      setCurrencySaving(false);
     }
   };
 
@@ -547,6 +569,30 @@ export function SettingsPanel() {
             {t.common.save}
           </Button>
         </form>
+      </section>
+
+      <section className="space-y-3 rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6">
+        <h2 className="text-title-sm font-bold text-ink">{t.finance.baseCurrency}</h2>
+        <p id="settings-currency-hint" className="text-xs text-ink-secondary">{t.finance.baseCurrencyHelp}</p>
+        <form onSubmit={handleSaveCurrency} className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label htmlFor="settings-currency">{t.dashboard.currency}</Label>
+            <select id="settings-currency" aria-describedby="settings-currency-hint"
+              className="block min-h-11 rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink"
+              value={currency} onChange={(event) => {
+                setCurrency(event.target.value as Currency); setCurrencySaved(false); setCurrencyError(null);
+              }}>
+              <option value="BRL">BRL · R$</option>
+              <option value="USD">USD · US$</option>
+            </select>
+          </div>
+          <Button type="submit" className="min-h-11"
+            disabled={currencySaving || currency === (session.company.currency ?? "BRL")}>
+            {currencySaving ? t.common.saving : t.common.save}
+          </Button>
+        </form>
+        {currencyError && <p role="alert" className="text-xs text-[var(--status-danger-ink)]">{currencyError}</p>}
+        {currencySaved && <p role="status" className="text-xs text-accent">{t.finance.currencySaved}</p>}
       </section>
 
       {/* Link público de reserva */}

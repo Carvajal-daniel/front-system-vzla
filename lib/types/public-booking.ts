@@ -1,9 +1,12 @@
+import type { Currency } from "./finance";
+
 export type PhoneCountryCode = "+55" | "+58";
 
 export interface PublicCompany {
   id: string;
   companyName: string;
   timezone: string;
+  currency?: Currency;
   avatarUrl?: string | null;
   operatingDays?: string | null;
   operatingSchedule?: Array<{

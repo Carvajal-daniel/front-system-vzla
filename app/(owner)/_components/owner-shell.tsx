@@ -10,6 +10,7 @@ import {
   ChartNoAxesCombined,
   Globe2,
   LogOut,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
@@ -50,6 +51,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       { href: "/owner/team", label: t.nav.ownerTeam, icon: Users },
       { href: "/owner/services", label: t.nav.ownerServices, icon: Wrench },
       { href: "/owner/finance", label: t.nav.ownerFinance, icon: Wallet },
+      { href: "/owner/inventory", label: t.executive.stock, icon: Package },
     ] },
     { label: t.nav.systemCategory, items: [{ href: "/owner/settings", label: t.nav.ownerSettings, icon: Settings }] },
   ];

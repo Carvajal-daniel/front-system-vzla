@@ -342,7 +342,7 @@ export function MyProfilePanel() {
                       ? formatDuration(svc.durationMinutes, locale)
                       : ""}
                     {typeof svc.priceInCents === "number"
-                      ? ` · ${formatPriceFromCents(svc.priceInCents, locale)}`
+                      ? ` · ${formatPriceFromCents(svc.priceInCents, locale, session.company.currency)}`
                       : ""}
                   </p>
                 </div>

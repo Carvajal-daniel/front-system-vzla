@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   CalendarClock,
   Check,
@@ -9,6 +9,7 @@ import {
   MoreVertical,
   UserX,
   XCircle,
+  Wallet,
 } from "lucide-react";
 import {
   formatDuration,
@@ -72,6 +73,8 @@ export function formatShortDayMonth(
 interface AgendaCardProps {
   appointment: Appointment;
   timezone: string;
+  currency?: string;
+  onOpenPayments?: () => void;
   collaboratorName?: string;
   collaboratorAvatarUrl?: string | null;
   commissionLabel?: string;
@@ -93,6 +96,8 @@ interface AgendaCardProps {
 export function AgendaCard({
   appointment,
   timezone,
+  currency,
+  onOpenPayments,
   collaboratorName,
   collaboratorAvatarUrl,
   commissionLabel,
@@ -104,10 +109,29 @@ export function AgendaCard({
 }: AgendaCardProps) {
   const { locale, t } = useLocale();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [observedNow, setObservedNow] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
+  const completionHintId = useId();
+  const startTimeMs = Date.parse(appointment.startsAt);
+  const isFuture = startTimeMs > observedNow;
 
   const isActive =
     appointment.status === "PENDING" || appointment.status === "CONFIRMED";
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    let timer: ReturnType<typeof setTimeout>;
+    function checkStart() {
+      const now = Date.now();
+      if (now >= startTimeMs) {
+        setObservedNow(now);
+        return;
+      }
+      timer = setTimeout(checkStart, Math.min(startTimeMs - now, 2_147_483_647));
+    }
+    timer = setTimeout(checkStart, 0);
+    return () => clearTimeout(timer);
+  }, [menuOpen, startTimeMs]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -157,7 +181,10 @@ export function AgendaCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => setMenuOpen((prev) => !prev)}
+              onClick={() => {
+                setObservedNow(Date.now());
+                setMenuOpen((prev) => !prev);
+              }}
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               aria-label={t.common.quickActionsLabel}
@@ -194,21 +221,29 @@ export function AgendaCard({
                   </button>
                 )}
 
-                <button
+                {(isFuture || appointment.status === "CONFIRMED") && <button
                   type="button"
                   role="menuitem"
+                  aria-disabled={isFuture}
+                  aria-describedby={isFuture ? completionHintId : undefined}
                   onClick={() => {
+                    if (startTimeMs > Date.now()) return;
                     setMenuOpen(false);
                     onStatusChange(appointment.id, "COMPLETED");
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer"
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-ink hover:bg-subtle cursor-pointer aria-disabled:cursor-not-allowed aria-disabled:text-ink-muted"
                 >
                   <CheckCircle2
                     className="h-3.5 w-3.5 text-[var(--status-success-ink)]"
                     aria-hidden="true"
                   />
                   {t.common.actionComplete}
-                </button>
+                </button>}
+                {isFuture && (
+                  <p id={completionHintId} className="px-2.5 pb-2 text-[11px] leading-snug text-ink-muted">
+                    {t.common.completeAfterStart}
+                  </p>
+                )}
 
                 <button
                   type="button"
@@ -282,6 +317,7 @@ export function AgendaCard({
             {formatPriceFromCents(
               appointment.servicePriceInCentsSnapshot,
               locale,
+              currency,
             )}
           </span>
           {commissionLabel && (
@@ -346,6 +382,14 @@ export function AgendaCard({
           </div>
         )}
       </div>
+      {onOpenPayments && (
+        <button type="button" onClick={onOpenPayments}
+          className="mt-3 inline-flex min-h-9 items-center gap-2 self-start rounded-lg border border-border-subtle px-3 text-xs font-semibold text-accent hover:bg-subtle">
+          <Wallet className="size-4" aria-hidden="true" />
+          {appointment.status === "CONFIRMED" || appointment.status === "COMPLETED"
+            ? t.finance.registerReceipt : t.finance.paymentHistory}
+        </button>
+      )}
     </article>
   );
 }

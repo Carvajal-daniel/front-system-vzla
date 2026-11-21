@@ -353,7 +353,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className="text-base font-bold text-accent tabular-nums">
-                          {formatPriceFromCents(service.priceInCents, locale)}
+                          {formatPriceFromCents(service.priceInCents, locale, company.currency)}
                         </p>
                         <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-ink-muted tabular-nums">
                           <Clock className="h-3 w-3" aria-hidden="true" />
@@ -572,7 +572,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
                     <p className="font-semibold text-ink">
                       {selectedService.name} ·{" "}
                       <span className="tabular-nums">
-                        {formatPriceFromCents(selectedService.priceInCents, locale)}
+                        {formatPriceFromCents(selectedService.priceInCents, locale, company.currency)}
                       </span>
                     </p>
                     <p className="text-ink-secondary">
@@ -670,6 +670,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
                     {formatPriceFromCents(
                       confirmedAppointment.servicePriceInCentsSnapshot,
                       locale,
+                      company.currency,
                     )}
                   </span>
                 </p>

@@ -82,13 +82,19 @@ export function formatPrice(
   locale: Locale,
   currency?: string,
 ): string {
-  const resolvedCurrency = currency ?? (locale === "es" ? "USD" : "BRL");
-  return new Intl.NumberFormat(locale, {
+  return getCurrencyFormatter(locale, currency ?? "BRL").format(amount);
+}
+
+export function getCurrencyFormatter(locale: string, currency: string, fractionalDigits = 2) {
+  const formatter = new Intl.NumberFormat(locale, {
     style: "currency",
-    currency: resolvedCurrency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+    currency,
+    minimumFractionDigits: fractionalDigits,
+    maximumFractionDigits: fractionalDigits,
+  });
+  const symbol = currency === "BRL" ? "R$" : currency === "USD" ? "US$" : null;
+  return { format: (amount: number) => formatter.formatToParts(amount)
+    .map((part) => part.type === "currency" && symbol ? symbol : part.value).join("") };
 }
 
 /**

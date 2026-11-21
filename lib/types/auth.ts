@@ -1,3 +1,5 @@
+import type { Currency } from "./finance";
+
 export type UserRole = "OWNER" | "COLLABORATOR";
 
 export interface AuthUserSummary {
@@ -20,6 +22,7 @@ export interface Company {
   id: string;
   companyName: string;
   timezone: string;
+  currency: Currency;
   isActive: boolean;
   avatarUrl?: string | null;
   operatingDays?: string | null;

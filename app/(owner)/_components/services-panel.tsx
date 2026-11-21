@@ -39,6 +39,7 @@ import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/ui/modal";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { AvatarPicker } from "@/components/ui/avatar-picker";
+import { useSession } from "@/components/ui/auth-guard";
 
 const DAYS: DayOfWeek[] = [0, 1, 2, 3, 4, 5, 6];
 
@@ -69,6 +70,7 @@ function buildDefaultScheduleRows(): DayRowState[] {
 
 export function ServicesPanel() {
   const { locale, t } = useLocale();
+  const { session } = useSession();
 
   const [services, setServices] = useState<Service[]>([]);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
@@ -598,7 +600,7 @@ export function ServicesPanel() {
                         {service.name}
                       </h3>
                       <p className="font-mono text-sm font-bold text-accent tabular-nums">
-                        {formatPriceFromCents(service.priceInCents, locale)}{" "}
+                        {formatPriceFromCents(service.priceInCents, locale, session.company.currency)}{" "}
                         <span className="font-sans text-xs font-normal text-ink-muted">
                           · {formatDuration(service.durationMinutes, locale)}
                         </span>
