@@ -1,24 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Geist_Mono,
-  Instrument_Serif,
-  Plus_Jakarta_Sans,
-} from "next/font/google";
+import { Geist_Mono, Poppins } from "next/font/google";
 import { LocaleProvider } from "@/lib/i18n/locale-context";
 import { ThemeProvider } from "@/lib/theme-context";
 import "./globals.css";
 
-const plusJakarta = Plus_Jakarta_Sans({
-  variable: "--font-plus-jakarta",
+const poppins = Poppins({
+  variable: "--font-poppins",
   subsets: ["latin"],
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--font-instrument-serif",
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -50,7 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="pt-BR"
-      className={`${plusJakarta.variable} ${instrumentSerif.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${poppins.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-dvh flex flex-col bg-canvas text-ink">
         <ThemeProvider>

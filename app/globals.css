@@ -126,6 +126,67 @@
   --sidebar-border: var(--border-subtle);
 }
 
+/* Dashboard surfaces retain a white canvas with cool-gray cards in light mode. */
+.dashboard-shell {
+  --surface-canvas: #ffffff;
+  --surface-elevated: #f4f6fa;
+  --surface-subtle: #eef2f6;
+  --border-subtle: #dce3ec;
+  --border-strong: #c6d0dd;
+  --background: var(--surface-canvas);
+  --foreground: var(--ink-primary);
+  --card: var(--surface-elevated);
+  --card-foreground: var(--ink-primary);
+  --popover: var(--surface-elevated);
+  --popover-foreground: var(--ink-primary);
+  --secondary: var(--surface-subtle);
+  --secondary-foreground: var(--ink-primary);
+  --muted: var(--surface-subtle);
+  --muted-foreground: var(--ink-muted);
+  --border: var(--border-subtle);
+  --input: var(--border-strong);
+  --ring: var(--accent-primary);
+  --sidebar: var(--surface-elevated);
+  --sidebar-foreground: var(--ink-primary);
+  --sidebar-border: var(--border-subtle);
+}
+.dark.dashboard-shell,
+.dashboard-shell[data-theme="dark"] {
+  --surface-canvas: #09090b;
+  --surface-elevated: #111114;
+  --surface-subtle: #1c1c21;
+  --border-subtle: #27272a;
+  --border-strong: #3f3f46;
+  --ink-primary: #fafafa;
+  --ink-secondary: #a1a1aa;
+  --ink-muted: #71717a;
+  --background: var(--surface-canvas);
+  --foreground: var(--ink-primary);
+  --card: var(--surface-elevated);
+  --card-foreground: var(--ink-primary);
+  --popover: var(--surface-elevated);
+  --popover-foreground: var(--ink-primary);
+  --secondary: var(--surface-subtle);
+  --secondary-foreground: var(--ink-primary);
+  --muted: var(--surface-subtle);
+  --muted-foreground: var(--ink-muted);
+  --border: var(--border-subtle);
+  --input: var(--border-strong);
+  --ring: var(--accent-primary);
+  --sidebar: var(--surface-elevated);
+  --sidebar-foreground: var(--ink-primary);
+  --sidebar-border: var(--border-subtle);
+}
+.owner-sidebar {
+  --ink-primary: #f1f5f9;
+  --ink-secondary: #cbd5e1;
+  --ink-muted: #94a3b8;
+  --surface-elevated: #162036;
+  --surface-subtle: #1e2b44;
+  --border-subtle: #33415c;
+  --border-strong: #475569;
+}
+
 /* ============================================================================
  * 5 Paletas Exclusivas dos Dashboards (sem tons de marrom, contraste WCAG AA)
  * ========================================================================== */
@@ -240,9 +301,9 @@
   --color-accent-soft: var(--accent-soft);
   --color-accent-ink: var(--accent-ink);
 
-  --font-sans: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-instrument-serif), Georgia, serif;
-  --font-heading: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
   --color-background: var(--background);
@@ -291,10 +352,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Tipografia fluida editorial (Instrument Serif para display + Plus Jakarta Sans para UI) */
+/* Tipografia fluida para títulos de destaque. */
 .text-display-lg {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 600;
   font-size: clamp(2.25rem, 1.55rem + 3vw, 4.25rem);
   line-height: 1.02;
   letter-spacing: -0.02em;
@@ -303,7 +364,7 @@ body {
 
 .text-display-md {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 600;
   font-size: clamp(1.75rem, 1.35rem + 1.5vw, 2.75rem);
   line-height: 1.08;
   letter-spacing: -0.015em;

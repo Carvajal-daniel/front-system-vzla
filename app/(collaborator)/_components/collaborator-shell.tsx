@@ -12,13 +12,13 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
-  Scissors,
   UserCircle2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useTheme } from "@/lib/theme-context";
 import { useSidebarCollapsed } from "@/lib/use-sidebar-collapsed";
 import { useSession } from "@/components/ui/auth-guard";
+import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { LocaleSwitcher } from "@/components/ui/locale-switcher";
 import { NotificationsBell } from "@/components/ui/notifications-bell";
 import { ThemeCustomizer } from "@/components/ui/theme-customizer";
@@ -54,9 +54,10 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
   return (
     <div
       data-palette={palette}
+      data-theme={mode}
       className={[
         mode === "dark" ? "dark" : "",
-        "min-h-dvh flex bg-canvas text-ink transition-colors duration-200",
+        "dashboard-shell min-h-dvh flex bg-canvas text-ink transition-colors duration-200",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -76,18 +77,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
         >
           {!collapsed && (
             <div className="flex items-center gap-2.5 min-w-0">
-              {session.company.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={session.company.avatarUrl}
-                  alt={session.company.companyName}
-                  className="h-9 w-9 shrink-0 rounded-xl object-cover border border-border-subtle shadow-xs"
-                />
-              ) : (
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-ink shadow-xs">
-                  <Scissors className="h-4 w-4" aria-hidden="true" />
-                </span>
-              )}
+              <CompanyAvatar url={session.company.avatarUrl} />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-ink">
                   {session.company.companyName}

@@ -7,11 +7,11 @@ import { motion } from "framer-motion";
 import {
   Ban,
   CalendarDays,
+  ChartNoAxesCombined,
   Globe2,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
-  Scissors,
   Settings,
   Users,
   Wallet,
@@ -21,6 +21,7 @@ import { useLocale } from "@/lib/i18n/locale-context";
 import { useTheme } from "@/lib/theme-context";
 import { useSidebarCollapsed } from "@/lib/use-sidebar-collapsed";
 import { useSession } from "@/components/ui/auth-guard";
+import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { LocaleSwitcher } from "@/components/ui/locale-switcher";
 import { NotificationsBell } from "@/components/ui/notifications-bell";
 import { ThemeCustomizer } from "@/components/ui/theme-customizer";
@@ -39,26 +40,33 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const { session, logout } = useSession();
   const { collapsed, toggle } = useSidebarCollapsed();
 
-  const navItems = [
-    { href: "/owner", label: t.nav.ownerAgenda, icon: CalendarDays },
-    { href: "/owner/blocks", label: t.nav.ownerBlocks, icon: Ban },
-    { href: "/owner/team", label: t.nav.ownerTeam, icon: Users },
-    { href: "/owner/services", label: t.nav.ownerServices, icon: Wrench },
-    { href: "/owner/finance", label: t.nav.ownerFinance, icon: Wallet },
-    { href: "/owner/settings", label: t.nav.ownerSettings, icon: Settings },
+  const navGroups = [
+    { label: t.nav.overviewCategory, items: [{ href: "/owner", label: t.nav.ownerDashboard, icon: ChartNoAxesCombined }] },
+    { label: t.nav.operationsCategory, items: [
+      { href: "/owner/appointments", label: t.nav.ownerAgenda, icon: CalendarDays },
+      { href: "/owner/blocks", label: t.nav.ownerBlocks, icon: Ban },
+    ] },
+    { label: t.nav.managementCategory, items: [
+      { href: "/owner/team", label: t.nav.ownerTeam, icon: Users },
+      { href: "/owner/services", label: t.nav.ownerServices, icon: Wrench },
+      { href: "/owner/finance", label: t.nav.ownerFinance, icon: Wallet },
+    ] },
+    { label: t.nav.systemCategory, items: [{ href: "/owner/settings", label: t.nav.ownerSettings, icon: Settings }] },
   ];
+  const navItems = navGroups.flatMap((group) => group.items);
 
   const isActive = (href: string) =>
-    href === "/owner" ? pathname === "/owner" : pathname.startsWith(href);
+      href === "/owner" ? pathname === "/owner" : pathname === href || pathname.startsWith(`${href}/`);
 
   const activeItem = navItems.find((item) => isActive(item.href)) ?? navItems[0];
 
   return (
     <div
       data-palette={palette}
+      data-theme={mode}
       className={[
         mode === "dark" ? "dark" : "",
-        "min-h-dvh flex bg-canvas text-ink transition-colors duration-200",
+        "dashboard-shell min-h-dvh flex bg-canvas text-ink transition-colors duration-200",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -68,7 +76,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
         initial={false}
         animate={{ width: collapsed ? 76 : 260 }}
         transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-        className="hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 z-30 border-r border-border-subtle bg-surface overflow-visible"
+        className="owner-sidebar hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 z-30 border-r border-[#263149] bg-[#131B2E] text-slate-100 overflow-hidden"
       >
         <div
           className={[
@@ -78,20 +86,9 @@ export function OwnerShell({ children }: { children: ReactNode }) {
         >
           {!collapsed && (
             <div className="flex items-center gap-2.5 min-w-0">
-              {session.company.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={session.company.avatarUrl}
-                  alt={session.company.companyName}
-                  className="h-9 w-9 shrink-0 rounded-xl object-cover border border-border-subtle shadow-xs"
-                />
-              ) : (
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-ink shadow-xs">
-                  <Scissors className="h-4 w-4" aria-hidden="true" />
-                </span>
-              )}
+              <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">
+                <p className="truncate text-sm font-semibold text-slate-100">
                   {session.company.companyName}
                 </p>
                 <p className="inline-flex items-center gap-1 text-[11px] font-mono text-ink-muted truncate">
@@ -111,7 +108,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             title={
               collapsed ? t.common.expandSidebar : t.common.collapseSidebar
             }
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle/60 text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-600/50 bg-white/5 text-slate-300 transition-colors hover:border-slate-400 hover:text-white cursor-pointer"
           >
             {collapsed ? (
               <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
@@ -123,9 +120,11 @@ export function OwnerShell({ children }: { children: ReactNode }) {
 
         <nav
           aria-label="Navegação do proprietário"
-          className="flex-1 space-y-1.5 p-3 overflow-y-auto"
+          className="min-w-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto p-3"
         >
-          {navItems.map((item) => {
+          {navGroups.map((group) => <div key={group.label} className="min-w-0">
+          {collapsed ? <div aria-hidden="true" className="my-2 border-t border-slate-600/40" /> : <p className="truncate px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-[.17em] text-slate-500">{group.label}</p>}
+          {group.items.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
             return (
@@ -135,11 +134,11 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                 aria-current={active ? "page" : undefined}
                 title={collapsed ? item.label : undefined}
                 className={[
-                  "group relative flex min-h-11 items-center rounded-xl text-sm font-semibold transition-colors cursor-pointer",
+                  "group relative min-w-0 flex min-h-11 items-center overflow-hidden rounded-xl text-sm font-semibold transition-colors cursor-pointer",
                   collapsed ? "justify-center px-0" : "gap-3 px-3.5",
                   active
                     ? "bg-accent text-accent-ink shadow-xs"
-                    : "text-ink-secondary hover:bg-subtle hover:text-ink",
+                    : "text-slate-300 hover:bg-white/8 hover:text-white",
                 ].join(" ")}
               >
                 {active && !collapsed && (
@@ -156,7 +155,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                 {collapsed && (
                   <span
                     role="tooltip"
-                    className="pointer-events-none absolute left-[calc(100%+12px)] z-50 whitespace-nowrap rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                    className="pointer-events-none absolute left-[calc(100%+12px)] z-50 whitespace-nowrap rounded-lg border border-slate-600 bg-[#162036] px-2.5 py-1.5 text-xs font-semibold text-white shadow-lg opacity-0 transition-opacity duration-150 group-hover:opacity-100"
                   >
                     {item.label}
                   </span>
@@ -164,14 +163,15 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
+          </div>)}
         </nav>
 
-        <div className="border-t border-border-subtle p-3 space-y-2">
+        <div className="space-y-2 border-t border-slate-600/40 p-3">
           <Link
             href="/owner/settings"
             title={collapsed ? session.name : undefined}
             className={[
-              "flex items-center rounded-xl bg-subtle/80 transition-colors hover:bg-subtle cursor-pointer",
+              "flex min-w-0 items-center rounded-xl bg-white/5 transition-colors hover:bg-white/10 cursor-pointer",
               collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-2.5",
             ].join(" ")}
           >
@@ -189,7 +189,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             )}
             {!collapsed && (
               <div className="min-w-0">
-                <p className="truncate text-xs font-semibold text-ink">
+                <p className="truncate text-xs font-semibold text-slate-100">
                   {session.name}
                 </p>
                 <p className="truncate text-[11px] text-ink-muted">
@@ -205,7 +205,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             aria-label={t.common.logout}
             title={collapsed ? t.common.logout : undefined}
             className={[
-              "flex min-h-11 w-full items-center justify-center rounded-xl border border-border-strong bg-surface text-xs font-semibold text-ink-secondary transition-colors hover:bg-subtle hover:text-ink cursor-pointer",
+              "flex min-h-11 w-full items-center justify-center rounded-xl border border-slate-600/50 bg-white/5 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer",
               collapsed ? "px-0" : "gap-2 px-3",
             ].join(" ")}
           >
@@ -258,9 +258,9 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       {/* Bottom Bar Mobile (alvos de toque confortáveis >= 48px) */}
       <nav
         aria-label="Navegação móvel"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-border-subtle bg-surface/95 backdrop-blur-md lg:hidden shadow-lg"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-[#263149] bg-[#131B2E]/95 text-slate-100 backdrop-blur-md lg:hidden shadow-lg"
       >
-        <div className="grid grid-cols-6 max-w-md mx-auto">
+        <div className="grid grid-cols-7 max-w-lg mx-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -271,7 +271,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                 aria-current={active ? "page" : undefined}
                 className={[
                   "flex min-h-14 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition-colors",
-                  active ? "text-accent font-bold" : "text-ink-muted hover:text-ink",
+                  active ? "text-accent font-bold" : "text-slate-300 hover:text-white",
                 ].join(" ")}
               >
                 <Icon className="h-4.5 w-4.5 shrink-0" aria-hidden="true" />

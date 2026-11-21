@@ -1,13 +1,13 @@
 import { Suspense } from "react";
 import { CardListSkeleton } from "@/components/ui/card-list-skeleton";
-import { AppointmentsPanel } from "../_components/appointments-panel";
+import { OwnerDashboard } from "../_components/owner-dashboard";
 
 export const instant = false;
 
-export default function OwnerAgendaPage() {
+export default function OwnerDashboardPage() {
   return (
-    <Suspense fallback={<CardListSkeleton count={4} />}>
-      <AppointmentsPanel />
+    <Suspense fallback={<CardListSkeleton count={6} />}>
+      <OwnerDashboard />
     </Suspense>
   );
 }
