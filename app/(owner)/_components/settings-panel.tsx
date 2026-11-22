@@ -9,11 +9,15 @@ import {
   Globe2,
   KeyRound,
   Loader2,
+  Moon,
+  Palette,
+  Sun,
   UserCircle2,
 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { companyWeekday } from "@/lib/agenda";
 import { useLocale } from "@/lib/i18n/locale-context";
+import { THEME_PALETTES, useTheme } from "@/lib/theme-context";
 import { IANA_TIMEZONES } from "@/lib/timezones";
 import type { UpdateCompanyTimezoneResponse, CompanyOperatingDaySchedule } from "@/lib/types/auth";
 import type { Currency } from "@/lib/types/finance";
@@ -22,6 +26,7 @@ import { AvatarPicker } from "@/components/ui/avatar-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LocaleSwitcher } from "@/components/ui/locale-switcher";
 
 function subscribeNoop() {
   return () => undefined;
@@ -62,6 +67,7 @@ function buildInitialCompanySchedule(
 export function SettingsPanel() {
   const { session, refreshSession } = useSession();
   const { t } = useLocale();
+  const { mode, palette, setMode, setPalette } = useTheme();
 
   // Perfil & Barbearia
   const [companyName, setCompanyName] = useState(session.company.companyName);
@@ -621,6 +627,104 @@ export function SettingsPanel() {
             <ExternalLink className="h-4 w-4" aria-hidden="true" />
             {relativePath}
           </Link>
+        </div>
+      </section>
+
+      {/* Aparência & Idioma (Tema, Paleta de Cores e Idioma PT/ES) */}
+      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5 lg:col-span-2">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
+            <Palette className="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h2 className="text-title-sm font-bold text-ink">
+              Aparência &amp; Idioma
+            </h2>
+            <p className="text-xs text-ink-secondary">
+              Personalize o tema claro/escuro, a paleta de cores e o idioma do painel.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-3">
+          {/* Tema Claro / Escuro */}
+          <div className="space-y-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+              Tema do Sistema
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("light")}
+                aria-pressed={mode === "light"}
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                  mode === "light"
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-border-subtle bg-canvas/50 text-ink-secondary hover:border-border-strong hover:text-ink"
+                }`}
+              >
+                <Sun className="h-4 w-4" aria-hidden="true" />
+                <span>Claro</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("dark")}
+                aria-pressed={mode === "dark"}
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                  mode === "dark"
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-border-subtle bg-canvas/50 text-ink-secondary hover:border-border-strong hover:text-ink"
+                }`}
+              >
+                <Moon className="h-4 w-4" aria-hidden="true" />
+                <span>Escuro</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Paleta de Cores */}
+          <div className="space-y-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+              {t.theme.paletteLabel}
+            </p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              {THEME_PALETTES.map((item) => {
+                const selected = palette === item.id;
+                const swatch = mode === "dark" ? item.swatchDark : item.swatchLight;
+                const label = t.theme.palettes[item.id];
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={label}
+                    title={label}
+                    onClick={() => setPalette(item.id)}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-transform hover:scale-110 cursor-pointer ${
+                      selected ? "border-ink scale-105 ring-2 ring-accent/30" : "border-transparent"
+                    }`}
+                    style={{ backgroundColor: swatch }}
+                  >
+                    {selected && (
+                      <Check
+                        className="h-4 w-4"
+                        style={{ color: mode === "dark" ? "#09090B" : "#FFFFFF" }}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Idioma PT / ES */}
+          <div className="space-y-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+              {t.common.languageLabel}
+            </p>
+            <LocaleSwitcher />
+          </div>
         </div>
       </section>
     </div>

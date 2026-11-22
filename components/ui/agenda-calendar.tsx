@@ -19,6 +19,9 @@ import { agendaStrings } from "@/lib/i18n/agenda";
 import type { Company } from "@/lib/types/auth";
 import { formatTimeInTimezone } from "@/lib/format";
 import type { Appointment, ScheduleBlock } from "@/lib/types/appointment";
+import { getCanonicalClientId } from "@/lib/use-clients";
+import { AppointmentHoverCard } from "./agenda-card";
+import type { AgendaPayment, HoverCardAnchor } from "./agenda-card";
 import type { AgendaPerson } from "./agenda-controls";
 
 const arrow = "grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink focus-visible:outline-2 focus-visible:outline-accent";
@@ -107,7 +110,10 @@ function layoutDay(rows: (Appointment | ScheduleBlock)[], date: string, clock: R
   const groups: { row: Appointment | ScheduleBlock; start: number; end: number; lane: number }[][] = [];
   let ends: number[] = [];
   let groupEnd = -1;
-  for (const row of rows.sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))) {
+  const safeRows = (Array.isArray(rows) ? rows : []).filter(
+    (row) => row && typeof row.startsAt === "string" && typeof row.endsAt === "string" && !Number.isNaN(Date.parse(row.startsAt)) && !Number.isNaN(Date.parse(row.endsAt)),
+  );
+  for (const row of safeRows.sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))) {
     const from = clock(row.startsAt);
     const to = clock(row.endsAt);
     const start = from.date < date ? 0 : from.minute;
@@ -154,6 +160,8 @@ export function AgendaTimeGrid({
   appointments,
   blocks,
   staff,
+  payments,
+  firstVisitClientIds,
   blocksReady,
   isOwner = false,
   onSelect,
@@ -171,6 +179,8 @@ export function AgendaTimeGrid({
   appointments: readonly Appointment[];
   blocks: ScheduleBlock[];
   staff: ReadonlyMap<string, AgendaPerson>;
+  payments?: ReadonlyMap<string, AgendaPayment>;
+  firstVisitClientIds?: ReadonlySet<string>;
   blocksReady: boolean;
   isOwner?: boolean;
   onSelect: (date: string) => void;
@@ -188,6 +198,7 @@ export function AgendaTimeGrid({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const dragTargetRef = useRef<DragState | null>(null);
   const [hoveredSlot, setHoveredSlot] = useState<{ day: string; minute: number } | null>(null);
+  const [hoveredEvent, setHoveredEvent] = useState<{ appointment: Appointment; anchor: HoverCardAnchor } | null>(null);
   const dragPendingRef = useRef<{
     appointment: Appointment;
     startX: number;
@@ -216,14 +227,23 @@ export function AgendaTimeGrid({
     return () => observer.disconnect();
   }, [days, selected]);
 
-  const columns = days.map((day) => ({ day, ...companyDay(company, day), events: layoutDay([...(byDay.get(day) ?? []), ...blocks], day, clock) }));
+  const columns = days.map((day) => ({ day, ...companyDay(company, day), events: layoutDay([...(byDay.get(day) ?? []), ...(Array.isArray(blocks) ? blocks : [])], day, clock) }));
   const events = columns.flatMap((column) => column.events);
-  const parse = (value?: string | null, fallback = 0) => value ? Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5)) : fallback;
-  const starts = Math.floor(Math.min(8 * 60, ...events.map((event) => event.start), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.openTime, 8 * 60))) / 60) * 60;
-  const ends = Math.ceil(Math.max(19 * 60, ...events.map((event) => event.end), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.closeTime, 19 * 60))) / 60) * 60;
+  const parse = (value?: string | null, fallback = 0) => {
+    if (!value || typeof value !== "string" || value.length < 5) return fallback;
+    const h = Number(value.slice(0, 2));
+    const m = Number(value.slice(3, 5));
+    const total = h * 60 + m;
+    return Number.isFinite(total) ? total : fallback;
+  };
+  const startsRaw = Math.floor(Math.min(8 * 60, ...events.map((event) => event.start), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.openTime, 8 * 60))) / 60) * 60;
+  const endsRaw = Math.ceil(Math.max(19 * 60, ...events.map((event) => event.end), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.closeTime, 19 * 60))) / 60) * 60;
+  const starts = Number.isFinite(startsRaw) ? Math.max(0, Math.min(23 * 60, startsRaw)) : 8 * 60;
+  const ends = Number.isFinite(endsRaw) && endsRaw > starts ? Math.min(24 * 60, endsRaw) : Math.max(starts + 60, 19 * 60);
   const pixelsPerMinute = 1.15;
   const height = (ends - starts) * pixelsPerMinute;
-  const hourLabels = Array.from({ length: (ends - starts) / 60 }, (_, index) => starts + index * 60);
+  const hourCount = Math.max(1, Math.floor((ends - starts) / 60));
+  const hourLabels = Array.from({ length: hourCount }, (_, index) => starts + index * 60);
   const current = now ? clock(now) : null;
   const gridStyle = { gridTemplateColumns: `3.25rem repeat(${days.length}, minmax(0, 1fr))` };
 
@@ -233,6 +253,7 @@ export function AgendaTimeGrid({
     if ((e.target as Element).closest("[data-agenda-quick-action]")) return;
     if (appointment.status !== "PENDING" && appointment.status !== "CONFIRMED") return;
     setHoveredSlot(null);
+    setHoveredEvent(null);
     emptyClickRef.current = null;
     const pointerId = e.pointerId;
 
@@ -349,7 +370,7 @@ export function AgendaTimeGrid({
     return start > now && !overlapsScheduleBlock(blocks, start, start + 30 * 60_000);
   }
 
-  return <div ref={viewportRef} className="relative overflow-auto rounded-2xl border border-border-subtle bg-surface" tabIndex={0} aria-label={copy.calendar}>
+  return <div ref={viewportRef} onScroll={() => { if (hoveredEvent) setHoveredEvent(null); }} onPointerLeave={() => { if (hoveredEvent) setHoveredEvent(null); }} className="relative overflow-auto rounded-2xl border border-border-subtle bg-surface" tabIndex={0} aria-label={copy.calendar}>
     <div className={days.length > 1 ? "min-w-198" : "min-w-0"}>
       <div className="grid border-b border-border-subtle" style={gridStyle}>
         <div data-agenda-gutter aria-hidden="true" className="sticky left-0 z-30 bg-surface" />
@@ -494,6 +515,17 @@ export function AgendaTimeGrid({
                   key={row.id}
                   data-agenda-event-wrapper={row.id}
                   onPointerDown={(e) => handleEventPointerDown(e, row)}
+                  onPointerEnter={(e) => {
+                    if (dragState) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setHoveredEvent({
+                      appointment: row,
+                      anchor: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+                    });
+                  }}
+                  onPointerLeave={() => {
+                    setHoveredEvent((prev) => (prev?.appointment.id === row.id ? null : prev));
+                  }}
                   onClickCapture={(e) => {
                     if (dragMovedRef.current) {
                       e.stopPropagation();
@@ -519,6 +551,22 @@ export function AgendaTimeGrid({
         ))}
       </div>
     </div>
+
+    {/* Card flutuante rico no hover do agendamento (estilo Gendo) */}
+    {hoveredEvent && !dragState && (
+      <AppointmentHoverCard
+        appointment={hoveredEvent.appointment}
+        anchor={hoveredEvent.anchor}
+        timezone={company.timezone}
+        person={staff.get(hoveredEvent.appointment.collaboratorId)}
+        payment={payments?.get(hoveredEvent.appointment.id)}
+        isFirstVisit={
+          firstVisitClientIds?.has(
+            getCanonicalClientId(hoveredEvent.appointment.clientPhone, hoveredEvent.appointment.clientName),
+          ) ?? false
+        }
+      />
+    )}
 
     {/* Badge flutuante que acompanha o cursor durante o arrasto */}
     {dragState && (

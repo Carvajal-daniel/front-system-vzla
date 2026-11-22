@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Wallet, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Sparkles, Wallet, X } from "lucide-react";
 import { PaidBadge } from "@/components/ui/agenda-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,15 +80,16 @@ export function ReceiptDialog({ appointmentId, candidates = [], timezone, onClos
       )}
       {selected ? (
         <ReceiptAppointment key={selected} appointmentId={selected} timezone={timezone}
-          onChanged={onChanged} onBusy={setBusy} />
+          onClose={onClose} onChanged={onChanged} onBusy={setBusy} />
       ) : !candidates.length && <p className="text-sm text-ink-muted">{f.noEligible}</p>}
     </dialog>
   );
 }
 
-function ReceiptAppointment({ appointmentId, timezone, onChanged, onBusy }: {
+function ReceiptAppointment({ appointmentId, timezone, onClose, onChanged, onBusy }: {
   appointmentId: string;
   timezone: string;
+  onClose: () => void;
   onChanged?: () => void;
   onBusy: (busy: boolean) => void;
 }) {
@@ -113,15 +115,16 @@ function ReceiptAppointment({ appointmentId, timezone, onChanged, onBusy }: {
     </p>
   );
   if (!data) return <p role="status" className="text-sm text-ink-muted">{t.common.loading}</p>;
-  return <ReceiptDetails data={data} timezone={timezone} onBusy={onBusy} onChanged={() => {
+  return <ReceiptDetails data={data} timezone={timezone} onClose={onClose} onBusy={onBusy} onChanged={() => {
     setVersion((v) => v + 1);
     onChanged?.();
   }} />;
 }
 
-function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
+function ReceiptDetails({ data, timezone, onClose, onChanged, onBusy }: {
   data: AppointmentCollections;
   timezone: string;
+  onClose: () => void;
   onChanged: () => void;
   onBusy: (busy: boolean) => void;
 }) {
@@ -205,6 +208,21 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
 
   return (
     <div className="space-y-4">
+      {/* Banner de Comanda Completa */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/10 p-3 text-xs">
+        <span className="text-ink">
+          Para incluir produtos, gorjeta ou mais detalhes nessa cobrança:
+        </span>
+        <Link
+          href={`/owner/finance/orders/new?appointmentId=${encodeURIComponent(data.appointmentId)}`}
+          onClick={onClose}
+          className="inline-flex items-center gap-1 font-bold text-accent hover:underline shrink-0"
+        >
+          <span>Abrir Comanda Completa</span>
+          <ArrowRight size={13} />
+        </Link>
+      </div>
+
       <div>
         <p className="text-sm font-semibold">{data.clientName} · {data.serviceName}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -219,6 +237,16 @@ function ReceiptDetails({ data, timezone, onChanged, onBusy }: {
           <div key={label}><dt className="text-ink-secondary">{label}</dt><dd className="mt-1 text-sm font-semibold">{money(Number(value))}</dd></div>
         ))}
       </dl>
+
+      {/* Previsão de fidelidade */}
+      {data.openInCents > 0 && (
+        <div className="flex items-center gap-1.5 rounded-lg bg-surface-subtle px-3 py-2 text-xs text-ink-secondary">
+          <Sparkles size={13} className="text-amber-500" />
+          <span>
+            Este pagamento gerará <strong className="text-ink">{Math.round(data.openInCents / 100)} pontos</strong> de fidelidade para o cliente.
+          </span>
+        </div>
+      )}
       {data.retainedInCents > 0 && <p className="text-xs text-ink-muted">{f.retainedHint}</p>}
       {error && <p role="alert" className="text-sm text-[var(--status-danger-ink)]">{error}</p>}
       {notice && <p role="status" className="text-sm text-accent">{notice}</p>}

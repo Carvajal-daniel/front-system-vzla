@@ -2,6 +2,19 @@ import { collectionsEs } from "./collections";
 import type { Dictionary } from "./index";
 
 export const es: Dictionary = {
+  product: {
+    upgrade: "Mejorar plan", privacyOn: "Ocultar valores sensibles", privacyOff: "Mostrar valores sensibles", soundOn: "Silenciar alertas sonoras", soundOff: "Activar alertas sonoras",
+    planTitle: "Plan Trial", trialDays: "5 días restantes", professionals: "Profesionales", whatsappMessages: "Mensajes WhatsApp", aiConversations: "Conversaciones IA", upgradeAction: "Mejorar plan", whatsappConnected: "Conectado", whatsappDisconnected: "Desconectado", comingSoon: "Próximamente",
+    panel: "Panel", agenda: "Agenda", calendar: "Calendario", blocks: "Bloqueos", listing: "Listado", restore: "Restaurar",
+    finance: "Finanzas", overviewReceipts: "Comandas", commissionsAdvances: "Comisiones", accounts: "Cuentas por Pagar/Cobrar", cashStatement: "Control Financiero", paymentMethods: "Formas de Pago", onlinePayment: "Pago Online",
+    clients: "Clientes", clientBase: "Base de Clientes", inactiveClients: "Clientes Inactivos", birthdays: "Cumpleaños", returns: "Retornos", loyalty: "Fidelidad",
+    services: "Servicios", serviceListing: "Listado", categories: "Categorías", packages: "Paquetes",
+    productsInventory: "Productos e Inventario", productListingMovements: "Listado y Movimientos", suppliers: "Proveedores", purchaseOrders: "Órdenes de Compra",
+    team: "Equipo", professionalsList: "Profesionales", schedules: "Horarios",
+    reports: "Informes", mainReport: "Panel Principal", agendaReport: "Panel Agenda", financeReport: "Panel Financiero", advancedReports: "Informes Avanzados", settings: "Configuración",
+    quickCreate: "+ Crear", calendarShortcut: "Calendario", cnpjOrRif: "CNPJ / RIF",
+    subscribeNow: "Suscríbete Ahora", aiCopilot: "Copiloto IA", globalSearch: "Buscar en el Sistema", bookingLink: "Enlace de Reservas",
+  },
   common: {
     appName: "Atelier Agenda",
     loading: "Cargando…",

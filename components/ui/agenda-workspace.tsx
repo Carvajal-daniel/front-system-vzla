@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, Wallet, XCircle } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, Users, Wallet, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { agendaBoundary, agendaClock, agendaMonth, agendaRange, agendaViews, findAppointmentConflict, formatAgendaDay, isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, localDayMinuteToUtcIso, overlapsScheduleBlock, shiftAgendaDay, shiftAgendaMonth } from "@/lib/agenda";
 import type { AgendaView } from "@/lib/agenda";
@@ -16,13 +16,15 @@ import type { MeResponse } from "@/lib/types/auth";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
 import type { Service } from "@/lib/types/service";
 import type { Collaborator, CollaboratorsListResponse } from "@/lib/types/team";
+import { getCanonicalClientId, useClients } from "@/lib/use-clients";
+import { useWaitlist } from "@/lib/use-waitlist";
 import { AgendaAppointmentDetails, AgendaCard, WhatsAppLink } from "./agenda-card";
 import type { AgendaItemProps, AgendaPayment } from "./agenda-card";
 import { AgendaMonthGrid, agendaRangeLabel, AgendaTimeGrid } from "./agenda-calendar";
 import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect, ProfessionalAvatar } from "./agenda-controls";
 import type { AgendaPerson } from "./agenda-controls";
-import { AgendaEditor } from "./agenda-editor";
-import { AgendaStatusLegend, PaidBadge } from "./agenda-status";
+import { AgendaEditor, type AgendaEditorTab } from "./agenda-editor";
+import { PaidBadge } from "./agenda-status";
 
 type StatusFilter = "" | AppointmentStatus | "CANCELED_OR_ABSENT";
 type AlertFilter = "readyToComplete" | "unpaidCompleted";
@@ -30,7 +32,17 @@ type AlertType = "PENDING" | AlertFilter;
 type Filter = StatusFilter | AlertFilter;
 type EditorTarget =
   | Appointment
-  | { mode: "new"; date?: string; time?: string; personId?: string }
+  | {
+      mode: "new";
+      date?: string;
+      time?: string;
+      personId?: string;
+      initialTab?: AgendaEditorTab;
+      initialClientName?: string;
+      initialClientPhone?: string;
+      initialServiceId?: string;
+      fromWaitlistId?: string;
+    }
   | "new"
   | null;
 const statuses: AppointmentStatus[] = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELED", "NO_SHOW"];
@@ -50,10 +62,19 @@ function useAgendaRange<T>(path: string, from: string, to: string, timezone: str
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    void apiRequest<T[]>(path, {
+    void apiRequest<T[] | { appointments?: T[]; blocks?: T[]; items?: T[] }>(path, {
       query: { from: agendaBoundary(from, timezone), to: agendaBoundary(to, timezone) },
       signal: controller.signal,
-    }).then((rows) => {
+    }).then((response) => {
+      const rows = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.appointments)
+          ? response.appointments
+          : Array.isArray(response?.blocks)
+            ? response.blocks
+            : Array.isArray(response?.items)
+              ? response.items
+              : [];
       if (!controller.signal.aborted) setResult({ key, rows });
     }).catch(() => {
       if (!controller.signal.aborted) setResult({ key, error: true });
@@ -68,10 +89,11 @@ function useAgendaRange<T>(path: string, from: string, to: string, timezone: str
 }
 
 async function getPaymentSummaries(ids: string[], signal: AbortSignal) {
+  if (!ids.length) return new Map<string, AgendaPayment>();
   const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) => ids.slice(index * 100, (index + 1) * 100).join(","));
   const rows = await Promise.all(batches.map((batch) => apiRequest<AgendaPayment[]>("/finance/appointments/payment-summary", {
     query: { ids: batch }, signal,
-  })));
+  }).then((res) => (Array.isArray(res) ? res : []))));
   return new Map(rows.flat().map((row) => [row.appointmentId, row]));
 }
 
@@ -88,7 +110,8 @@ function useGlobalAppointments(path: string, canManagePayments: boolean, refresh
       request = controller;
       const { signal } = controller;
       function list(status: AppointmentStatus) {
-        return apiRequest<Appointment[]>(path, { query: { status }, signal });
+        return apiRequest<Appointment[] | { appointments?: Appointment[] }>(path, { query: { status }, signal })
+          .then((res) => (Array.isArray(res) ? res : Array.isArray(res?.appointments) ? res.appointments : []));
       }
       void Promise.all([list("PENDING"), list("CONFIRMED")]).then(([pending, confirmed]) => {
         if (!signal.aborted) setResult((old) => ({ ...old, pending, confirmed, appointmentsError: false }));
@@ -149,9 +172,12 @@ export function AgendaWorkspace({ session, renderReceipt }: {
 }) {
   const { locale, t } = useLocale();
   const copy = agendaStrings(locale);
-  const targetId = useSearchParams().get("appointmentId");
+  const searchParams = useSearchParams();
+  const targetId = searchParams.get("appointmentId");
+  const actionParam = searchParams.get("action");
   const { company } = session;
-  const { timezone, currency } = company;
+  const timezone = company?.timezone || "America/Sao_Paulo";
+  const currency = company?.currency ?? "BRL";
   const isOwner = session.role === "OWNER";
   const canManagePayments = isOwner && !!renderReceipt;
   const clock = useMemo(() => agendaClock(timezone), [timezone]);
@@ -165,9 +191,30 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [refresh, setRefresh] = useState(0);
   const [changedPayment, setChangedPayment] = useState(0);
   const [opened, setOpened] = useState<Appointment | null>(null);
+  const [openedFromAlert, setOpenedFromAlert] = useState(false);
   const [canceling, setCanceling] = useState<Appointment | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [editor, setEditor] = useState<EditorTarget>(null);
+  const waitlist = useWaitlist(company.id);
+  // Carrega a base de clientes uma única vez no workspace para identificar primeira visita e cadastro automático
+  const {
+    clients: clientRecords,
+    createClient,
+    hasRegisteredClient,
+  } = useClients(isOwner ? company.id : "");
+  const [missingPhoneConfirm, setMissingPhoneConfirm] = useState<{
+    appointment: Appointment;
+    phone: string;
+    error: string;
+  } | null>(null);
+  const firstVisitClientIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const client of clientRecords) {
+      if (client.totalVisits === 0) ids.add(client.id);
+    }
+    return ids;
+  }, [clientRecords]);
+  const [waitlistDrawerOpen, setWaitlistDrawerOpen] = useState(false);
   const [pendingReschedule, setPendingReschedule] = useState<{
     appointment: Appointment;
     targetStartsAt: string;
@@ -179,6 +226,14 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const [catalog, setCatalog] = useState<{ people: Collaborator[]; services: Service[]; error: boolean }>({ people: [], services: [], error: false });
+
+  useEffect(() => {
+    if (actionParam === "new-appointment") {
+      setEditor({ mode: "new", initialTab: "appointment" });
+    } else if (actionParam === "new-block") {
+      setEditor({ mode: "new", initialTab: "block" });
+    }
+  }, [actionParam]);
 
   const range = useMemo(() => agendaRange(view, focus), [focus, view]);
   const month = useMemo(() => agendaMonth(miniMonth), [miniMonth]);
@@ -197,18 +252,27 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     if (!isOwner) return;
     const ctl = new AbortController();
     void Promise.all([
-      apiRequest<CollaboratorsListResponse>("/collaborators", { signal: ctl.signal }),
-      apiRequest<{ services: Service[] } | Service[]>("/services", { signal: ctl.signal }),
+      apiRequest<CollaboratorsListResponse | Collaborator[]>("/collaborators", { signal: ctl.signal }),
+      apiRequest<{ services?: Service[] } | Service[]>("/services", { signal: ctl.signal }),
     ]).then(async ([staff, services]) => {
       if (ctl.signal.aborted) return;
-      const people = staff.collaborators;
-      setCatalog({ people, services: Array.isArray(services) ? services : services.services, error: false });
+      const people = Array.isArray(staff)
+        ? staff
+        : Array.isArray(staff?.collaborators)
+          ? staff.collaborators
+          : [];
+      const serviceList = Array.isArray(services)
+        ? services
+        : Array.isArray(services?.services)
+          ? services.services
+          : [];
+      setCatalog({ people, services: serviceList, error: false });
       // Older collaborator responses omit avatarUrl from their serialized schema.
       if (people.some((person) => person.avatarUrl === undefined)) {
         const profiles = await apiRequest<Pick<FinanceSummaryResponse, "byCollaborator">>("/finance/summary", {
           query: { from: initialToday, to: initialToday }, signal: ctl.signal,
         }).catch(() => null);
-        if (!profiles?.byCollaborator || ctl.signal.aborted) return;
+        if (!Array.isArray(profiles?.byCollaborator) || ctl.signal.aborted) return;
         const avatars = new Map(profiles.byCollaborator.map((person) => [person.collaboratorId, person.avatarUrl]));
         setCatalog((old) => ({ ...old, people: people.map((person) => ({
           ...person, avatarUrl: person.avatarUrl === undefined ? avatars.get(person.id) : person.avatarUrl,
@@ -237,10 +301,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const miniCounts = useMemo(() => {
     const counts = new Map<string, number>();
     const all = new Map<string, Appointment>();
-    for (const row of mini.rows) all.set(row.id, row);
-    for (const row of main.rows) all.set(row.id, row);
+    for (const row of mini.rows) if (row?.id) all.set(row.id, row);
+    for (const row of main.rows) if (row?.id) all.set(row.id, row);
     for (const row of all.values()) {
       if (personId && row.collaboratorId !== personId) continue;
+      if (!row.startsAt || Number.isNaN(Date.parse(row.startsAt))) continue;
       const day = clock(row.startsAt).date;
       counts.set(day, (counts.get(day) ?? 0) + 1);
     }
@@ -270,6 +335,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const rowsByDay = useMemo(() => {
     const rows = new Map<string, Appointment[]>();
     for (const row of shown) {
+      if (!row?.startsAt || Number.isNaN(Date.parse(row.startsAt))) continue;
       const date = clock(row.startsAt).date;
       const day = date < range.from ? range.from : date;
       const group = rows.get(day) ?? [];
@@ -295,16 +361,39 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     .reduce((total, row) => total + Math.round(row.servicePriceInCentsSnapshot * row.commissionPercentageSnapshot / 100), 0);
 
   function navigate(date: string) { setFocus(date); setMiniMonth(date); setHighlightedId(""); }
-  function changeStatus(value: Filter) { setStatus(value); setHighlightedId(""); }
+  function changeStatus(value: Filter) { setStatus(value); setHighlightedId(""); setOpenedFromAlert(false); }
   function openAlert(row: Appointment, filter: AlertType) {
     navigate(clock(row.startsAt).date);
     if (view === "month" || view === "list") setView("day");
     setPersonId("");
     setStatus(filter);
+    setOpenedFromAlert(true);
     setHighlightedId(row.id);
     setActionError("");
     setOpened(row);
   }
+  function closeOpenedDetails() {
+    setOpened(null);
+    setActionError("");
+    if (openedFromAlert) {
+      setStatus("");
+      setOpenedFromAlert(false);
+    }
+  }
+
+  // Restaura o filtro lateral para "Todos os status" quando não restarem pendências no alerta ativo
+  useEffect(() => {
+    if (status === "readyToComplete" && readyToComplete.length === 0) {
+      setStatus("");
+      setOpenedFromAlert(false);
+    } else if (status === "unpaidCompleted" && global.unpaid.length === 0) {
+      setStatus("");
+      setOpenedFromAlert(false);
+    } else if (openedFromAlert && status === "PENDING" && global.pending.length === 0) {
+      setStatus("");
+      setOpenedFromAlert(false);
+    }
+  }, [status, openedFromAlert, readyToComplete.length, global.unpaid.length, global.pending.length]);
   function changePeriod(direction: number) {
     navigate(view === "month" || view === "list" ? shiftAgendaMonth(focus, direction) : shiftAgendaDay(focus, direction * (view === "week" ? 7 : 1)));
   }
@@ -382,6 +471,10 @@ export function AgendaWorkspace({ session, renderReceipt }: {
 
   function openPayments(appointmentId: string) {
     setOpened(null);
+    if (openedFromAlert) {
+      setStatus("");
+      setOpenedFromAlert(false);
+    }
     setReceiptId(appointmentId);
   }
 
@@ -395,16 +488,58 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     } : undefined);
   }
 
-  async function update(row: Appointment, next: UpdatableAppointmentStatus, reason?: string) {
+  async function update(
+    row: Appointment,
+    next: UpdatableAppointmentStatus,
+    reason?: string,
+    overridePhone?: string,
+  ) {
     if (busy) return;
-    if (next === "COMPLETED" && !isReadyToComplete(row, now)) return;
+    if (next === "COMPLETED" && Date.now() < Date.parse(row.startsAt)) return;
+
+    const isConfirmingPending = isOwner && row.status === "PENDING" && next === "CONFIRMED";
+    const effectivePhone = (overridePhone ?? row.clientPhone ?? "").trim();
+    const effectivePhoneDigits = effectivePhone.replace(/\D/g, "");
+    const clientAlreadyExists = isConfirmingPending
+      ? hasRegisteredClient({
+          phone: effectivePhone,
+          name: row.clientName,
+          excludeAppointmentId: row.id,
+        })
+      : true;
+
+    // Se o agendamento pendente veio sem telefone e o cliente ainda não está cadastrado, solicita o número antes de concluir
+    if (isConfirmingPending && !clientAlreadyExists && effectivePhoneDigits.length < 8) {
+      setMissingPhoneConfirm({
+        appointment: row,
+        phone: row.clientPhone ?? "",
+        error: "",
+      });
+      return;
+    }
+
     setBusy(row.id);
     setActionError("");
     try {
       const updated = await apiRequest<Appointment>(`/appointments/${row.id}/status`, { method: "PATCH", body: { status: next, cancellationReason: reason } });
       setOpened((current) => current?.id === updated.id ? updated : current);
+      if (openedFromAlert) {
+        setStatus("");
+        setOpenedFromAlert(false);
+      }
       if (next === "CANCELED") setCanceling(null);
+      if (isConfirmingPending) setMissingPhoneConfirm(null);
       setRefresh((value) => value + 1);
+
+      // Cadastra automaticamente o novo cliente na base ao confirmar um agendamento pendente
+      if (isConfirmingPending && updated.status === "CONFIRMED" && !clientAlreadyExists && effectivePhoneDigits.length >= 8) {
+        createClient({
+          name: updated.clientName,
+          phone: effectivePhone,
+        });
+        toast.success("Novo cliente cadastrado automaticamente na base");
+      }
+
       if (updated.status === "COMPLETED") {
         if (canManagePayments) void offerPayment(updated);
         else toast.success(copy.completedSuccess);
@@ -413,6 +548,20 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       setActionError(error instanceof ApiError && error.message === "Cannot complete an appointment before it ends."
         ? copy.endHint(formatTimeInTimezone(row.endsAt, timezone, locale)) : t.errors.networkDescription);
     } finally { setBusy(""); }
+  }
+
+  function submitMissingPhoneConfirm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!missingPhoneConfirm) return;
+    const trimmedPhone = missingPhoneConfirm.phone.trim();
+    const digits = trimmedPhone.replace(/\D/g, "");
+    if (digits.length < 8) {
+      setMissingPhoneConfirm((prev) =>
+        prev ? { ...prev, error: "Informe um telefone válido com DDD para concluir o cadastro do cliente." } : null,
+      );
+      return;
+    }
+    void update(missingPhoneConfirm.appointment, "CONFIRMED", undefined, trimmedPhone);
   }
 
   function submitCancellation(event: FormEvent<HTMLFormElement>) {
@@ -425,6 +574,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   function itemProps(row: Appointment): AgendaItemProps {
     return {
       appointment: row, currency, timezone, now, person: staff.get(row.collaboratorId), busy: !!busy,
+      isFirstVisit: firstVisitClientIds.has(getCanonicalClientId(row.clientPhone, row.clientName)),
       ...(canManagePayments ? {
         payment: visiblePayments?.get(row.id),
         paymentError,
@@ -465,7 +615,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       className={`relative flex size-full min-w-0 justify-center overflow-hidden rounded-md border-s-2 shadow-xs ${compact ? "items-stretch" : "flex-col"} ${row.id === highlightedId ? "ring-2 ring-inset ring-[var(--appointment-accent)]" : ""}`}>
       <div className="flex min-h-0 min-w-0 flex-1">
       <button type="button" onClick={() => { setActionError(""); setOpened(row); }}
-        aria-label={`${copy.openDetails} · ${description}`} title={description}
+        aria-label={`${copy.openDetails} · ${description}`}
         className="flex min-h-0 min-w-0 flex-1 cursor-pointer flex-col items-start justify-center gap-0.5 overflow-hidden px-1.5 text-left hover:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent group-active/agenda-drag:cursor-grabbing">
         <span className="flex w-full min-w-0 items-center justify-between gap-1">
           <span className="min-w-0 truncate text-[11px] font-semibold leading-tight">{row.serviceNameSnapshot}</span>
@@ -484,7 +634,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       </div>
       {alertAction && ActionIcon && <button type="button" data-agenda-quick-action
         disabled={readyToComplete && !!busy} onClick={alertAction.run}
-        aria-label={`${alertAction.label} · ${row.clientName}`} title={alertAction.label}
+        aria-label={`${alertAction.label} · ${row.clientName}`}
         className={`flex min-w-0 cursor-pointer items-center gap-1 px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55 ${compact ? "max-w-3/4 border-s" : "border-t"} ${unpaidCompleted ? "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-ink)]" : "border-border-subtle bg-accent-soft text-ink"}`}>
         <ActionIcon size={11} className="shrink-0" aria-hidden="true" />
         <span className="truncate @min-[10rem]:hidden">{alertAction.shortLabel}</span>
@@ -524,6 +674,36 @@ export function AgendaWorkspace({ session, renderReceipt }: {
           <AgendaMonthGrid company={company} month={miniMonth} selected={focus} today={today} counts={miniCounts}
             onMonth={setMiniMonth} onSelect={(date) => { navigate(date); if (view === "month") setView("day"); }} />
         </div>
+
+        {/* 2. Widget de Fila de Espera na Sidebar Auxiliar */}
+        <div className="rounded-xl border border-border-subtle bg-canvas/60 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Users className="size-4 text-accent" />
+              <span className="text-xs font-semibold text-ink">Fila de Espera</span>
+            </div>
+            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-bold text-accent tabular-nums">
+              {waitlist.count}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+            <button
+              type="button"
+              onClick={() => setWaitlistDrawerOpen(true)}
+              className="rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-[11px] font-medium text-ink hover:border-accent transition-colors truncate"
+            >
+              Ver fila ({waitlist.count})
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditor({ mode: "new", initialTab: "waitlist" })}
+              className="rounded-lg bg-accent px-2 py-1.5 text-[11px] font-semibold text-accent-ink hover:bg-accent-hover transition-colors truncate"
+            >
+              + Adicionar
+            </button>
+          </div>
+        </div>
+
         <div className="space-y-3 border-t border-border-subtle pt-3 sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3">
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-secondary">
             <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-[#10B981]" />{copy.working}</span>
@@ -567,7 +747,6 @@ export function AgendaWorkspace({ session, renderReceipt }: {
             })}
             {global.paymentsError && <p role="alert" className="px-2 py-1 text-xs text-ink-secondary">{copy.failedPaymentStatus}</p>}
           </section>}
-        <AgendaStatusLegend label={copy.statusLegend} labels={t.status} />
         {main.error ? <div className="rounded-xl border border-border-subtle bg-surface p-5 text-sm text-ink-secondary" role="alert">{t.errors.networkDescription}</div>
           : view === "list" ? <div className="space-y-4">
             {main.loading || (status === "unpaidCompleted" && paymentLoading) ? <p className="rounded-xl bg-surface p-4 text-sm text-ink-secondary" role="status">{t.common.loading}</p>
@@ -586,13 +765,34 @@ export function AgendaWorkspace({ session, renderReceipt }: {
               </div>;
             }} /> : <AgendaTimeGrid days={range.days} company={company} selected={focus} today={today} now={now} byDay={rowsByDay}
               appointments={main.rows} blocks={blocks} blocksReady={!schedule.loading && !schedule.error} staff={staff}
+              payments={visiblePayments} firstVisitClientIds={firstVisitClientIds}
               isOwner={isOwner} onSelect={(date) => { navigate(date); setView("day"); }} renderBlock={renderEvent}
               onRescheduleDrop={handleRescheduleDrop} onRescheduleConflict={() => toast.warning(copy.professionalAlreadyBooked)}
               onEmptySlotClick={handleEmptySlotClick} />}
       </section>
     </div>
 
-    {opened && <AgendaAppointmentDetails {...itemProps(opened)} error={actionError} onClose={() => { setOpened(null); setActionError(""); }} />}
+    {opened && (
+      <AgendaAppointmentDetails
+        {...itemProps(opened)}
+        error={actionError}
+        onClose={closeOpenedDetails}
+        {...(isOwner
+          ? {
+              // Verifica estritamente na base oficial de clientes (supplements), ignorando agendamentos públicos não salvos
+              isRegisteredClient: hasRegisteredClient({
+                phone: opened.clientPhone,
+                name: opened.clientName,
+                onlySupplements: true,
+              }),
+              onRegisterNewClient: (data) => {
+                createClient(data);
+                toast.success("Cliente cadastrado com sucesso!");
+              },
+            }
+          : {})}
+      />
+    )}
     {editor && <AgendaEditor
       key={typeof editor === "object" && !("mode" in editor) ? editor.id : "new"}
       company={company}
@@ -601,12 +801,120 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       initialDate={typeof editor === "object" && "mode" in editor ? editor.date : undefined}
       initialTime={typeof editor === "object" && "mode" in editor ? editor.time : undefined}
       initialPersonId={typeof editor === "object" && "mode" in editor ? editor.personId : undefined}
+      initialTab={typeof editor === "object" && "mode" in editor ? editor.initialTab : "appointment"}
+      initialClientName={typeof editor === "object" && "mode" in editor ? editor.initialClientName : undefined}
+      initialClientPhone={typeof editor === "object" && "mode" in editor ? editor.initialClientPhone : undefined}
+      initialServiceId={typeof editor === "object" && "mode" in editor ? editor.initialServiceId : undefined}
       appointment={typeof editor === "object" && !("mode" in editor) ? editor : undefined}
       collaborators={catalog.people}
       services={catalog.services}
       onClose={() => setEditor(null)}
-      onSaved={saved}
+      onSaved={(row) => {
+        if (typeof editor === "object" && "mode" in editor && editor.fromWaitlistId) {
+          waitlist.removeEntry(editor.fromWaitlistId);
+        }
+        saved(row);
+      }}
+      onBlockSaved={() => {
+        setRefresh((v) => v + 1);
+      }}
     />}
+    {waitlistDrawerOpen && (
+      <AgendaDialog
+        centered
+        title={`Fila de Espera (${waitlist.count})`}
+        onClose={() => setWaitlistDrawerOpen(false)}
+      >
+        <div className="space-y-3">
+          <div className="flex items-center justify-between pb-1">
+            <p className="text-xs text-ink-muted">
+              Clientes aguardando liberação de horários
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setWaitlistDrawerOpen(false);
+                setEditor({ mode: "new", initialTab: "waitlist" });
+              }}
+              className="rounded-lg bg-accent px-2.5 py-1 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors"
+            >
+              + Adicionar Cliente
+            </button>
+          </div>
+
+          {waitlist.entries.length === 0 ? (
+            <div className="py-8 text-center text-xs text-ink-muted border border-dashed border-border-subtle rounded-xl">
+              Nenhum cliente na fila de espera no momento.
+            </div>
+          ) : (
+            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+              {waitlist.entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="rounded-xl border border-border-subtle bg-canvas/40 p-3 space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-bold text-ink">{entry.clientName}</p>
+                      <p className="font-mono text-[11px] text-ink-muted">{entry.clientPhone}</p>
+                    </div>
+                    <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[10px] font-semibold text-accent">
+                      {entry.serviceName || "Serviço"}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-secondary">
+                    <span>Profissional: {entry.collaboratorName || "Qualquer"}</span>
+                    <span>·</span>
+                    <span>
+                      {entry.preferredTiming === "SPECIFIC"
+                        ? `Preferência: ${entry.preferredDate || ""} ${entry.preferredTime || ""}`
+                        : "Horário flexível"}
+                    </span>
+                  </div>
+
+                  {entry.notes && (
+                    <p className="rounded-lg bg-subtle p-2 text-[11px] text-ink-secondary">
+                      {entry.notes}
+                    </p>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-border-subtle/50">
+                    <button
+                      type="button"
+                      onClick={() => waitlist.removeEntry(entry.id)}
+                      className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    >
+                      Remover
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWaitlistDrawerOpen(false);
+                        setEditor({
+                          mode: "new",
+                          initialTab: "appointment",
+                          initialClientName: entry.clientName,
+                          initialClientPhone: entry.clientPhone,
+                          initialServiceId: entry.serviceId,
+                          personId: entry.collaboratorId || undefined,
+                          date: entry.preferredDate || undefined,
+                          time: entry.preferredTime || undefined,
+                          fromWaitlistId: entry.id,
+                        });
+                      }}
+                      className="rounded-lg bg-accent px-3 py-1 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors"
+                    >
+                      Agendar Agora
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </AgendaDialog>
+    )}
     {pendingReschedule && (
       <AgendaDialog
         centered
@@ -659,6 +967,58 @@ export function AgendaWorkspace({ session, renderReceipt }: {
             </button>
           </div>
         </div>
+      </AgendaDialog>
+    )}
+    {missingPhoneConfirm && (
+      <AgendaDialog
+        centered
+        title="Informar telefone do cliente"
+        closeDisabled={!!busy}
+        onClose={() => setMissingPhoneConfirm(null)}
+      >
+        <form onSubmit={submitMissingPhoneConfirm} className="space-y-4">
+          <p className="text-sm text-ink-secondary">
+            O agendamento de <strong className="text-ink">{missingPhoneConfirm.appointment.clientName}</strong> não possui telefone registrado. Informe o número para confirmar o agendamento e cadastrar o cliente na base.
+          </p>
+          <label className="block space-y-1.5 text-sm font-medium text-ink">
+            <span>Telefone (WhatsApp)</span>
+            <input
+              type="tel"
+              required
+              autoFocus
+              value={missingPhoneConfirm.phone}
+              onChange={(event) =>
+                setMissingPhoneConfirm((prev) =>
+                  prev ? { ...prev, phone: event.target.value, error: "" } : null,
+                )
+              }
+              placeholder="+55 11 99999-9999"
+              className="block min-h-11 w-full rounded-xl border border-border-subtle bg-surface px-3.5 text-sm text-ink outline-none focus-visible:border-accent"
+            />
+          </label>
+          {missingPhoneConfirm.error && (
+            <p role="alert" className="text-xs text-[var(--status-danger-ink)]">
+              {missingPhoneConfirm.error}
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => setMissingPhoneConfirm(null)}
+              className="min-h-10 cursor-pointer rounded-xl border border-border-subtle bg-surface px-4 text-sm font-semibold text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {copy.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={!!busy}
+              className="min-h-10 cursor-pointer rounded-xl bg-accent px-4 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              Confirmar e cadastrar
+            </button>
+          </div>
+        </form>
       </AgendaDialog>
     )}
     {canceling && <AgendaDialog title={t.common.cancelModalTitle} closeDisabled={!!busy} onClose={() => { setCanceling(null); setActionError(""); }}>

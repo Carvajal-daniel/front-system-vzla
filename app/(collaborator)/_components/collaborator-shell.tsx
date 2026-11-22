@@ -211,7 +211,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
         ].join(" ")}
       >
         <header className="sticky top-0 z-20 border-b border-border-subtle bg-surface/90 backdrop-blur-md">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex w-full items-center justify-between gap-3 px-4 py-3 lg:px-6">
             <div className="min-w-0">
               <p className="text-xs font-medium text-ink-muted md:hidden truncate">
                 {session.company.companyName}
@@ -238,7 +238,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 pb-24 sm:px-6 lg:pb-12">
+        <main className="w-full flex-1 px-4 py-6 pb-24 lg:px-6 lg:pb-12">
           {children}
         </main>
       </div>

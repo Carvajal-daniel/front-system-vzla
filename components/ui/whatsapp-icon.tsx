@@ -1,13 +1,18 @@
 import type { SVGProps } from "react";
 
 /**
- * Ícone SVG fiel do WhatsApp (balão característico com telefone interno).
+ * Ícone SVG oficial e sólido do WhatsApp.
+ * Pode ser preenchido com #25D366 (verde oficial) ou currentColor para uso em botões e badges.
  */
-export function WhatsAppIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+export function WhatsAppIcon({
+  className,
+  color,
+  ...props
+}: SVGProps<SVGSVGElement>) {
   return (
     <svg
       viewBox="0 0 24 24"
-      fill="currentColor"
+      fill={color ?? "currentColor"}
       aria-hidden="true"
       className={className}
       {...props}

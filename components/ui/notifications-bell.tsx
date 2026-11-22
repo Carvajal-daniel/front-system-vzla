@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Volume2, VolumeX } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { formatDateTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
@@ -10,6 +10,23 @@ import type { Appointment } from "@/lib/types/appointment";
 import { useSession } from "@/components/ui/auth-guard";
 
 const POLL_INTERVAL_MS = 30_000;
+const SOUND_STORAGE_KEY = "atelier_agenda_notification_sound";
+const SOUND_CHANGE_EVENT = "atelier:notification-sound-change";
+
+function readSoundPreference() {
+  if (typeof window === "undefined") return true;
+  try { return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "false"; } catch { return true; }
+}
+
+function subscribeSoundPreference(callback: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("storage", callback);
+  window.addEventListener(SOUND_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(SOUND_CHANGE_EVENT, callback);
+  };
+}
 
 function readSeenIds(storageKey: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -53,10 +70,32 @@ export function NotificationsBell() {
   const [recent, setRecent] = useState<Appointment[]>([]);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const soundEnabled = useSyncExternalStore(subscribeSoundPreference, readSoundPreference, () => true);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const knownIdsRef = useRef<Set<string>>(new Set());
+
+  const playAlert = useCallback((force = false) => {
+    if ((!soundEnabled && !force) || typeof window === "undefined") return;
+    try {
+      const AudioContextConstructor = window.AudioContext;
+      if (!AudioContextConstructor) return;
+      const context = new AudioContextConstructor();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.23);
+      oscillator.onended = () => { void context.close(); };
+    } catch { /* audio is optional and may be blocked by browser policy */ }
+  }, [soundEnabled]);
 
   const pollAppointments = useCallback(async () => {
     try {
@@ -93,6 +132,7 @@ export function NotificationsBell() {
           setToastMessage(
             `${t.notifications.newBookingToast} ${newlyArrived[0].clientName}`,
           );
+          playAlert();
           window.setTimeout(() => setToastMessage(null), 5000);
         }
       }
@@ -107,7 +147,14 @@ export function NotificationsBell() {
     } catch {
       // Falha silenciosa no polling para não interromper o uso do painel
     }
-  }, [endpoint, storageKey, t.notifications.newBookingToast]);
+  }, [endpoint, playAlert, storageKey, t.notifications.newBookingToast]);
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    try { window.localStorage.setItem(SOUND_STORAGE_KEY, String(next)); } catch { /* storage may be unavailable */ }
+    window.dispatchEvent(new CustomEvent(SOUND_CHANGE_EVENT));
+    if (next) playAlert(true);
+  };
 
   useEffect(() => {
     let active = true;
@@ -211,6 +258,10 @@ export function NotificationsBell() {
             <p className="text-xs font-bold text-ink">
               {t.notifications.title}
             </p>
+            <div className="flex items-center gap-2">
+            <button type="button" onClick={toggleSound} aria-label={soundEnabled ? t.product.soundOn : t.product.soundOff} title={soundEnabled ? t.product.soundOn : t.product.soundOff} className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-subtle hover:text-ink">
+              {soundEnabled ? <Volume2 className="size-3.5" aria-hidden="true" /> : <VolumeX className="size-3.5" aria-hidden="true" />}
+            </button>
             {unreadCount > 0 && (
               <button
                 type="button"
@@ -221,6 +272,7 @@ export function NotificationsBell() {
                 {t.notifications.markAllRead}
               </button>
             )}
+            </div>
           </div>
 
           {recent.length === 0 ? (

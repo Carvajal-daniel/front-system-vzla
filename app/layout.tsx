@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono, Poppins } from "next/font/google";
 import { LocaleProvider } from "@/lib/i18n/locale-context";
 import { ThemeProvider } from "@/lib/theme-context";
+import { PrivacyProvider } from "@/lib/privacy-context";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -43,7 +44,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-dvh flex flex-col bg-canvas text-ink">
         <ThemeProvider>
-          <LocaleProvider>{children}</LocaleProvider>
+          <PrivacyProvider>
+            <LocaleProvider>{children}</LocaleProvider>
+          </PrivacyProvider>
         </ThemeProvider>
       </body>
     </html>

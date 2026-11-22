@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  AlertCircle,
   CalendarCheck,
   CalendarOff,
   Check,
@@ -12,6 +13,7 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
+  Sparkles,
   Star,
   TrendingUp,
   Trophy,
@@ -44,6 +46,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
+import { usePlanLimits } from "@/lib/use-plan-limits";
 import {
   NewCollaboratorModal,
   type GeneratedInvite,
@@ -76,6 +79,7 @@ export function TeamPanel() {
   // Busca e filtros
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const { limits } = usePlanLimits();
 
   // Modais
   const [createOpen, setCreateOpen] = useState(false);
@@ -238,8 +242,29 @@ export function TeamPanel() {
     );
   }
 
+  const reachedLimit = computedKpis.activeCollaborators >= limits.maxProfessionals;
+
   return (
     <div className="space-y-6">
+      {/* Banner de Limite de Plano Atingido */}
+      {reachedLimit && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs shadow-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400 font-semibold">
+            <AlertCircle className="size-5 shrink-0" />
+            <span>
+              Você atingiu o limite de {limits.maxProfessionals} profissionais ativos do seu plano ({computedKpis.activeCollaborators}/{limits.maxProfessionals}). Faça upgrade para o plano Pro para adicionar mais membros.
+            </span>
+          </div>
+          <Link
+            href="/owner/settings"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-xs font-bold text-accent-ink hover:bg-accent-hover transition-colors shrink-0"
+          >
+            <Sparkles size={13} />
+            <span>Fazer Upgrade</span>
+          </Link>
+        </div>
+      )}
+
       {/* Header Principal */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -262,8 +287,22 @@ export function TeamPanel() {
 
           <Button
             type="button"
-            onClick={() => setCreateOpen(true)}
-            className="cursor-pointer bg-accent text-accent-ink hover:bg-accent-hover"
+            disabled={reachedLimit}
+            onClick={() => {
+              if (reachedLimit) {
+                toast.error(
+                  `Limite de profissionais atingido (${computedKpis.activeCollaborators}/${limits.maxProfessionals}). Faça upgrade para adicionar mais.`,
+                );
+                return;
+              }
+              setCreateOpen(true);
+            }}
+            className={`cursor-pointer ${
+              reachedLimit
+                ? "opacity-50 cursor-not-allowed bg-surface border border-border-subtle text-ink-muted"
+                : "bg-accent text-accent-ink hover:bg-accent-hover"
+            }`}
+            title={reachedLimit ? "Limite de profissionais do plano atingido" : undefined}
           >
             <Plus className="h-4 w-4 mr-1.5" />
             {t.owner.newCollaborator}

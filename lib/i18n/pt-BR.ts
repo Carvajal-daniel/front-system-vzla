@@ -2,6 +2,19 @@ import { collectionsPtBR } from "./collections";
 import type { Dictionary } from "./index";
 
 export const ptBR: Dictionary = {
+  product: {
+    upgrade: "Fazer upgrade", privacyOn: "Ocultar valores sensíveis", privacyOff: "Mostrar valores sensíveis", soundOn: "Silenciar alertas sonoros", soundOff: "Ativar alertas sonoros",
+    planTitle: "Plano Trial", trialDays: "5 dias restantes", professionals: "Profissionais", whatsappMessages: "Mensagens WhatsApp", aiConversations: "Conversas IA", upgradeAction: "Fazer Upgrade", whatsappConnected: "Conectado", whatsappDisconnected: "Desconectado", comingSoon: "Em breve",
+    panel: "Painel", agenda: "Agenda", calendar: "Calendário", blocks: "Bloqueios", listing: "Listagem", restore: "Restaurar",
+    finance: "Financeiro", overviewReceipts: "Comandas", commissionsAdvances: "Comissões", accounts: "Contas a Pagar/Receber", cashStatement: "Controle Financeiro", paymentMethods: "Formas de Pagamento", onlinePayment: "Pagamento Online",
+    clients: "Clientes", clientBase: "Base de Clientes", inactiveClients: "Clientes Sumidos", birthdays: "Aniversariantes", returns: "Retornos", loyalty: "Fidelidade",
+    services: "Serviços", serviceListing: "Listagem", categories: "Categorias", packages: "Pacotes",
+    productsInventory: "Produtos & Estoque", productListingMovements: "Listagem e Movimentações", suppliers: "Fornecedores", purchaseOrders: "Ordens de Compra",
+    team: "Equipe", professionalsList: "Profissionais", schedules: "Expedientes",
+    reports: "Relatórios", mainReport: "Painel Principal", agendaReport: "Painel Agenda", financeReport: "Painel Financeiro", advancedReports: "Relatórios Avançados", settings: "Configurações",
+    quickCreate: "+ Criar", calendarShortcut: "Calendário", cnpjOrRif: "CNPJ / RIF",
+    subscribeNow: "Assine Agora", aiCopilot: "Copiloto IA", globalSearch: "Buscar no Sistema", bookingLink: "Link de Agendamento",
+  },
   common: {
     appName: "Atelier Agenda",
     loading: "Carregando…",

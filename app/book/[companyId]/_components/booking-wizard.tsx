@@ -24,6 +24,7 @@ import {
   isValidInternationalPhone,
 } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
+import { registerClientIfMissing } from "@/lib/use-clients";
 import type { Appointment } from "@/lib/types/appointment";
 import type {
   AvailabilitySlot,
@@ -193,6 +194,11 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
           body: payload,
         },
       );
+      // Registra automaticamente o cliente na base local da empresa caso ainda não exista pelo telefone
+      registerClientIfMissing(company.id, {
+        name: created.clientName || trimmedName,
+        phone: created.clientPhone || payload.clientPhone,
+      });
       setConfirmedAppointment(created);
       setConfirmedCollaboratorName(selectedSlot.collaboratorName);
       setStep(5);

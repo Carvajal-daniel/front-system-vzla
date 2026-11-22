@@ -3,14 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Clock,
+  Download,
   Loader2,
   Pencil,
   Percent,
   Plus,
   Power,
+  Search,
   Trash2,
   Wrench,
 } from "lucide-react";
+import { toast } from "sonner";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
   formatDuration,
@@ -115,6 +118,45 @@ export function ServicesPanel() {
   const [deleteTarget, setDeleteTarget] = useState<Service | null>(null);
   const [deletingService, setDeletingService] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Filtros e busca
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredServices = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return services.filter((s) => {
+      if (q && !s.name.toLowerCase().includes(q) && !(s.description || "").toLowerCase().includes(q)) {
+        return false;
+      }
+      return true;
+    });
+  }, [services, searchQuery]);
+
+  const handleExportCsv = () => {
+    if (filteredServices.length === 0) {
+      toast.warning("Não há serviços para exportar.");
+      return;
+    }
+    const headers = ["Nome", "Duração (min)", "Preço (R$)", "Status", "Descrição"];
+    const rows = filteredServices.map((s) => [
+      `"${s.name.replace(/"/g, '""')}"`,
+      s.durationMinutes,
+      (s.priceInCents / 100).toFixed(2),
+      s.active ? "Ativo" : "Inativo",
+      `"${(s.description || "").replace(/"/g, '""')}"`,
+    ].join(","));
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `servicos_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success("Catálogo de serviços exportado com sucesso!");
+  };
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -518,6 +560,15 @@ export function ServicesPanel() {
           <Button
             type="button"
             variant="outline"
+            onClick={handleExportCsv}
+            className="min-h-11 rounded-full px-4 cursor-pointer"
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Salvar em CSV
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             onClick={() => {
               setScheduleDrawerOpen(true);
               setScheduleSaved(false);
@@ -539,6 +590,21 @@ export function ServicesPanel() {
             {t.owner.newService}
           </Button>
         </div>
+      </div>
+
+      {/* Barra de Busca de Serviços */}
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-surface p-3">
+        <div className="relative w-64 sm:w-80">
+          <Search className="absolute left-3 top-2.5 size-4 text-ink-muted" />
+          <input
+            type="text"
+            placeholder="Buscar serviço por nome ou descrição..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-border-subtle bg-canvas/40 pl-9 pr-3 py-1.5 text-xs text-ink placeholder:text-ink-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+        <span className="text-xs text-ink-muted">{filteredServices.length} serviço(s)</span>
       </div>
 
       <div
@@ -575,7 +641,7 @@ export function ServicesPanel() {
         />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {services.map((service) => (
+          {filteredServices.map((service) => (
             <article
               key={service.id}
               className="card-interactive flex flex-col justify-between gap-4 rounded-2xl border border-border-subtle bg-surface p-5"

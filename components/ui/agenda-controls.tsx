@@ -12,7 +12,7 @@ export type AgendaPerson = { id: string; name: string; avatarUrl?: string | null
 
 export function ProfessionalAvatar({ person, className = "size-7" }: { person: AgendaPerson; className?: string }) {
   const [failedUrl, setFailedUrl] = useState<string>();
-  const words = person.name.trim().split(/\s+/).filter(Boolean);
+  const words = (person?.name ?? "").trim().split(/\s+/).filter(Boolean);
   const initials = words.length > 1 ? `${words[0][0]}${words.at(-1)![0]}` : words[0]?.slice(0, 2) ?? "?";
   return <span aria-hidden="true" className={`relative grid shrink-0 place-items-center overflow-hidden rounded-full border border-border-subtle bg-accent-soft text-[10px] font-semibold text-accent ${className}`}>
     {person.avatarUrl && person.avatarUrl !== failedUrl ? (

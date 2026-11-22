@@ -1,7 +1,8 @@
 "use client";
 
 import { useDeferredValue, useRef, useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, Boxes, FileSpreadsheet, Package, Plus, TriangleAlert, Wallet, type LucideIcon } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Boxes, Download, FileSpreadsheet, Package, Plus, TriangleAlert, Wallet, type LucideIcon } from "lucide-react";
+import { toast } from "sonner";
 import { useSession } from "@/components/ui/auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -155,6 +156,33 @@ export function InventoryPanel() {
     refresh();
   }
 
+  const handleExportCsv = () => {
+    if (!products || products.items.length === 0) {
+      toast.warning("Não há itens no estoque para exportar.");
+      return;
+    }
+    const headers = ["Nome", "Categoria", "Estoque Atual", "Estoque Mínimo", "Custo (R$)", "Preço Venda (R$)"];
+    const rows = products.items.map((it) => [
+      `"${it.name.replace(/"/g, '""')}"`,
+      `"${it.category}"`,
+      it.currentStock,
+      it.minStock,
+      (it.costPriceCents / 100).toFixed(2),
+      it.salePriceCents ? (it.salePriceCents / 100).toFixed(2) : "—",
+    ].join(","));
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `estoque_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success("Estoque exportado em CSV com sucesso!");
+  };
+
   return <div className="space-y-5">
     {operation && <InventoryOperationDialog operation={operation} today={today} onClose={() => setOperation(null)} onSaved={afterSave} />}
     {importing && <SpreadsheetImport kind="inventory" today={today} onClose={() => setImporting(false)} onImported={afterSave} />}
@@ -167,6 +195,9 @@ export function InventoryPanel() {
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={() => setOperation({ kind: "movement", mode: "out" })}>
           <ArrowUpFromLine aria-hidden="true" />{x.registerOut}
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={handleExportCsv}>
+          <Download aria-hidden="true" />Salvar em CSV
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={() => setImporting(true)}>
           <FileSpreadsheet aria-hidden="true" />{x.importSheet}

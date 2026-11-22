@@ -85,11 +85,11 @@
   --surface-canvas: #f8fafc;
   --surface-elevated: #ffffff;
   --surface-subtle: #f1f5f9;
-  --border-subtle: #e2e8f0;
-  --border-strong: #cbd5e1;
+  --border-subtle: #cbd5e1;
+  --border-strong: #94a3b8;
 
-  --ink-primary: #0d0d0f;
-  --ink-secondary: #475569;
+  --ink-primary: #0f172a;
+  --ink-secondary: #334155;
   --ink-muted: #64748b;
 
   /* Identidade editorial padrão (Landing & Auth) */
@@ -198,11 +198,14 @@
 
 /* Dashboard surfaces retain a white canvas with cool-gray cards in light mode. */
 .dashboard-shell {
-  --surface-canvas: #ffffff;
-  --surface-elevated: #f4f6fa;
-  --surface-subtle: #eef2f6;
-  --border-subtle: #dce3ec;
-  --border-strong: #c6d0dd;
+  --surface-canvas: #f8fafc;
+  --surface-elevated: #ffffff;
+  --surface-subtle: #f1f5f9;
+  --border-subtle: #cbd5e1;
+  --border-strong: #94a3b8;
+  --ink-primary: #0f172a;
+  --ink-secondary: #334155;
+  --ink-muted: #64748b;
   --background: var(--surface-canvas);
   --foreground: var(--ink-primary);
   --card: var(--surface-elevated);

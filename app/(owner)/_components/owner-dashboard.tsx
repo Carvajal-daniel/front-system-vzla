@@ -10,6 +10,8 @@ import { formatTimeInTimezone, getCurrencyFormatter, getTodayIsoDateInTimezone }
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useTheme } from "@/lib/theme-context";
 import { useSession } from "@/components/ui/auth-guard";
+import { usePrivacy } from "@/lib/privacy-context";
+import { maskCurrency } from "@/components/ui/sensitive-value";
 import type { Appointment } from "@/lib/types/appointment";
 import type { Collaborator } from "@/lib/types/team";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
@@ -124,6 +126,7 @@ export function OwnerDashboard() {
   const { session } = useSession();
   const { locale, t } = useLocale();
   const { mode, palette } = useTheme();
+  const { hideSensitiveValues } = usePrivacy();
   const router = useRouter();
   const searchParams = useSearchParams();
   const timezone = session.company.timezone;
@@ -235,7 +238,7 @@ export function OwnerDashboard() {
   };
   const displayCurrency = currency;
   const currencyFormat = getCurrencyFormatter(locale, displayCurrency, 0);
-  const fmt = (value: number) => currencyFormat.format(value / 100);
+  const fmt = (value: number) => maskCurrency(currencyFormat.format(value / 100), hideSensitiveValues);
   const deltaFormat = new Intl.NumberFormat(locale, { style: "percent", signDisplay: "exceptZero", maximumFractionDigits: 1 });
   const smallDeltaFormat = new Intl.NumberFormat(locale, { style: "percent", signDisplay: "exceptZero", maximumSignificantDigits: 1 });
   const target = data.goal.monthlyGoalInCents ?? 0;

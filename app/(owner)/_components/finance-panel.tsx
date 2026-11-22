@@ -1,482 +1,831 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
-  ArrowDownRight, ArrowUpRight, CircleCheck, Clock3, Maximize2,
-  Download, FileSpreadsheet, Printer, Wallet, X, HandCoins, Plus, SlidersHorizontal, type LucideIcon,
+  ArrowDownRight,
+  ArrowUpRight,
+  CheckCircle2,
+  Clock,
+  Clock3,
+  CreditCard,
+  DollarSign,
+  Download,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Filter,
+  Loader2,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Search,
+  ShoppingCart,
+  TrendingDown,
+  TrendingUp,
+  Upload,
+  User,
+  Wallet,
+  X,
+  XCircle,
 } from "lucide-react";
-import { useSession } from "@/components/ui/auth-guard";
-import { Button } from "@/components/ui/button";
-import { CardListSkeleton } from "@/components/ui/card-list-skeleton";
-import { ErrorState } from "@/components/ui/error-state";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 import { apiRequest } from "@/lib/api-client";
-import { getCurrencyFormatter, getTodayIsoDateInTimezone } from "@/lib/format";
+import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
-import type { CommissionReport, ExpenseStatus, FinanceExpense, FinanceSummaryResponse, PaymentMethod } from "@/lib/types/finance";
-import { FinanceCharts } from "./finance-charts";
+import { useSession } from "@/components/ui/auth-guard";
+import { SensitiveValue } from "@/components/ui/sensitive-value";
+import type { Appointment } from "@/lib/types/appointment";
+import type { FinanceDay, FinanceSummaryResponse, PaymentMethod } from "@/lib/types/finance";
+import type { Collaborator } from "@/lib/types/team";
 import { ReceiptDialog } from "./receipt-dialog";
-import { ReceiptMovements } from "./receipt-movements";
-import { FinanceDataTable, FinancePrintReport } from "./finance-print-report";
-import { FinanceCommissions, FinanceExpenses, useFinanceReport } from "./finance-outflow-tabs";
-import { FinanceDeductionDetails } from "./finance-deduction-details";
-import { FinanceDrilldown, type FinanceDrilldownKind } from "./finance-drilldown";
-import { SpreadsheetImport } from "./spreadsheet-import";
 import { FinanceOperationDialog, type FinanceOperation } from "./finance-operation-dialog";
-import {
-  downloadFinanceCsv, formatFinanceRange, getFinanceRange,
-  getFinanceReport, presets, type FinancePreset, type FinanceRange,
-} from "./finance-report-data";
 
-const card = "rounded-2xl border border-border-subtle bg-surface shadow-xs";
-const inputClass = "h-8 w-full min-w-0 rounded-lg border border-border-strong bg-surface px-2 text-xs text-ink tabular-nums";
-const quickActionClass = "h-11 w-full min-w-0 flex-col items-center justify-center gap-0.5 px-1 text-center text-[11px] leading-tight";
-const paymentGroups = [
-  ["CASH"], ["PIX"], ["DEBIT_CARD", "CREDIT_CARD"], ["TRANSFER"], ["OTHER"],
-] as const satisfies readonly (readonly PaymentMethod[])[];
-const financeTabs = ["overviewTab", "expenseTab", "commissionTab"] as const;
-type FinanceTab = (typeof financeTabs)[number];
+const dayInMs = 86_400_000;
 
-type Filters = FinanceRange & { collaboratorId: string };
-type FinanceRequest = { filters: Filters; preset: FinancePreset | null };
-type Result = {
-  request: FinanceRequest;
-  data: FinanceSummaryResponse | null;
+function formatIsoInTimezone(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === "year")?.value ?? "2026";
+  const month = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+interface PaymentSummaryItem {
+  appointmentId: string;
+  currency: string;
+  collectedInCents: number;
+  netInCents: number;
+  openInCents: number;
+  canCollect: boolean;
+  methods: PaymentMethod[];
+}
+
+const paymentMethodLabels: Record<PaymentMethod, string> = {
+  PIX: "PIX",
+  CASH: "Dinheiro",
+  CREDIT_CARD: "Crédito",
+  DEBIT_CARD: "Débito",
+  TRANSFER: "Transferência",
+  OTHER: "Outros",
 };
 
-function FinanceKpi({ title, icon: Icon, cents, previous, comparisonPeriod, money, children, onOpen }: {
-  title: string;
-  icon: LucideIcon;
-  cents: number;
-  previous?: number;
-  comparisonPeriod?: string;
-  money: (cents: number) => string;
-  children: ReactNode;
-  onOpen: () => void;
-}) {
-  const { locale, t } = useLocale();
-  const delta = previous ? (cents - previous) / Math.abs(previous) : null;
-  const Direction = delta !== null && delta < 0 ? ArrowDownRight : ArrowUpRight;
-
-  return (
-    <article className={card + " group relative flex min-w-0 flex-col gap-2 p-3 transition-colors hover:border-accent/60 hover:bg-subtle focus-within:border-accent/60 sm:p-4"}>
-      <button type="button" aria-label={title} aria-haspopup="dialog" onClick={onOpen}
-        className="absolute inset-0 cursor-pointer rounded-2xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
-      <div className="flex min-h-8 items-center justify-between gap-1.5">
-        <h3 className="text-xs font-semibold leading-snug text-ink-secondary">{title}</h3>
-        <span className="flex shrink-0 items-center gap-1.5 text-accent" aria-hidden="true">
-          <Maximize2 className="size-3 text-ink-muted transition-colors group-hover:text-accent group-focus-within:text-accent" />
-          <span className="grid size-7 place-items-center rounded-lg bg-accent/10 sm:size-8">
-            <Icon className="size-3.5 sm:size-4" />
-          </span>
-        </span>
-      </div>
-      <p className="break-words text-lg font-semibold tracking-tight text-ink tabular-nums sm:text-2xl">{money(cents)}</p>
-      <div className="text-[11px] leading-snug text-ink-secondary">{children}</div>
-      {delta !== null && (
-        <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted" title={comparisonPeriod}>
-          <strong className="inline-flex items-center gap-0.5 font-semibold text-accent tabular-nums">
-            {delta !== 0 && <Direction className="size-3.5" aria-hidden="true" />}
-            {new Intl.NumberFormat(locale, {
-              style: "percent", maximumFractionDigits: 1, signDisplay: "exceptZero",
-            }).format(delta)}
-          </strong>
-          {t.finance.previousPeriod}
-        </p>
-      )}
-    </article>
-  );
-}
-
 export function FinancePanel() {
-  const { session } = useSession();
-  return <FinanceWorkspace key={session.company.id + session.company.timezone} />;
-}
-
-function FinanceWorkspace() {
+  const router = useRouter();
   const { session } = useSession();
   const { locale, t } = useLocale();
-  const f = t.finance;
-  const company = session.company;
-  const [request, setRequest] = useState<FinanceRequest>(() => ({
-    filters: { ...getFinanceRange("thisMonth", company.timezone), collaboratorId: "" },
-    preset: "thisMonth",
-  }));
-  const [draft, setDraft] = useState<FinanceRange>(() => ({ from: request.filters.from, to: request.filters.to }));
-  const [result, setResult] = useState<Result | null>(null);
-  const [invalid, setInvalid] = useState(false);
-  const [preview, setPreview] = useState(false);
-  const [reviewId, setReviewId] = useState<string | null>(null);
-  const [receiptTarget, setReceiptTarget] = useState<string | null>(null);
-  const [drilldown, setDrilldown] = useState<FinanceDrilldownKind | null>(null);
-  const [importing, setImporting] = useState(false);
+  const timezone = session.company.timezone;
+  const currency = session.company.currency ?? "BRL";
+
+  const todayIso = useMemo(() => formatIsoInTimezone(new Date(), timezone), [timezone]);
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date(Date.now() - 7 * dayInMs);
+    return formatIsoInTimezone(d, timezone);
+  });
+  const [toDate, setToDate] = useState(() => {
+    const d = new Date(Date.now() + 1 * dayInMs);
+    return formatIsoInTimezone(d, timezone);
+  });
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN_DEBT" | "CLOSED">("ALL");
+
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [paymentsMap, setPaymentsMap] = useState<Map<string, PaymentSummaryItem>>(new Map());
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [summary, setSummary] = useState<FinanceSummaryResponse | null>(null);
+
+  const [loading, setLoading] = useState(true);
+  const [receiptId, setReceiptId] = useState<string | null>(null);
   const [operation, setOperation] = useState<FinanceOperation | null>(null);
-  const [notice, setNotice] = useState("");
-  const [tab, setTab] = useState<FinanceTab>("overviewTab");
-  const [expenseStatus, setExpenseStatus] = useState<ExpenseStatus | "">("");
-  const [revision, setRevision] = useState(0);
-  const { from, to, collaboratorId } = request.filters;
-  const companyView = !collaboratorId;
-  const tabs = companyView ? financeTabs : (["overviewTab", "commissionTab"] as const);
-  const commissionReport = useFinanceReport<CommissionReport>(
-    tab === "commissionTab" ? "/finance/commissions" : null, { from, to, collaboratorId }, undefined, revision,
-  );
-  const expenseReport = useFinanceReport<{ items: FinanceExpense[] }>(
-    companyView ? "/finance/expenses" : null, { from, to }, expenseStatus, revision,
-  );
-  const exportMenu = useRef<HTMLDetailsElement>(null);
-  const reviewHeading = useRef<HTMLHeadingElement>(null);
-  const reviewTrigger = useRef<HTMLButtonElement>(null);
+  const [newSaleChoiceOpen, setNewSaleChoiceOpen] = useState(false);
+
+  const searchParams = useSearchParams();
+  const actionParam = searchParams.get("action");
 
   useEffect(() => {
-    const controller = new AbortController();
-    void apiRequest<FinanceSummaryResponse>("/finance/summary", {
-      query: request.filters, signal: controller.signal,
-    }).then(
-      (data) => { if (!controller.signal.aborted) setResult({ request, data }); },
-      () => { if (!controller.signal.aborted) setResult({ request, data: null }); },
-    );
-    return () => controller.abort();
-  }, [request, revision]);
+    if (actionParam === "new-sale") {
+      setNewSaleChoiceOpen(true);
+    }
+  }, [actionParam]);
+
+  const collaboratorMap = useMemo(() => {
+    const map = new Map<string, Collaborator>();
+    for (const c of collaborators) map.set(c.id, c);
+    return map;
+  }, [collaborators]);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const fromIso = `${fromDate}T00:00:00.000Z`;
+      const toIso = `${toDate}T23:59:59.999Z`;
+
+      const [summaryRes, appsRes, collabsRes] = await Promise.all([
+        apiRequest<FinanceSummaryResponse>("/finance/summary", {
+          query: { from: fromDate, to: toDate },
+        }).catch(() => null),
+        apiRequest<Appointment[]>("/appointments", {
+          query: { from: fromIso, to: toIso },
+        }),
+        apiRequest<{ collaborators: Collaborator[] } | Collaborator[]>("/collaborators"),
+      ]);
+
+      setSummary(summaryRes);
+      setAppointments(appsRes);
+      setCollaborators(Array.isArray(collabsRes) ? collabsRes : collabsRes.collaborators ?? []);
+
+      // Busca resumos de pagamento em lotes
+      if (appsRes.length > 0) {
+        const ids = appsRes.map((a) => a.id);
+        const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) =>
+          ids.slice(i * 100, (i + 1) * 100).join(","),
+        );
+        const paymentsRes = await Promise.all(
+          batches.map((batch) =>
+            apiRequest<PaymentSummaryItem[]>("/finance/appointments/payment-summary", {
+              query: { ids: batch },
+            }).catch(() => []),
+          ),
+        );
+        const map = new Map<string, PaymentSummaryItem>();
+        for (const item of paymentsRes.flat()) {
+          map.set(item.appointmentId, item);
+        }
+        setPaymentsMap(map);
+      } else {
+        setPaymentsMap(new Map());
+      }
+    } catch {
+      toast.error("Erro ao carregar dados financeiros e comandas.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fromDate, toDate]);
 
   useEffect(() => {
-    if (reviewId) reviewHeading.current?.focus();
-  }, [reviewId]);
+    void loadData();
+  }, [loadData]);
 
-  const current = result?.request === request ? result : null;
-  const data = current?.data;
-  const currency = data?.currency ?? company.currency ?? "BRL";
-  const currencyFormatter = getCurrencyFormatter(locale, currency);
-  const money = (cents: number) => currencyFormatter.format(cents / 100);
-  const datesChanged = draft.from !== request.filters.from || draft.to !== request.filters.to;
-  const comparisonPeriod = data ? formatFinanceRange(data.comparison, locale) : undefined;
-  const reviewed = data?.byCollaborator.find((person) => person.collaboratorId === reviewId);
-  const reviewedCommission = commissionReport.data?.professionals.find((person) => person.collaboratorId === reviewId);
-  const candidates = result?.data?.appointments
-    .filter((item) => item.status === "CONFIRMED" || item.status === "COMPLETED")
-    .sort((a, b) => Number(b.payment.canCollect) - Number(a.payment.canCollect)) ?? [];
-  const review = data && reviewed ? getFinanceReport(data, t, locale, currency, false,
-    data.appointments.filter((item) => item.collaboratorId === reviewId)) : null;
+  // Lista de comandas filtradas
+  const comandas = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return appointments
+      .filter((app) => app.status !== "CANCELED")
+      .map((app) => {
+        const payment = paymentsMap.get(app.id);
+        const totalInCents = app.servicePriceInCentsSnapshot;
+        const paidInCents = payment?.collectedInCents ?? (app.status === "COMPLETED" ? totalInCents : 0);
+        const openDebtInCents = payment ? payment.openInCents : app.status === "COMPLETED" ? 0 : totalInCents;
+        const isClosed = openDebtInCents === 0 && paidInCents > 0;
+        const hasDebt = openDebtInCents > 0;
 
-  function apply(filters: Filters, preset: FinancePreset | null) {
-    if (!filters.from || !filters.to || filters.from > filters.to) {
-      setInvalid(true);
+        return {
+          ...app,
+          totalInCents,
+          paidInCents,
+          openDebtInCents,
+          isClosed,
+          hasDebt,
+          methods: payment?.methods ?? [],
+        };
+      })
+      .filter((comanda) => {
+        if (statusFilter === "OPEN_DEBT" && !comanda.hasDebt) return false;
+        if (statusFilter === "CLOSED" && !comanda.isClosed) return false;
+        if (term) {
+          const matchClient = comanda.clientName.toLowerCase().includes(term);
+          const matchPhone = comanda.clientPhone.toLowerCase().includes(term);
+          const matchService = comanda.serviceNameSnapshot.toLowerCase().includes(term);
+          if (!matchClient && !matchPhone && !matchService) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
+  }, [appointments, paymentsMap, search, statusFilter]);
+
+  // Totais das comandas filtradas
+  const comandasTotals = useMemo(() => {
+    let totalCents = 0;
+    let paidCents = 0;
+    let debtCents = 0;
+    let openCount = 0;
+    let closedCount = 0;
+
+    for (const c of comandas) {
+      totalCents += c.totalInCents;
+      paidCents += c.paidInCents;
+      debtCents += c.openDebtInCents;
+      if (c.hasDebt) openCount += 1;
+      if (c.isClosed) closedCount += 1;
+    }
+
+    return { totalCents, paidCents, debtCents, openCount, closedCount };
+  }, [comandas]);
+
+  const donutData = useMemo(() => {
+    const paidBy = summary?.collections?.paidByMethod ?? {};
+    const entries = Object.entries(paidBy).filter(([, val]) => (val ?? 0) > 0);
+    const total = entries.reduce((s, [, val]) => s + (val ?? 0), 0);
+    const colors = ["#10b981", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4"];
+    let accPercent = 0;
+    const circumference = 251.32; // 2 * pi * 40
+    const segments = entries.map(([method, amount], idx) => {
+      const fraction = total > 0 ? (amount ?? 0) / total : 0;
+      const strokeDasharray = `${(fraction * circumference).toFixed(2)} ${circumference.toFixed(2)}`;
+      const strokeDashoffset = (-accPercent * circumference).toFixed(2);
+      accPercent += fraction;
+      return {
+        method: method as PaymentMethod,
+        amount: amount ?? 0,
+        percent: Math.round(fraction * 100),
+        color: colors[idx % colors.length],
+        strokeDasharray,
+        strokeDashoffset,
+      };
+    });
+    return { segments, total };
+  }, [summary]);
+
+  function handleExportCsv() {
+    if (comandas.length === 0) {
+      toast.error("Nenhuma comanda para exportar.");
       return;
     }
-    setInvalid(false);
-    setDraft({ from: filters.from, to: filters.to });
-    setReviewId(null);
-    setNotice("");
-    setRequest({ filters, preset });
+    const headers = ["Cliente", "Telefone", "Serviço", "Data/Hora", "Valor Total (R$)", "Valor Pago (R$)", "Saldo Devedor (R$)", "Status"];
+    const rows = comandas.map((c) => [
+      `"${c.clientName.replace(/"/g, '""')}"`,
+      `"${c.clientPhone}"`,
+      `"${c.serviceNameSnapshot.replace(/"/g, '""')}"`,
+      `"${formatDateTimeInTimezone(c.startsAt, timezone, locale)}"`,
+      (c.totalInCents / 100).toFixed(2),
+      (c.paidInCents / 100).toFixed(2),
+      (c.openDebtInCents / 100).toFixed(2),
+      c.hasDebt ? "Em aberto (Fiado)" : c.isClosed ? "Fechada" : "Pendente",
+    ]);
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `comandas-${fromDate}-a-${toDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("CSV de comandas exportado com sucesso!");
   }
 
-  function changeProfessional(collaboratorId: string) {
-    setReviewId(null);
-    setNotice("");
-    if (collaboratorId && tab === "expenseTab") setTab("overviewTab");
-    setRequest({ ...request, filters: { ...request.filters, collaboratorId } });
-  }
-
-  function closeExport() {
-    exportMenu.current?.removeAttribute("open");
-  }
-
-  function refreshFinance() {
-    setRevision((version) => version + 1);
-  }
-
-  function finishOperation(message: string, expense?: FinanceExpense) {
-    setOperation(null);
-    const inPeriod = (date: string) => date >= from && date <= to;
-    if (expense && !inPeriod(expense.dueDate)) {
-      const due = formatFinanceRange({ from: expense.dueDate, to: expense.dueDate }, locale);
-      const scope = expense.paidOn && inPeriod(expense.paidOn)
-        ? f.expensePaymentInPeriod
-        : f.expenseChangePeriod;
-      message += " " + f.expenseOutsidePeriod + " (" + due + "). " + scope;
-    }
-    setNotice(message);
-    refreshFinance();
-  }
-
-  if (preview && data) {
-    return <FinancePrintReport data={data} company={company} currency={currency} onClose={() => {
-      setPreview(false);
-      requestAnimationFrame(() => exportMenu.current?.querySelector("summary")?.focus());
-    }} />;
+  function handleImportCsv() {
+    toast.info("Importação de CSV: selecione um arquivo de vendas ou extrato bancário para conciliação.");
   }
 
   return (
-    <div className="space-y-5">
-      {receiptTarget !== null && (
-        <ReceiptDialog appointmentId={receiptTarget || undefined} candidates={candidates}
-          timezone={company.timezone} onClose={() => setReceiptTarget(null)}
-          onChanged={refreshFinance} />
-      )}
-      {operation && (
-        <FinanceOperationDialog operation={operation} timezone={company.timezone} money={money}
-          onClose={() => setOperation(null)} onSaved={finishOperation} />
-      )}
-      {data && drilldown && receiptTarget === null && (
-        <FinanceDrilldown kind={drilldown} data={data} money={money} revision={revision}
-          onClose={() => setDrilldown(null)} onPayment={setReceiptTarget} />
-      )}
-      {companyView && importing && (
-        <SpreadsheetImport kind="expenses" today={getTodayIsoDateInTimezone(company.timezone)}
-          onClose={() => setImporting(false)} onImported={(message) => {
-            setImporting(false);
-            setNotice(message);
-            refreshFinance();
-          }} />
-      )}
-      <div className="grid items-stretch gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-        {!current ? <div aria-busy="true"><CardListSkeleton count={4} /></div> : !data ? (
-          <ErrorState title={t.errors.networkTitle} description={t.errors.networkDescription}
-            retryLabel={t.common.retry} onRetry={() => setRequest({ ...request })} />
-        ) : (
-          <section className="grid grid-cols-2 gap-3 auto-rows-fr" aria-label={f.summaryTitle}>
-            <FinanceKpi title={f.realizedRevenue} icon={CircleCheck} cents={data.summary.realizedRevenueInCents} onOpen={() => setDrilldown("billing")}
-              previous={data.comparison.summary.realizedRevenueInCents} comparisonPeriod={comparisonPeriod} money={money}>
-              <p>{f.legendForecast}{": "}<strong className="font-semibold text-ink tabular-nums">{money(data.summary.forecastRevenueInCents)}</strong></p>
-            </FinanceKpi>
-            <FinanceKpi title={f.collected} icon={HandCoins} cents={data.collections.collectedInCents} onOpen={() => setDrilldown("collection")}
-              previous={data.collections.previousCollectedInCents} comparisonPeriod={comparisonPeriod} money={money}>
-              <dl className="flex flex-wrap gap-x-3 gap-y-1">
-                {paymentGroups.map((group) => {
-                  const [method] = group;
-                  const amounts = data.collections.paidByMethod;
-                  if (!group.some((item) => Object.hasOwn(amounts, item))) return null;
-                  const amount = group.reduce<number>((total, item) => total + (amounts[item] ?? 0), 0);
+    <div className="space-y-6">
+      {/* ======================================================== */}
+      {/* TOPO COMPACTO: GESTÃO OPERACIONAL DE COMANDAS */}
+      {/* ======================================================== */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-ink flex items-center gap-2">
+            <Receipt className="size-6 text-accent" />
+            Gestão Operacional de Comandas
+          </h2>
+          <p className="mt-1 text-xs sm:text-sm text-ink-muted">
+            Registre vendas, controle comandas abertas (fiado) e receba pagamentos no balcão.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            disabled={loading}
+            className="grid size-10 place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink disabled:opacity-50 transition-colors cursor-pointer"
+            title="Atualizar dados"
+          >
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </div>
+
+      {/* Grid de 3 Cards: Caixa (com Nova Venda), Gráfico Diário e Donut de Pagamentos */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Card 1: Caixa com Ação Rápida de Nova Venda */}
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide flex items-center gap-1.5">
+                <Wallet className="size-4 text-accent" />
+                Caixa & Faturamento
+              </span>
+              <button
+                type="button"
+                onClick={() => setNewSaleChoiceOpen(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1 text-xs font-bold text-accent hover:bg-accent/25 transition-colors cursor-pointer"
+              >
+                <Plus size={12} />
+                Nova venda
+              </button>
+            </div>
+
+            <div className="mt-3 flex items-baseline gap-2">
+              <span className="text-2xl sm:text-3xl font-bold text-ink">
+                <SensitiveValue>
+                  {formatPriceFromCents(comandasTotals.totalCents, locale, currency)}
+                </SensitiveValue>
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-ink-muted">
+              {comandas.length} comanda(s) no período selecionado
+            </p>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border-subtle/60 pt-3">
+            <div className="rounded-xl bg-emerald-500/10 p-2.5 border border-emerald-500/20">
+              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 block">
+                Total Recebido
+              </span>
+              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                <SensitiveValue>
+                  {formatPriceFromCents(comandasTotals.paidCents, locale, currency)}
+                </SensitiveValue>
+              </span>
+            </div>
+
+            <div className="rounded-xl bg-rose-500/10 p-2.5 border border-rose-500/20">
+              <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 block">
+                Saldo Devedor (Fiado)
+              </span>
+              <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
+                <SensitiveValue>
+                  {formatPriceFromCents(comandasTotals.debtCents, locale, currency)}
+                </SensitiveValue>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Mini-Gráfico Diário de Receitas x Despesas */}
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide">
+                Receitas x Despesas Diárias
+              </span>
+              <span className="text-[11px] text-ink-muted">Últimos dias</span>
+            </div>
+
+            {/* Mini barras do período */}
+            <div className="mt-4 flex h-24 items-end gap-1.5 overflow-x-auto pb-1">
+              {summary?.series && summary.series.length > 0 ? (
+                summary.series.slice(-7).map((d: FinanceDay) => {
+                  const maxVal = Math.max(
+                    ...summary.series.map((x: FinanceDay) => Math.max(x.realizedInCents, x.commissionsInCents)),
+                    1,
+                  );
+                  const revenueHeight = Math.min(100, Math.max(8, (d.realizedInCents / maxVal) * 100));
+                  const expenseHeight = Math.min(100, Math.max(6, (d.commissionsInCents / maxVal) * 100));
+
                   return (
-                    <div key={method} className="flex flex-wrap items-baseline gap-x-1">
-                      <dt>{group.length > 1 ? f.cardPayments : f.paymentMethods[method]}</dt>
-                      <dd className="font-semibold text-ink tabular-nums">{money(amount)}</dd>
+                    <div key={d.date} className="flex-1 min-w-[28px] flex flex-col items-center gap-1">
+                      <div className="flex h-18 w-full items-end justify-center gap-0.5">
+                        <div
+                          style={{ height: `${revenueHeight}%` }}
+                          title={`Receita em ${d.date}: ${formatPriceFromCents(d.realizedInCents, locale, currency)}`}
+                          className="w-2.5 rounded-t-sm bg-emerald-500 transition-all hover:opacity-80"
+                        />
+                        <div
+                          style={{ height: `${expenseHeight}%` }}
+                          title={`Despesas em ${d.date}: ${formatPriceFromCents(d.commissionsInCents, locale, currency)}`}
+                          className="w-2.5 rounded-t-sm bg-rose-500/80 transition-all hover:opacity-80"
+                        />
+                      </div>
+                      <span className="text-[9px] font-mono text-ink-muted">
+                        {d.date.slice(8, 10)}
+                      </span>
                     </div>
                   );
-                })}
-              </dl>
-            </FinanceKpi>
-            <FinanceKpi title={f.pendingBalance} icon={Clock3} cents={data.collections.outstandingInCents} money={money}
-              onOpen={() => setDrilldown("outstanding")}>
-              <p>{f.outstandingHint}</p>
-            </FinanceKpi>
-            {companyView && data.expenses ? (
-              <FinanceKpi title={f.realNetProfit} icon={Wallet} cents={data.summary.realNetProfitInCents ?? 0} onOpen={() => setDrilldown("result")}
-                previous={data.comparison.summary.realNetProfitInCents ?? undefined} comparisonPeriod={comparisonPeriod} money={money}>
-                <p>{f.expenseCashTotal}{" "}<strong className="font-semibold text-ink tabular-nums">{money(data.expenses.cashPaidCents)}</strong></p>
-                <p className="mt-1">{f.cashCommissionTotal}{" "}<strong className="font-semibold text-ink tabular-nums">{money(data.collections.cashCommissionsInCents)}</strong></p>
-                <p className="mt-1 font-semibold text-accent">{f.commissionDueOverview}{" "}
-                  <strong className="tabular-nums">{money(data.insights.unsettledCommissionInCents)}</strong>
-                </p>
-                <p className="mt-1">{f.netFormula}</p>
-              </FinanceKpi>
-            ) : (
-              <FinanceKpi title={f.professionalCommission} icon={Wallet} cents={data.insights.netPayableCommissionInCents} money={money}
-                onOpen={() => setDrilldown("result")}>
-                <p className="font-semibold text-ink">{f.netPayable}</p>
-                <p className="mt-1">{f.deductionsColumn}{" "}<strong className="font-semibold text-ink tabular-nums">{money(data.byCollaborator[0]?.deductionsInCents ?? 0)}</strong></p>
-                <p className="mt-1">{f.commissionGenerated}{" "}<strong className="font-semibold text-ink tabular-nums">{money(data.collections.generatedCommissionInCents)}</strong></p>
-                <p className="mt-1">{f.commissionPaidInPeriod}{" "}<strong className="font-semibold text-ink tabular-nums">{money(data.collections.cashCommissionsInCents)}</strong></p>
-                {data.byCollaborator[0] && <Button type="button" size="sm" variant="outline" className="relative z-10 mt-2 h-auto min-h-7 whitespace-normal py-1"
-                  onClick={() => setOperation({ kind: "deduct", collaboratorId,
-                    professionals: data.byCollaborator })}>{f.deductionAction}</Button>}
-              </FinanceKpi>
-            )}
-          </section>
-        )}
-        <section aria-labelledby="finance-filters-title" className={card + " min-w-0 space-y-3 p-3.5 sm:p-4"}>
-          <h2 id="finance-filters-title" className="flex items-center gap-2 text-sm font-semibold text-ink">
-            <SlidersHorizontal className="size-4 text-accent" aria-hidden="true" />{f.filtersActions}
-          </h2>
-          <div className={"grid gap-1.5 " + (companyView ? "grid-cols-3" : "grid-cols-2")}>
-            <Button type="button" size="sm" variant="outline" className={quickActionClass}
-              aria-label={f.registerReceipt} title={f.registerReceipt} disabled={!data} onClick={() => setReceiptTarget("")}>
-              <HandCoins className="size-3.5 text-accent" aria-hidden="true" /><span className="w-full truncate">{f.quickPayment}</span>
-            </Button>
-            {companyView && (
-              <Button type="button" size="sm" variant="outline" className={quickActionClass}
-                aria-label={f.registerExpense} title={f.registerExpense} onClick={() => setOperation({ kind: "create" })}>
-                <Plus className="size-3.5 text-accent" aria-hidden="true" /><span className="w-full truncate">{f.quickExpense}</span>
-              </Button>
-            )}
-            {data ? (
-              <details ref={exportMenu} className="group relative min-w-0"
-                onBlur={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget)) closeExport();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && exportMenu.current?.open) {
-                    closeExport();
-                    exportMenu.current.querySelector("summary")?.focus();
-                  }
-                }}>
-                <summary aria-label={f.exportReport} title={f.exportReport}
-                  className={quickActionClass + " flex cursor-pointer list-none rounded-lg bg-accent font-semibold text-accent-ink [&::-webkit-details-marker]:hidden"}>
-                  <Download className="size-3.5" aria-hidden="true" /><span className="w-full truncate">{f.quickExport}</span>
-                </summary>
-                <div className="absolute right-0 z-30 mt-2 w-52 max-w-[calc(100vw-2rem)] rounded-xl border border-border-subtle bg-surface p-1.5 shadow-lg">
-                  <button type="button" className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-ink hover:bg-subtle"
-                    onClick={() => {
-                      downloadFinanceCsv(data, company.companyName, t, locale, currency);
-                      closeExport();
-                      exportMenu.current?.querySelector("summary")?.focus();
-                    }}>
-                    <FileSpreadsheet className="size-4 shrink-0 text-accent" aria-hidden="true" />{f.exportCsv}
-                  </button>
-                  <button type="button" className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-ink hover:bg-subtle"
-                    onClick={() => { closeExport(); setPreview(true); }}>
-                    <Printer className="size-4 shrink-0 text-accent" aria-hidden="true" />{f.exportPrint}
-                  </button>
+                })
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-xs text-ink-muted">
+                  Sem dados diários no período.
                 </div>
-              </details>
-            ) : (
-              <Button type="button" size="sm" className={quickActionClass} aria-label={f.exportReport} title={f.exportReport} disabled>
-                <Download className="size-3.5" aria-hidden="true" /><span className="w-full truncate">{f.quickExport}</span>
-              </Button>
-            )}
+              )}
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5">
-            {presets.map((preset) => (
-              <Button key={preset} type="button" size="sm" variant={request.preset === preset ? "default" : "outline"}
-                className="h-8 min-w-0 rounded-full px-1 text-[11px] sm:text-xs" aria-pressed={request.preset === preset}
-                onClick={() => apply({
-                  ...getFinanceRange(preset, company.timezone),
-                  collaboratorId: request.filters.collaboratorId,
-                }, preset)}>
-                {f[preset]}
-              </Button>
-            ))}
+          <div className="flex items-center justify-between border-t border-border-subtle/60 pt-2 text-[10px] text-ink-secondary">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-emerald-500" /> Receitas
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-rose-500" /> Despesas / Comissões
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: Recebimentos por meio de pagamento com Gráfico Donut SVG */}
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide">
+                Recebimentos por Meio
+              </span>
+              <Link
+                href="/owner/finance/payment-methods"
+                className="text-[11px] font-semibold text-accent hover:underline inline-flex items-center gap-1"
+              >
+                Taxas
+                <ExternalLink size={10} />
+              </Link>
+            </div>
+            <p className="mt-0.5 text-[11px] text-ink-muted">
+              Valores já liquidados e consolidados
+            </p>
           </div>
 
-          <form className="grid grid-cols-2 items-end gap-x-2 gap-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (datesChanged) apply({ ...draft, collaboratorId: request.filters.collaboratorId }, null);
-            }}>
-            <div className="col-span-2 grid min-w-0 gap-1">
-              <Label htmlFor="fin-professional" className="text-xs text-ink-secondary">{f.colProfessional}</Label>
-              <select id="fin-professional" value={request.filters.collaboratorId} className={inputClass}
-                onChange={(event) => changeProfessional(event.target.value)}>
-                <option value="">{f.allProfessionals}</option>
-                {result?.data?.professionals.map((person) => (
-                  <option key={person.id} value={person.id}>{person.name}</option>
+          <div className="mt-2 flex items-center gap-4">
+            {/* Donut SVG */}
+            <div className="relative size-24 shrink-0 flex items-center justify-center">
+              <svg className="size-full -rotate-90" viewBox="0 0 100 100">
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="40"
+                  fill="transparent"
+                  stroke="currentColor"
+                  strokeWidth="12"
+                  className="text-border-subtle/40"
+                />
+                {donutData.segments.map((seg) => (
+                  <circle
+                    key={seg.method}
+                    cx="50"
+                    cy="50"
+                    r="40"
+                    fill="transparent"
+                    stroke={seg.color}
+                    strokeWidth="12"
+                    strokeDasharray={seg.strokeDasharray}
+                    strokeDashoffset={seg.strokeDashoffset}
+                    className="transition-all duration-500"
+                  />
                 ))}
-              </select>
-            </div>
-            <div className="grid min-w-0 gap-1">
-              <Label htmlFor="fin-from" className="text-xs text-ink-secondary">{f.from}</Label>
-              <Input id="fin-from" type="date" required max="9999-12-31" value={draft.from}
-                onChange={(event) => { setInvalid(false); setDraft({ ...draft, from: event.target.value }); }}
-                className={inputClass} />
-            </div>
-            <div className="grid min-w-0 gap-1">
-              <Label htmlFor="fin-to" className="text-xs text-ink-secondary">{f.to}</Label>
-              <Input id="fin-to" type="date" required max="9999-12-31" value={draft.to}
-                onChange={(event) => { setInvalid(false); setDraft({ ...draft, to: event.target.value }); }}
-                className={inputClass} />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
+                <span className="text-[10px] font-bold text-ink">
+                  {donutData.segments.length > 0 ? "100%" : "0%"}
+                </span>
+              </div>
             </div>
 
-            {datesChanged && (
-              <Button type="submit" variant="outline" size="sm" className="col-span-2 h-8 justify-self-start rounded-lg px-2.5 text-xs">
-                {f.applyFilters}
-              </Button>
-            )}
-          </form>
-          {invalid && <p role="alert" className="text-xs text-[var(--status-danger-ink)]">{f.invalidPeriod}</p>}
-        </section>
-      </div>
-      {notice && <p role="status" className="text-sm text-accent">{notice}</p>}
-
-      <div role="tablist" aria-label={f.title} className="flex flex-wrap gap-1.5 border-b border-border-subtle pb-2">
-        {tabs.map((view, index) => (
-          <Button key={view} id={"finance-tab-" + view} role="tab" type="button"
-            variant={tab === view ? "default" : "ghost"} aria-selected={tab === view}
-            aria-controls="finance-tabpanel" tabIndex={tab === view ? 0 : -1}
-            onClick={() => { setTab(view); setReviewId(null); }}
-            onKeyDown={(event) => {
-              const last = tabs.length - 1;
-              const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
-                : event.key === "ArrowLeft" ? (index + last) % tabs.length
-                  : event.key === "Home" ? 0 : event.key === "End" ? last : null;
-              if (next === null) return;
-              event.preventDefault();
-              setTab(tabs[next]);
-              setReviewId(null);
-              document.getElementById("finance-tab-" + tabs[next])?.focus();
-            }}>
-            {f[view]}
-          </Button>
-        ))}
-      </div>
-      <div id="finance-tabpanel" role="tabpanel" aria-labelledby={"finance-tab-" + tab}>
-        {data && tab === "overviewTab" && (
-          <div className="space-y-4">
-            <FinanceCharts data={data} money={money} />
-            <ReceiptMovements key={data.period.from + data.period.to + data.period.collaboratorId + revision}
-              period={data.period} onOpen={setReceiptTarget} />
-          </div>
-        )}
-        {companyView && data?.expenses && tab === "expenseTab" && (
-          <FinanceExpenses report={expenseReport} summary={data.expenses} money={money}
-            status={expenseStatus} onStatusChange={setExpenseStatus} onOperation={setOperation} onImport={() => setImporting(true)} />
-        )}
-        {data && tab === "commissionTab" && (
-          <div className="space-y-4">
-            <FinanceCommissions data={data} report={commissionReport} money={money} onOperation={setOperation} reviewId={reviewId}
-              onReview={(id, trigger) => {
-                reviewTrigger.current = trigger;
-                setReviewId(reviewId === id ? null : id);
-              }} />
-            {review && reviewed && (
-              <section id="finance-review" className={card + " p-4 sm:p-5"} aria-labelledby="finance-review-heading">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <h3 id="finance-review-heading" ref={reviewHeading} tabIndex={-1} className="text-sm font-semibold text-ink">
-                    {f.appointmentDetails} · {reviewed.name}
-                  </h3>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label={t.common.close}
-                    onClick={() => {
-                      setReviewId(null);
-                      reviewTrigger.current?.focus();
-                    }}><X aria-hidden="true" /></Button>
-                </div>
-                <dl className="mb-4 grid grid-cols-3 gap-2 text-xs">
-                  {([
-                    [f.colCompleted, new Intl.NumberFormat(locale).format(reviewed.completedCount)],
-                    [f.colRevenue, money(reviewed.realizedRevenueInCents)],
-                    [f.colAverageRate, reviewed.averageCommissionPercentage === null ? "—"
-                      : new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 })
-                        .format(reviewed.averageCommissionPercentage / 100)],
-                  ] as const).map(([label, value]) => (
-                    <div key={label}><dt className="text-ink-secondary">{label}</dt>
-                      <dd className="mt-1 font-semibold text-ink tabular-nums">{value}</dd></div>
-                  ))}
-                </dl>
-                {reviewedCommission && (
-                  <div className="mb-4">
-                    <FinanceDeductionDetails professional={reviewedCommission} money={money}
-                      onRemove={(deduction) => setOperation({ kind: "removeDeduction", deduction })} />
+            {/* Legendas dos métodos */}
+            <div className="flex-1 space-y-1 overflow-y-auto max-h-24 pr-1 text-xs">
+              {donutData.segments.length > 0 ? (
+                donutData.segments.map((seg) => (
+                  <div key={seg.method} className="flex items-center justify-between text-[11px]">
+                    <span className="flex items-center gap-1.5 truncate text-ink-secondary">
+                      <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                      <span className="truncate">{paymentMethodLabels[seg.method] ?? seg.method}</span>
+                    </span>
+                    <span className="font-semibold text-ink shrink-0 ml-1">
+                      {seg.percent}%
+                    </span>
                   </div>
-                )}
-                <FinanceDataTable headers={review.headers.appointments} rows={review.appointments} numericFrom={5} empty={f.noDataPeriod} />
-                <ul className="mt-4 divide-y divide-border-subtle">
-                  {data.appointments.filter((item) => item.collaboratorId === reviewId &&
-                    (item.status === "COMPLETED" || item.status === "CONFIRMED" || item.payment.collectedInCents > 0)).map((item) => (
-                    <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-                      <span>{item.clientName} · {item.serviceName}</span>
-                      {item.payment.historical && <span className="text-ink-muted">{f.legacy}</span>}
-                      <Button type="button" variant="outline" size="sm" onClick={() => setReceiptTarget(item.id)}>
-                        {f.paymentHistory}
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
+                ))
+              ) : (
+                <p className="text-center text-[11px] text-ink-muted py-2">
+                  Sem recebimentos no período.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-border-subtle/60 pt-2 flex items-center justify-between text-xs">
+            <span className="text-ink-muted text-[11px]">Total no Meio:</span>
+            <span className="font-bold text-ink">
+              <SensitiveValue>
+                {formatPriceFromCents(donutData.total, locale, currency)}
+              </SensitiveValue>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ======================================================== */}
+      {/* BARRA DE FILTROS, BUSCA E AÇÕES DE COMANDAS */}
+      {/* ======================================================== */}
+      <div className="rounded-2xl border border-border-subtle bg-surface p-4 space-y-4 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-ink-secondary">Período:</span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
+            />
+            <span className="text-ink-muted">até</span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleImportCsv}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors cursor-pointer"
+            >
+              <Upload size={13} />
+              Importar CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors cursor-pointer"
+            >
+              <Download size={13} />
+              Exportar CSV
+            </button>
+
+            <Link
+              href="/owner/finance/orders/new"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-accent-ink hover:bg-accent-hover transition-colors cursor-pointer"
+            >
+              <Plus size={13} />
+              + Nova comanda
+            </Link>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle/60 pt-3">
+          <div className="flex rounded-xl border border-border-subtle bg-canvas/40 p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setFromDate(todayIso);
+                setToDate(todayIso);
+              }}
+              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+            >
+              Hoje
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFromDate(formatIsoInTimezone(new Date(Date.now() - 7 * dayInMs), timezone));
+                setToDate(todayIso);
+              }}
+              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+            >
+              7 dias
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const [y, m] = todayIso.split("-").map(Number);
+                const first = new Date(Date.UTC(y, m - 1, 1));
+                const last = new Date(Date.UTC(y, m, 0));
+                setFromDate(formatIsoInTimezone(first, timezone));
+                setToDate(formatIsoInTimezone(last, timezone));
+              }}
+              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+            >
+              Este mês
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[1fr_220px] flex-1 max-w-xl">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-muted" />
+              <input
+                type="text"
+                placeholder="Buscar comanda por cliente, telefone ou serviço..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded-xl border border-border-subtle bg-canvas/40 pl-9 pr-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as "ALL" | "OPEN_DEBT" | "CLOSED")}
+              className="rounded-xl border border-border-subtle bg-canvas/40 px-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
+            >
+              <option value="ALL">Todas as Comandas</option>
+              <option value="OPEN_DEBT">Em aberto / Fiado (Com débito)</option>
+              <option value="CLOSED">Fechadas / Pagas 100%</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* ======================================================== */}
+      {/* TABELA DE COMANDAS */}
+      {/* ======================================================== */}
+      <div className="rounded-2xl border border-border-subtle bg-surface shadow-xs overflow-hidden">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="size-8 animate-spin text-accent" />
+            <p className="mt-3 text-xs text-ink-muted">Carregando comandas e recebimentos...</p>
+          </div>
+        ) : comandas.length === 0 ? (
+          <div className="py-16 text-center text-xs text-ink-muted">
+            Nenhuma comanda encontrada para os filtros selecionados.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-canvas/50 border-b border-border-subtle text-ink-muted font-semibold">
+                <tr>
+                  <th className="py-3 px-4">Comanda / Horário</th>
+                  <th className="py-3 px-4">Cliente</th>
+                  <th className="py-3 px-4">Profissional</th>
+                  <th className="py-3 px-4">Serviço / Itens</th>
+                  <th className="py-3 px-4">Total</th>
+                  <th className="py-3 px-4">Pago</th>
+                  <th className="py-3 px-4">Saldo Devedor</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4 text-right">Ação</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle/50">
+                {comandas.map((cmd) => {
+                  const collab = collaboratorMap.get(cmd.collaboratorId);
+                  const dateStr = formatDateTimeInTimezone(cmd.startsAt, timezone, locale);
+
+                  return (
+                    <tr
+                      key={cmd.id}
+                      onClick={() => setReceiptId(cmd.id)}
+                      className="hover:bg-canvas/40 transition-colors cursor-pointer group"
+                    >
+                      <td className="py-3 px-4 font-mono font-medium text-ink whitespace-nowrap">
+                        <span className="block font-semibold">#{cmd.id.slice(0, 8)}</span>
+                        <span className="text-[11px] text-ink-muted">{dateStr}</span>
+                      </td>
+
+                      <td className="py-3 px-4 min-w-[130px]">
+                        <p className="font-semibold text-ink group-hover:text-accent transition-colors">
+                          {cmd.clientName}
+                        </p>
+                        <p className="text-[11px] text-ink-muted font-mono">{cmd.clientPhone}</p>
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap text-ink-secondary">
+                        {collab?.name ?? "Profissional"}
+                      </td>
+
+                      <td className="py-3 px-4 max-w-[180px] truncate text-ink font-medium">
+                        {cmd.serviceNameSnapshot}
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap font-medium text-ink">
+                        <SensitiveValue>
+                          {formatPriceFromCents(cmd.totalInCents, locale, currency)}
+                        </SensitiveValue>
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap text-emerald-600 dark:text-emerald-400 font-medium">
+                        <SensitiveValue>
+                          {formatPriceFromCents(cmd.paidInCents, locale, currency)}
+                        </SensitiveValue>
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap font-bold">
+                        {cmd.hasDebt ? (
+                          <span className="text-rose-500">
+                            <SensitiveValue>
+                              {formatPriceFromCents(cmd.openDebtInCents, locale, currency)}
+                            </SensitiveValue>
+                          </span>
+                        ) : (
+                          <span className="text-ink-muted text-[11px]">R$ 0,00</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        {cmd.hasDebt ? (
+                          <span className="inline-flex rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
+                            Em aberto (Fiado)
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            Fechada / Paga
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setReceiptId(cmd.id);
+                          }}
+                          className="rounded-lg bg-surface border border-border-subtle px-2.5 py-1 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors shadow-2xs"
+                        >
+                          {cmd.hasDebt ? "Cobrar" : "Ver Recibo"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
+
+      {/* Modal de Recebimento / Comanda */}
+      {receiptId && (
+        <ReceiptDialog
+          appointmentId={receiptId}
+          timezone={timezone}
+          onClose={() => {
+            setReceiptId(null);
+            void loadData();
+          }}
+        />
+      )}
+
+      {/* Modal compacto de escolha do tipo de venda */}
+      {newSaleChoiceOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="fixed inset-0" onClick={() => setNewSaleChoiceOpen(false)} />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-sale-choice-title"
+            className="relative z-10 w-full max-w-md rounded-2xl border border-border-strong bg-surface p-5 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 id="new-sale-choice-title" className="text-base font-bold text-ink">
+                  O que deseja vender?
+                </h3>
+                <p className="mt-0.5 text-xs text-ink-muted">Escolha o tipo de venda.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNewSaleChoiceOpen(false)}
+                aria-label="Fechar"
+                className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-surface-hover hover:text-ink cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSaleChoiceOpen(false);
+                  setOperation({ kind: "create" });
+                }}
+                className="flex min-h-11 items-center justify-center rounded-xl bg-[#00A8C6] hover:bg-[#0092AD] px-4 py-2.5 text-xs font-bold text-white transition-colors shadow-xs cursor-pointer"
+              >
+                Produtos e Serviços
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSaleChoiceOpen(false);
+                  router.push("/owner/services/packages");
+                }}
+                className="flex min-h-11 items-center justify-center rounded-xl bg-[#131B2E] hover:bg-[#1E293B] px-4 py-2.5 text-xs font-bold text-white transition-colors shadow-xs cursor-pointer"
+              >
+                Crédito de Pacote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diálogo de Venda / Operação Rápida */}
+      {operation && (
+        <FinanceOperationDialog
+          operation={operation}
+          timezone={timezone}
+          money={(cents) => formatPriceFromCents(cents, locale, currency)}
+          onClose={() => setOperation(null)}
+          onSaved={() => {
+            setOperation(null);
+            void loadData();
+          }}
+        />
+      )}
     </div>
   );
 }

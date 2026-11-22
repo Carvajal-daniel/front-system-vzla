@@ -5,6 +5,20 @@ import { es } from "./es";
 export type Locale = "pt-BR" | "es";
 
 export interface Dictionary {
+  product: {
+    upgrade: string; privacyOn: string; privacyOff: string; soundOn: string; soundOff: string;
+    planTitle: string; trialDays: string; professionals: string; whatsappMessages: string; aiConversations: string;
+    upgradeAction: string; whatsappConnected: string; whatsappDisconnected: string; comingSoon: string;
+    panel: string; agenda: string; calendar: string; blocks: string; listing: string; restore: string;
+    finance: string; overviewReceipts: string; commissionsAdvances: string; accounts: string; cashStatement: string; paymentMethods: string; onlinePayment: string;
+    clients: string; clientBase: string; inactiveClients: string; birthdays: string; returns: string; loyalty: string;
+    services: string; serviceListing: string; categories: string; packages: string;
+    productsInventory: string; productListingMovements: string; suppliers: string; purchaseOrders: string;
+    team: string; professionalsList: string; schedules: string;
+    reports: string; mainReport: string; agendaReport: string; financeReport: string; advancedReports: string;
+    settings: string; quickCreate: string; calendarShortcut: string; cnpjOrRif: string;
+    subscribeNow: string; aiCopilot: string; globalSearch: string; bookingLink: string;
+  };
   common: {
     appName: string;
     loading: string;
