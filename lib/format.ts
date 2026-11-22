@@ -92,7 +92,7 @@ export function getCurrencyFormatter(locale: string, currency: string, fractiona
     minimumFractionDigits: fractionalDigits,
     maximumFractionDigits: fractionalDigits,
   });
-  const symbol = currency === "BRL" ? "R$" : currency === "USD" ? "US$" : null;
+  const symbol = currency === "BRL" ? "R$" : currency === "USD" ? "US$" : currency === "VES" ? "Bs." : null;
   return { format: (amount: number) => formatter.formatToParts(amount)
     .map((part) => part.type === "currency" && symbol ? symbol : part.value).join("") };
 }
@@ -154,8 +154,8 @@ export function isValidInternationalPhone(
   if (countryCode === "+55") {
     return digits.length === 10 || digits.length === 11;
   }
-  const normalizedVe = digits.startsWith("0") ? digits.slice(1) : digits;
-  return normalizedVe.length === 10;
+  if (countryCode === "+58") return (digits.startsWith("0") ? digits.slice(1) : digits).length === 10;
+  return digits.length === (countryCode === "+1" ? 10 : 9);
 }
 
 export function formatNationalPhoneDisplay(
@@ -171,6 +171,8 @@ export function formatNationalPhoneDisplay(
     }
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
   }
+
+  if (countryCode !== "+58") return digits.match(/.{1,3}/g)?.join(" ") ?? "";
 
   // Padrão Venezuela: 412-123-4567 (ou 0412-123-4567)
   const clean = digits.startsWith("0") ? digits.slice(1) : digits;

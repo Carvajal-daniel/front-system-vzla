@@ -1,732 +1,670 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
-import {
-  Check,
-  Copy,
-  ExternalLink,
-  Globe2,
-  KeyRound,
-  Loader2,
-  Moon,
-  Palette,
-  Sun,
-  UserCircle2,
-} from "lucide-react";
+import { Building2, CalendarClock, Users, Star, Globe2, KeyRound, Palette, Copy, QrCode, Bell, CreditCard, Package, Link2 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { companyWeekday } from "@/lib/agenda";
+import { displayCompanyRating, profileFieldLabels, addressFields, agendaIntervals, bookingIntervals, clientFields, formatCompanyAddress, leadTimes, type CompanyAddress, type CompanySettings, type CustomClientField, type OwnerAppearance, type ReminderSettings } from "@/lib/company-settings";
+import { formatPhoneToE164, isValidInternationalPhone, stripNonDigits } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
-import { THEME_PALETTES, useTheme } from "@/lib/theme-context";
+import { applyDashboardTheme, THEME_PALETTES, useTheme } from "@/lib/theme-context";
 import { IANA_TIMEZONES } from "@/lib/timezones";
-import type { UpdateCompanyTimezoneResponse, CompanyOperatingDaySchedule } from "@/lib/types/auth";
+import { saveCompanySettings, useCompanySettings } from "@/lib/use-company-settings";
+import type { PhoneCountryCode } from "@/lib/types/public-booking";
 import type { Currency } from "@/lib/types/finance";
 import { useSession } from "@/components/ui/auth-guard";
 import { AvatarPicker } from "@/components/ui/avatar-picker";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { LocaleSwitcher } from "@/components/ui/locale-switcher";
+import { PhoneInput } from "@/components/ui/phone-input";
+import { clientFieldLabels } from "@/components/ui/client-data-fields";
+import { PasswordRecovery, validNewPassword } from "@/components/ui/password-recovery";
+import { CompanyRating } from "@/components/ui/company-rating";
+import { OnlinePaymentSettingsPanel } from "./online-payment-settings";
+import { SatisfactionSettings } from "./satisfaction-settings";
 
-function subscribeNoop() {
-  return () => undefined;
-}
+const sections = [
+  ["company", "Empresa", "Empresa", Building2],
+  ["agenda", "Intervalo da Agenda", "Intervalo de la agenda", CalendarClock],
+  ["reminders", "Lembretes", "Recordatorios", Bell],
+  ["clients", "Dados de Clientes & Anamnese", "Datos de clientes y anamnesis", Users],
+  ["payment", "Pagto. Online", "Pago en línea", CreditCard],
+  ["packages", "Venda de Pacotes", "Venta de paquetes", Package],
+  ["booking", "Link de Agendamento", "Enlace de reservas", Link2],
+  ["survey", "Pesquisa de Satisfação", "Encuesta de satisfacción", Star],
+  ["region", "Fuso Horário & Moeda", "Zona horaria y moneda", Globe2],
+  ["security", "Segurança & Senha", "Seguridad y contraseña", KeyRound],
+  ["appearance", "Tema & Aparência", "Tema y apariencia", Palette],
+] as const;
 
-interface CompanyDayScheduleState {
-  dayOfWeek: number;
-  isOpen: boolean;
-  openTime: string;
-  closeTime: string;
-}
-
-function buildInitialCompanySchedule(
-  savedSchedule?: CompanyOperatingDaySchedule[] | null,
-  operatingDaysStr?: string | null,
-): CompanyDayScheduleState[] {
-  const defaultHours = [
-    { day: 0, open: "09:00", close: "15:00" }, // Domingo
-    { day: 1, open: "08:00", close: "19:00" }, // Segunda
-    { day: 2, open: "08:00", close: "19:00" }, // Terça
-    { day: 3, open: "08:00", close: "19:00" }, // Quarta
-    { day: 4, open: "08:00", close: "19:00" }, // Quinta
-    { day: 5, open: "08:00", close: "17:00" }, // Sexta (ex: fecha mais cedo)
-    { day: 6, open: "08:00", close: "18:00" }, // Sábado
-  ];
-
-  return defaultHours.map(({ day, open, close }) => {
-    const { isOpen, hours } = companyWeekday({ operatingSchedule: savedSchedule, operatingDays: operatingDaysStr }, day);
-    return {
-      dayOfWeek: day,
-      isOpen,
-      openTime: hours?.openTime?.slice(0, 5) || open,
-      closeTime: hours?.closeTime?.slice(0, 5) || close,
-    };
-  });
-}
+const ownerCountryCodes = ["+55", "+58", "+1", "+34", "+351"] as const;
+const field = "min-h-11 w-full min-w-0 rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink";
 
 export function SettingsPanel() {
-  const { session, refreshSession } = useSession();
-  const { t } = useLocale();
-  const { mode, palette, setMode, setPalette } = useTheme();
-
-  // Perfil & Barbearia
-  const [companyName, setCompanyName] = useState(session.company.companyName);
-  const [ownerName, setOwnerName] = useState(session.name);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(
-    session.avatarUrl ?? null,
-  );
-  const [scheduleState, setScheduleState] = useState<CompanyDayScheduleState[]>(
-    () =>
-      buildInitialCompanySchedule(
-        session.company.operatingSchedule,
-        session.company.operatingDays,
-      ),
-  );
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSaved, setProfileSaved] = useState(false);
-  const [profileError, setProfileError] = useState<string | null>(null);
-
-  // Fuso horário
-  const [timezone, setTimezone] = useState(session.company.timezone);
-  const [tzSaving, setTzSaving] = useState(false);
-  const [tzSaved, setTzSaved] = useState(false);
-  const [tzError, setTzError] = useState<string | null>(null);
-  const [currency, setCurrency] = useState<Currency>(session.company.currency ?? "BRL");
-  const [currencySaving, setCurrencySaving] = useState(false);
-  const [currencySaved, setCurrencySaved] = useState(false);
-  const [currencyError, setCurrencyError] = useState<string | null>(null);
-
-  // Senha
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwSaved, setPwSaved] = useState(false);
-  const [pwError, setPwError] = useState<string | null>(null);
-
-  // Link público
-  const [copied, setCopied] = useState(false);
-
-  const origin = useSyncExternalStore(
-    subscribeNoop,
-    () => (typeof window !== "undefined" ? window.location.origin : ""),
-    () => "",
-  );
-
-  const relativePath = `/book/${session.company.id}`;
-  const fullBookingUrl = origin ? `${origin}${relativePath}` : relativePath;
-
-  const handleSaveProfile = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setProfileSaving(true);
-    setProfileSaved(false);
-    setProfileError(null);
-    try {
-      const openDaysList = scheduleState
-        .filter((s) => s.isOpen)
-        .map((s) => s.dayOfWeek)
-        .sort((a, b) => a - b);
-
-      const operatingSchedulePayload = scheduleState.map((s) => ({
-        dayOfWeek: s.dayOfWeek,
-        isOpen: s.isOpen,
-        openTime: s.isOpen ? s.openTime : null,
-        closeTime: s.isOpen ? s.closeTime : null,
-      }));
-
-      await apiRequest("/me/profile", {
-        method: "PATCH",
-        auth: true,
-        body: {
-          companyName: companyName.trim(),
-          name: ownerName.trim(),
-          avatarUrl,
-          operatingDays: openDaysList.join(","),
-          operatingSchedule: operatingSchedulePayload,
-        },
-      });
-      await refreshSession();
-      setProfileSaved(true);
-    } catch (err) {
-      setProfileError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  const handleSaveTimezone = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setTzSaving(true);
-    setTzSaved(false);
-    setTzError(null);
-
-    try {
-      await apiRequest<UpdateCompanyTimezoneResponse>(
-        "/companies/me/timezone",
-        {
-          method: "PATCH",
-          auth: true,
-          body: { timezone },
-        },
-      );
-      await refreshSession();
-      setTzSaved(true);
-    } catch (err) {
-      setTzError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
-    } finally {
-      setTzSaving(false);
-    }
-  };
-
-  const handleSavePassword = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setPwSaving(true);
-    setPwSaved(false);
-    setPwError(null);
-    try {
-      await apiRequest<void>("/me/password", {
-        method: "PATCH",
-        auth: true,
-        body: {
-          currentPassword,
-          newPassword,
-        },
-      });
-      setCurrentPassword("");
-      setNewPassword("");
-      setPwSaved(true);
-    } catch (err) {
-      setPwError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
-    } finally {
-      setPwSaving(false);
-    }
-  };
-
-  const handleSaveCurrency = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setCurrencySaving(true);
-    setCurrencySaved(false);
-    setCurrencyError(null);
-    try {
-      await apiRequest("/companies/me/currency", { method: "PATCH", body: { currency } });
-      await refreshSession();
-      setCurrencySaved(true);
-    } catch (error) {
-      setCurrencyError(error instanceof ApiError && error.message === "FINANCE_CURRENCY_LOCKED"
-        ? t.finance.FINANCE_CURRENCY_LOCKED : t.errors.unexpectedDescription);
-    } finally {
-      setCurrencySaving(false);
-    }
-  };
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(fullBookingUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // Fallback silencioso
-    }
-  };
+  const [active, setActive] = useState<typeof sections[number][0]>("company");
+  const { locale, t } = useLocale();
+  const es = locale === "es";
+  const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      {/* Perfil do Dono & Nome da Barbearia */}
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <UserCircle2 className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 className="text-title-sm font-bold text-ink">
-              {t.owner.settingsTitle}
-            </h2>
-            <p className="text-xs text-ink-secondary">{session.email}</p>
-          </div>
+    <div className="grid min-w-0 gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <header className="lg:col-span-2">
+        <h1 className="text-title-sm font-bold text-ink">{t.owner.settingsTitle}</h1>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-secondary">
+          {session.company.companyName}<CompanyRating rating={displayCompanyRating(settings)} />
         </div>
-
-        <form onSubmit={handleSaveProfile} className="space-y-4">
-          <AvatarPicker
-            id="owner-avatar"
-            value={avatarUrl}
-            onChange={(next) => {
-              setAvatarUrl(next);
-              setProfileSaved(false);
-            }}
-          />
-
-          {/* Grade Semanal de Funcionamento da Barbearia */}
-          <div className="space-y-3 rounded-2xl border border-border-subtle bg-subtle/30 p-4">
-            <div>
-              <Label className="text-xs font-bold text-ink">
-                {t.common.operatingDaysLabel}
-              </Label>
-              <p className="mt-0.5 text-xs text-ink-muted">
-                {t.common.operatingDaysHint}
-              </p>
-            </div>
-
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {scheduleState.map((row) => {
-                const dayKey = row.dayOfWeek as 0 | 1 | 2 | 3 | 4 | 5 | 6;
-                return (
-                  <div
-                    key={row.dayOfWeek}
-                    className={[
-                      "flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-xl border p-3 transition-colors",
-                      row.isOpen
-                        ? "border-border-strong bg-surface shadow-xs"
-                        : "border-border-subtle bg-subtle/40 opacity-70",
-                    ].join(" ")}
-                  >
-                    <label className="flex items-center gap-2.5 cursor-pointer min-w-[130px]">
-                      <input
-                        type="checkbox"
-                        checked={row.isOpen}
-                        onChange={(e) => {
-                          setProfileSaved(false);
-                          setScheduleState((prev) =>
-                            prev.map((item) =>
-                              item.dayOfWeek === row.dayOfWeek
-                                ? { ...item, isOpen: e.target.checked }
-                                : item,
-                            ),
-                          );
-                        }}
-                        className="h-4 w-4 rounded accent-accent cursor-pointer"
-                      />
-                      <span className="text-xs font-bold text-ink">
-                        {t.days[dayKey]}
-                      </span>
-                    </label>
-
-                    {row.isOpen ? (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="time"
-                          value={row.openTime}
-                          onChange={(e) => {
-                            setProfileSaved(false);
-                            setScheduleState((prev) =>
-                              prev.map((item) =>
-                                item.dayOfWeek === row.dayOfWeek
-                                  ? { ...item, openTime: e.target.value }
-                                  : item,
-                              ),
-                            );
-                          }}
-                          className="min-h-9 w-24 rounded-lg border-border-strong bg-surface px-2 font-mono text-xs tabular-nums text-center"
-                        />
-                        <span className="text-xs text-ink-muted">–</span>
-                        <Input
-                          type="time"
-                          value={row.closeTime}
-                          onChange={(e) => {
-                            setProfileSaved(false);
-                            setScheduleState((prev) =>
-                              prev.map((item) =>
-                                item.dayOfWeek === row.dayOfWeek
-                                  ? { ...item, closeTime: e.target.value }
-                                  : item,
-                              ),
-                            );
-                          }}
-                          className="min-h-9 w-24 rounded-lg border-border-strong bg-surface px-2 font-mono text-xs tabular-nums text-center"
-                        />
-                      </div>
-                    ) : (
-                      <span className="text-xs font-medium text-ink-muted italic">
-                        {t.common.inactive}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="settings-company-name">
-              {t.auth.companyNameLabel}
-            </Label>
-            <Input
-              id="settings-company-name"
-              required
-              minLength={3}
-              maxLength={100}
-              value={companyName}
-              onChange={(e) => {
-                setCompanyName(e.target.value);
-                setProfileSaved(false);
-              }}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="settings-owner-name">{t.auth.nameLabel}</Label>
-            <Input
-              id="settings-owner-name"
-              required
-              minLength={2}
-              maxLength={80}
-              value={ownerName}
-              onChange={(e) => {
-                setOwnerName(e.target.value);
-                setProfileSaved(false);
-              }}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          {profileError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {profileError}
-            </p>
-          )}
-
-          {profileSaved && (
-            <p
-              role="status"
-              className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-success-ink)]"
-            >
-              {t.common.profileUpdated}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={profileSaving}
-            className="min-h-11 rounded-full bg-accent px-6 text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {profileSaving && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-      </section>
-
-      {/* Segurança e Senha */}
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <KeyRound className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 className="text-title-sm font-bold text-ink">
-              {t.collaborator.securityTitle}
-            </h2>
-            <p className="text-xs text-ink-secondary">{t.auth.passwordHint}</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSavePassword} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="owner-current-pw">{t.common.currentPassword}</Label>
-            <Input
-              id="owner-current-pw"
-              type="password"
-              required
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => {
-                setCurrentPassword(e.target.value);
-                setPwSaved(false);
-              }}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="owner-new-pw">{t.common.newPassword}</Label>
-            <Input
-              id="owner-new-pw"
-              type="password"
-              required
-              minLength={6}
-              maxLength={15}
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={(e) => {
-                setNewPassword(e.target.value);
-                setPwSaved(false);
-              }}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          {pwError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {pwError}
-            </p>
-          )}
-
-          {pwSaved && (
-            <p
-              role="status"
-              className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-success-ink)]"
-            >
-              {t.common.passwordUpdated}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={pwSaving}
-            className="min-h-11 rounded-full bg-accent px-6 text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {pwSaving && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-      </section>
-
-      {/* Fuso horário da empresa */}
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <Globe2 className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 className="text-title-sm font-bold text-ink">
-              {t.auth.timezoneLabel}
-            </h2>
-            <p className="text-xs text-ink-secondary">
-              {session.company.companyName}
-            </p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSaveTimezone} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="settings-timezone">{t.common.timezone}</Label>
-            <select
-              id="settings-timezone"
-              value={timezone}
-              onChange={(e) => {
-                setTimezone(e.target.value);
-                setTzSaved(false);
-              }}
-              className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-ink"
-            >
-              {IANA_TIMEZONES.map((tz) => (
-                <option key={tz.value} value={tz.value}>
-                  {tz.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {tzError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {tzError}
-            </p>
-          )}
-
-          {tzSaved && (
-            <p
-              role="status"
-              className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-success-ink)]"
-            >
-              {t.owner.timezoneUpdated}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={tzSaving}
-            className="min-h-11 rounded-full bg-accent px-6 text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {tzSaving && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-      </section>
-
-      <section className="space-y-3 rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6">
-        <h2 className="text-title-sm font-bold text-ink">{t.finance.baseCurrency}</h2>
-        <p id="settings-currency-hint" className="text-xs text-ink-secondary">{t.finance.baseCurrencyHelp}</p>
-        <form onSubmit={handleSaveCurrency} className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="settings-currency">{t.dashboard.currency}</Label>
-            <select id="settings-currency" aria-describedby="settings-currency-hint"
-              className="block min-h-11 rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink"
-              value={currency} onChange={(event) => {
-                setCurrency(event.target.value as Currency); setCurrencySaved(false); setCurrencyError(null);
-              }}>
-              <option value="BRL">BRL · R$</option>
-              <option value="USD">USD · US$</option>
-            </select>
-          </div>
-          <Button type="submit" className="min-h-11"
-            disabled={currencySaving || currency === (session.company.currency ?? "BRL")}>
-            {currencySaving ? t.common.saving : t.common.save}
-          </Button>
-        </form>
-        {currencyError && <p role="alert" className="text-xs text-[var(--status-danger-ink)]">{currencyError}</p>}
-        {currencySaved && <p role="status" className="text-xs text-accent">{t.finance.currencySaved}</p>}
-      </section>
-
-      {/* Link público de reserva */}
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5">
-        <div>
-          <h2 className="text-title-sm font-bold text-ink">
-            {t.owner.publicLinkLabel}
-          </h2>
-          <p className="mt-1 text-xs text-ink-secondary">
-            {t.booking.timezoneNotice}:{" "}
-            <strong className="font-mono text-ink">
-              {session.company.timezone}
-            </strong>
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-border-subtle bg-subtle p-3.5 font-mono text-xs text-ink break-all">
-          {fullBookingUrl}
-        </div>
-
-        <div className="flex flex-wrap gap-2.5">
-          <Button
-            type="button"
-            onClick={() => void handleCopy()}
-            className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {copied ? (
-              <Check className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Copy className="h-4 w-4" aria-hidden="true" />
-            )}
-            {copied ? t.common.copied : t.owner.copyPublicLink}
-          </Button>
-
-          <Link
-            href={relativePath}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-border-strong bg-surface px-5 text-sm font-semibold text-ink transition-colors hover:bg-subtle"
-          >
-            <ExternalLink className="h-4 w-4" aria-hidden="true" />
-            {relativePath}
-          </Link>
-        </div>
-      </section>
-
-      {/* Aparência & Idioma (Tema, Paleta de Cores e Idioma PT/ES) */}
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 space-y-5 lg:col-span-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <Palette className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div>
-            <h2 className="text-title-sm font-bold text-ink">
-              Aparência &amp; Idioma
-            </h2>
-            <p className="text-xs text-ink-secondary">
-              Personalize o tema claro/escuro, a paleta de cores e o idioma do painel.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-6 md:grid-cols-3">
-          {/* Tema Claro / Escuro */}
-          <div className="space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-              Tema do Sistema
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setMode("light")}
-                aria-pressed={mode === "light"}
-                className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors cursor-pointer ${
-                  mode === "light"
-                    ? "border-accent bg-accent-soft text-accent"
-                    : "border-border-subtle bg-canvas/50 text-ink-secondary hover:border-border-strong hover:text-ink"
-                }`}
-              >
-                <Sun className="h-4 w-4" aria-hidden="true" />
-                <span>Claro</span>
+      </header>
+      <nav aria-label={t.owner.settingsTitle} className="self-start rounded-2xl border border-border-subtle bg-surface p-2 lg:sticky lg:top-20">
+        <ul className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1">
+          {sections.map(([id, pt, spanish, Icon]) => (
+            <li key={id}>
+              <button type="button" aria-current={active === id ? "page" : undefined} aria-controls="settings-content"
+                onClick={() => setActive(id)}
+                className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-ink-secondary hover:bg-subtle aria-[current=page]:bg-accent-soft aria-[current=page]:text-ink">
+                <Icon className="size-4 shrink-0" aria-hidden="true" />{es ? spanish : pt}
               </button>
-              <button
-                type="button"
-                onClick={() => setMode("dark")}
-                aria-pressed={mode === "dark"}
-                className={`flex min-h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-colors cursor-pointer ${
-                  mode === "dark"
-                    ? "border-accent bg-accent-soft text-accent"
-                    : "border-border-subtle bg-canvas/50 text-ink-secondary hover:border-border-strong hover:text-ink"
-                }`}
-              >
-                <Moon className="h-4 w-4" aria-hidden="true" />
-                <span>Escuro</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Paleta de Cores */}
-          <div className="space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-              {t.theme.paletteLabel}
-            </p>
-            <div className="flex flex-wrap items-center gap-2.5">
-              {THEME_PALETTES.map((item) => {
-                const selected = palette === item.id;
-                const swatch = mode === "dark" ? item.swatchDark : item.swatchLight;
-                const label = t.theme.palettes[item.id];
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-pressed={selected}
-                    aria-label={label}
-                    title={label}
-                    onClick={() => setPalette(item.id)}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition-transform hover:scale-110 cursor-pointer ${
-                      selected ? "border-ink scale-105 ring-2 ring-accent/30" : "border-transparent"
-                    }`}
-                    style={{ backgroundColor: swatch }}
-                  >
-                    {selected && (
-                      <Check
-                        className="h-4 w-4"
-                        style={{ color: mode === "dark" ? "#09090B" : "#FFFFFF" }}
-                        aria-hidden="true"
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Idioma PT / ES */}
-          <div className="space-y-2.5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-              {t.common.languageLabel}
-            </p>
-            <LocaleSwitcher />
-          </div>
-        </div>
-      </section>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div id="settings-content" className="min-w-0 space-y-4">
+        {active === "company" && <CompanyPanel />}
+        {active === "agenda" && <AgendaPanel />}
+        {active === "reminders" && <RemindersPanel />}
+        {active === "clients" && <ClientsPanel />}
+        {active === "payment" && <OnlinePaymentSettingsPanel />}
+        {active === "packages" && <PackagesPanel />}
+        {active === "booking" && <AgendaPanel publicLink />}
+        {active === "survey" && <SatisfactionSettings />}
+        {active === "region" && <RegionPanel />}
+        {active === "security" && <SecurityPanel />}
+        {active === "appearance" && <AppearancePanel />}
+      </div>
     </div>
   );
+}
+
+function Card({ title, children }: { title: string; children: ReactNode }) {
+  return <section className="min-w-0 space-y-4 rounded-2xl border border-border-subtle bg-surface p-4 sm:p-6">
+    <h2 className="text-title-sm font-bold text-ink">{title}</h2>
+    {children}
+  </section>;
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="grid min-w-0 gap-1.5 text-sm font-medium text-ink">{label}{children}</label>;
+}
+
+function useSave() {
+  const { t } = useLocale();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  async function run(action: () => Promise<unknown>) {
+    setSaving(true);
+    setSaved(false);
+    setError("");
+    try {
+      await action();
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError && (err.code === "FINANCE_CURRENCY_LOCKED" || err.message === "FINANCE_CURRENCY_LOCKED")
+        ? t.finance.FINANCE_CURRENCY_LOCKED : err instanceof Error ? err.message : t.errors.unexpectedDescription);
+    } finally {
+      setSaving(false);
+    }
+  }
+  return { saving, saved, error, run };
+}
+
+function Save({ state, disabled }: { state: ReturnType<typeof useSave>; disabled?: boolean }) {
+  const { t, locale } = useLocale();
+  return <div className="flex flex-wrap items-center gap-3">
+    <Button type="submit" className="min-h-11 px-4" disabled={state.saving || disabled}>{state.saving ? t.common.saving : t.common.save}</Button>
+    {state.saved && <span role="status" className="text-sm text-ink-secondary">{locale === "es" ? "Cambios guardados." : "Alterações salvas."}</span>}
+    {state.error && <span role="alert" className="text-sm text-[var(--status-danger-ink)]">{state.error}</span>}
+  </div>;
+}
+
+function CompanyPanel() {
+  const { session, refreshSession } = useSession();
+  const { settings } = useCompanySettings(session.company.id);
+  const { t, locale } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  const addressSave = useSave();
+  const [companyName, setCompanyName] = useState(session.company.companyName);
+  const [ownerName, setOwnerName] = useState(session.name);
+  const [avatarUrl, setAvatarUrl] = useState(session.company.avatarUrl ?? session.avatarUrl ?? null);
+  const [country, setCountry] = useState<PhoneCountryCode>(() => {
+    const international = ownerCountryCodes.find((code) => session.phone.startsWith(code));
+    if (international) return international;
+    if (/^58\d{10}$/.test(session.phone) || session.company.timezone === "America/Caracas") return "+58";
+    return "+55";
+  });
+  const [phone, setPhone] = useState(() => {
+    const digits = stripNonDigits(session.phone);
+    const prefix = stripNonDigits(country);
+    return digits.startsWith(prefix) && (session.phone.startsWith("+") || digits.length > 11)
+      ? digits.slice(prefix.length) : digits;
+  });
+  const [address, setAddress] = useState<CompanyAddress | null>(null);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [postalNotice, setPostalNotice] = useState("");
+  const [postalLoading, setPostalLoading] = useState(false);
+  const [googleDraft, setGoogleDraft] = useState<Partial<Record<"googleMapsUrl" | "googleRating" | "googleReviewsCount", string>>>({});
+  const googleSave = useSave();
+  const postalRequest = useRef<AbortController | null>(null);
+  const numberField = useRef<HTMLInputElement>(null);
+
+  useEffect(() => () => postalRequest.current?.abort(), []);
+
+  async function lookUpPostalCode(value: string) {
+    postalRequest.current?.abort();
+    setPostalNotice("");
+    const cep = value.replace(/\D/g, "").slice(0, 8);
+    setAddress((current) => current && { ...current, postalCode: cep });
+    setPostalLoading(cep.length === 8);
+    if (cep.length !== 8) return;
+    const request = new AbortController();
+    postalRequest.current = request;
+    setPostalNotice(es ? "Buscando dirección…" : "Buscando endereço…");
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(8000)]) });
+      if (!response.ok) throw new Error();
+      const data = await response.json() as { erro?: boolean | string; logradouro?: string; bairro?: string; localidade?: string; uf?: string };
+      if (request.signal.aborted) return;
+      if (data.erro === true || data.erro === "true") {
+        setPostalNotice(es ? "Código postal no encontrado." : "CEP não encontrado.");
+        return;
+      }
+      setAddress((current) => current?.postalCode === cep ? {
+        ...current, street: data.logradouro || current.street, district: data.bairro || current.district,
+        city: data.localidade || current.city, state: data.uf || current.state,
+      } : current);
+      setPostalNotice("");
+      numberField.current?.focus();
+    } catch {
+      if (!request.signal.aborted) setPostalNotice(es ? "No fue posible consultar el código postal." : "Não foi possível consultar o CEP.");
+    } finally {
+      if (!request.signal.aborted) setPostalLoading(false);
+    }
+  }
+  const [schedule, setSchedule] = useState(() => [1, 2, 3, 4, 5, 6, 0].map((dayOfWeek) => {
+    const { isOpen, hours } = companyWeekday(session.company, dayOfWeek);
+    return { dayOfWeek, isOpen, openTime: hours?.openTime?.slice(0, 5) || "08:00", closeTime: hours?.closeTime?.slice(0, 5) || "19:00" };
+  }));
+  const addressLabels = es ? ["Código postal", "Calle", "Número", "Barrio", "Ciudad", "Estado"] : ["CEP", "Rua", "Número", "Bairro", "Cidade", "Estado"];
+
+  function submitProfile(event: FormEvent) {
+    event.preventDefault();
+    void save.run(async () => {
+      if (!isValidInternationalPhone(country, phone)) throw new Error(t.errors.invalidPhone);
+      if (schedule.some((day) => day.isOpen && day.openTime >= day.closeTime)) {
+        throw new Error(es ? "El cierre debe ser posterior a la apertura." : "O fechamento deve ser posterior à abertura.");
+      }
+      await apiRequest("/me/profile", { method: "PATCH", body: {
+        companyName: companyName.trim(), name: ownerName.trim(), avatarUrl, phone: formatPhoneToE164(country, phone),
+        operatingDays: schedule.filter((day) => day.isOpen).map((day) => day.dayOfWeek).sort().join(","),
+        operatingSchedule: schedule.map((day) => day.isOpen ? day : { ...day, openTime: null, closeTime: null }),
+      } });
+      await refreshSession();
+    });
+  }
+
+  return <>
+    <Card title={es ? "Información de la empresa" : "Informações da empresa"}>
+      <form onSubmit={submitProfile} className="space-y-5">
+        <AvatarPicker id="settings-logo" value={avatarUrl} onChange={setAvatarUrl} />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t.auth.companyNameLabel}><input className={field} required minLength={3} maxLength={100} value={companyName} onChange={(event) => setCompanyName(event.target.value)} /></Field>
+          <Field label={es ? "Nombre completo del responsable" : "Nome completo do responsável"}><input className={field} required minLength={2} maxLength={80} value={ownerName} onChange={(event) => setOwnerName(event.target.value)} /></Field>
+          <PhoneInput id="settings-owner-phone" label={es ? "WhatsApp del responsable" : "Celular / WhatsApp do responsável"} countries={ownerCountryCodes} countryCode={country} value={phone} onCountryCodeChange={setCountry} onChange={setPhone} />
+        </div>
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-base font-bold text-ink">{es ? "Días y horarios de atención" : "Dias e horários de funcionamento"}</legend>
+          {schedule.map((day) => {
+            const label = t.days[day.dayOfWeek as 0 | 1 | 2 | 3 | 4 | 5 | 6];
+            function update(patch: Partial<typeof day>) {
+              setSchedule((current) => current.map((row) => row.dayOfWeek === day.dayOfWeek ? { ...row, ...patch } : row));
+            }
+            return <div key={day.dayOfWeek} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border-subtle p-2.5">
+              <label className="flex min-h-9 items-center gap-2 text-sm font-medium">
+                <input type="checkbox" role="switch" className="size-4 accent-accent" checked={day.isOpen} onChange={(event) => update({ isOpen: event.target.checked })} />{label}
+              </label>
+              <div className="flex items-center gap-2">
+                <input className={field + " w-auto"} aria-label={label + (es ? " apertura" : " abertura")} type="time" required={day.isOpen} disabled={!day.isOpen} value={day.openTime} onChange={(event) => update({ openTime: event.target.value })} />
+                <span aria-hidden="true">–</span>
+                <input className={field + " w-auto"} aria-label={label + (es ? " cierre" : " fechamento")} type="time" required={day.isOpen} disabled={!day.isOpen} value={day.closeTime} onChange={(event) => update({ closeTime: event.target.value })} />
+              </div>
+            </div>;
+          })}
+        </fieldset>
+        <Save state={save} />
+      </form>
+    </Card>
+    <Card title={es ? "Dirección" : "Endereço"}>
+      <p className="text-sm text-ink-secondary">{formatCompanyAddress(settings.address) || (es ? "Sin dirección registrada" : "Sem endereço cadastrado")}</p>
+      {editingAddress && address ? <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        void addressSave.run(async () => {
+          await saveCompanySettings(session.company.id, { address });
+          setEditingAddress(false);
+        });
+      }}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {addressFields.map((key, index) => <Field key={key} label={addressLabels[index]}>
+            <input className={field} value={address[key]} maxLength={key === "postalCode" ? 9 : 120} required={key === "street" || key === "city"}
+              ref={key === "number" ? numberField : undefined} inputMode={key === "postalCode" ? "numeric" : undefined}
+              onChange={(event) => key === "postalCode" ? void lookUpPostalCode(event.target.value) :
+                setAddress({ ...address, [key]: event.target.value })} />
+          </Field>)}
+        </div>
+        {postalNotice && <p role="status" className="text-sm text-ink-secondary">{postalNotice}</p>}
+        <div className="flex flex-wrap gap-3"><Save state={addressSave} disabled={postalLoading} /><Button type="button" variant="outline" onClick={() => { postalRequest.current?.abort(); setPostalLoading(false); setPostalNotice(""); setEditingAddress(false); }}>{t.common.cancel}</Button></div>
+      </form> : <Button variant="outline" onClick={() => {
+        setAddress(settings.address ?? { postalCode: "", street: "", number: "", district: "", city: "", state: "" });
+        setEditingAddress(true);
+      }}>{es ? "Editar dirección" : "Editar endereço"}</Button>}
+    </Card>
+    <Card title="Google Maps">
+      <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        void googleSave.run(async () => {
+          const rating = String(form.get("googleRating"));
+          const count = String(form.get("googleReviewsCount"));
+          await saveCompanySettings(session.company.id, {
+            googleMapsUrl: String(form.get("googleMapsUrl")).trim() || null,
+            googleRating: rating ? Number(rating) : null,
+            googleReviewsCount: count ? Number(count) : null,
+          });
+          setGoogleDraft({});
+        });
+      }}>
+        <Field label={es ? "Enlace de Google Maps" : "Link do Google Maps"}>
+          <input name="googleMapsUrl" type="url" maxLength={2048} className={field}
+            value={googleDraft.googleMapsUrl ?? settings.googleMapsUrl ?? ""}
+            onChange={(event) => setGoogleDraft({ ...googleDraft, googleMapsUrl: event.target.value })} />
+        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={es ? "Nota en Google (estrellas)" : "Nota no Google (estrelas)"}>
+            <input name="googleRating" type="number" min={1} max={5} step={0.1} className={field}
+              value={googleDraft.googleRating ?? settings.googleRating ?? ""}
+              onChange={(event) => setGoogleDraft({ ...googleDraft, googleRating: event.target.value })} />
+          </Field>
+          <Field label={es ? "Cantidad de evaluaciones" : "Quantidade de avaliações"}>
+            <input name="googleReviewsCount" type="number" min={0} max={100000000} step={1} className={field}
+              value={googleDraft.googleReviewsCount ?? settings.googleReviewsCount ?? ""}
+              onChange={(event) => setGoogleDraft({ ...googleDraft, googleReviewsCount: event.target.value })} />
+          </Field>
+        </div>
+        <Save state={googleSave} disabled={!Object.keys(googleDraft).length} />
+      </form>
+    </Card>
+  </>;
+}
+
+function Options<T extends string | number>({ label, values, value, onChange, render }: {
+  label: string; values: readonly T[]; value: T; onChange: (value: T) => void; render: (value: T) => ReactNode;
+}) {
+  return <fieldset className="space-y-2">
+    <legend className="mb-2 text-sm font-semibold text-ink">{label}</legend>
+    <div className="flex flex-wrap gap-2">
+      {values.map((option) => <label key={option} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-border-subtle px-3 py-2 text-sm text-ink has-checked:border-accent has-checked:bg-accent-soft has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent">
+        <input type="radio" className="sr-only" name={label} checked={option === value} onChange={() => onChange(option)} />{render(option)}
+      </label>)}
+    </div>
+  </fieldset>;
+}
+
+function AgendaPanel({ publicLink = false }: { publicLink?: boolean }) {
+  const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id);
+  const { locale, t } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  const [draft, setDraft] = useState<Partial<Pick<CompanySettings, "agendaInterval" | "bookingInterval" | "leadTime">>>({});
+  const [linkStatus, setLinkStatus] = useState("");
+  const [qr, setQr] = useState("");
+  const path = `/book/${session.company.id}`;
+  const url = typeof window === "undefined" ? path : new URL(path, window.location.origin).href;
+  const minutes = (value: number) => `${value} min`;
+
+  return <>
+    <Card title={publicLink ? (es ? "Reglas de reserva" : "Regras de agendamento") : (es ? "Intervalo de la agenda" : "Intervalo da Agenda")}>
+      <form className="space-y-5" onSubmit={(event) => {
+        event.preventDefault();
+        void save.run(async () => { await saveCompanySettings(session.company.id, draft); setDraft({}); });
+      }}>
+        {!publicLink && <Options label={es ? "Intervalo de la cuadrícula interna" : "Intervalo da grade interna"} values={agendaIntervals} value={draft.agendaInterval ?? settings.agendaInterval} render={minutes} onChange={(agendaInterval) => setDraft({ ...draft, agendaInterval })} />}
+        {publicLink && <><Options label={es ? "Horarios del enlace de reservas" : "Horários do link de agendamento"} values={bookingIntervals} value={draft.bookingInterval ?? settings.bookingInterval}
+          render={(value) => value ? minutes(value) : es ? "Seguir agenda" : "Seguir Agenda"} onChange={(bookingInterval) => setDraft({ ...draft, bookingInterval })} />
+        <Options label={es ? "Anticipación mínima para reservar o cancelar" : "Antecedência mínima para agendar ou cancelar"} values={leadTimes} value={draft.leadTime ?? settings.leadTime}
+          render={(value) => value >= 60 ? `${value / 60} h` : value ? minutes(value) : es ? "Sin restricción" : "Sem restrição"} onChange={(leadTime) => setDraft({ ...draft, leadTime })} /></>}
+        <Save state={save} disabled={!Object.keys(draft).length} />
+      </form>
+    </Card>
+    {publicLink && <Card title={es ? "Enlace público y código QR" : "Link público e QR Code"}>
+      <Link href={path} target="_blank" rel="noopener noreferrer" className="block break-all text-sm text-accent underline">{url}</Link>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={async () => {
+          try { await navigator.clipboard.writeText(url); setLinkStatus(t.common.copied); }
+          catch { setLinkStatus(es ? "Selecciona y copia el enlace." : "Selecione e copie o link."); }
+        }}><Copy className="size-4" />{es ? "Copiar enlace" : "Copiar link"}</Button>
+        <Button variant="outline" onClick={async () => {
+          if (qr) { setQr(""); return; }
+          try {
+            const { toDataURL } = await import("qrcode");
+            setQr(await toDataURL(url, { width: 320, margin: 4, errorCorrectionLevel: "M" }));
+          } catch { setLinkStatus(es ? "No se pudo generar el código QR." : "Não foi possível gerar o QR Code."); }
+        }}><QrCode className="size-4" />{qr ? (es ? "Ocultar código QR" : "Ocultar QR Code") : (es ? "Ver código QR" : "Visualizar QR Code")}</Button>
+      </div>
+      {linkStatus && <p role="status" className="text-sm text-ink-secondary">{linkStatus}</p>}
+      {qr && <div className="space-y-2">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={qr} alt={es ? "Código QR del enlace de reservas" : "QR Code do link de agendamento"} width={200} height={200} className="rounded-xl" />
+        <a className="text-sm font-semibold text-accent underline" download="cloudgo-agendamento.png" href={qr}>{es ? "Descargar PNG" : "Baixar PNG"}</a>
+      </div>}
+    </Card>}
+  </>;
+}
+
+function ClientsPanel() {
+  const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id, undefined, true, true);
+  const { locale } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  const [draft, setDraft] = useState<Partial<CompanySettings["clientFields"]>>({});
+  const [radar, setRadar] = useState<boolean>();
+  const [customDraft, setCustomDraft] = useState<CustomClientField[]>();
+  const customFields = customDraft ?? settings.customClientFields;
+  const [newLabel, setNewLabel] = useState("");
+  const labels = clientFieldLabels(locale);
+  const modes = es ? ["Obligatorio", "Opcional", "Oculto"] : ["Obrigatório", "Opcional", "Oculto"];
+
+  return <Card title={es ? "Datos de clientes y anamnesis" : "Dados de Clientes & Anamnese"}>
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      void save.run(async () => {
+        await saveCompanySettings(session.company.id, { clientFields: { ...settings.clientFields, ...draft }, birthdayRadar: radar ?? settings.birthdayRadar, ...(customDraft ? { customClientFields: customDraft } : {}) });
+        setDraft({}); setRadar(undefined); setCustomDraft(undefined);
+      });
+    }}>
+      <p className="text-sm text-ink-secondary">{es ? "Estos campos se aplican al alta interna y a las reservas públicas." : "Estes campos se aplicam ao cadastro interno e ao agendamento público."}</p>
+      {clientFields.map((key) => <label key={key} className="grid items-center gap-2 text-sm font-medium sm:grid-cols-[1fr_12rem]">
+        {labels[key]}
+        <select className={field} value={draft[key] ?? settings.clientFields[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value as CompanySettings["clientFields"][typeof key] })}>
+          {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
+        </select>
+      </label>)}
+      <h3 className="border-t border-border-subtle pt-4 font-semibold">{es ? "Campos de la ficha del cliente" : "Campos da ficha do cliente"}</h3>
+      {Object.entries(profileFieldLabels).map(([key, names]) => <label key={key} className="grid items-center gap-2 text-sm font-medium sm:grid-cols-[1fr_12rem]">
+        {names[es ? 1 : 0]}
+        <select className={field} value={draft[key] ?? settings.clientFields[key] ?? "optional"}
+          onChange={(event) => setDraft({ ...draft, [key]: event.target.value as CustomClientField["mode"] })}>
+          {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
+        </select>
+      </label>)}
+      {customFields.map((custom) => <div key={custom.id} className="grid gap-2 sm:grid-cols-[1fr_12rem_auto]">
+        <Field label={es ? "Nombre del campo" : "Nome do campo"}>
+          <input className={field} required maxLength={80} value={custom.label} onChange={(event) =>
+            setCustomDraft(customFields.map((item) => item.id === custom.id ? { ...item, label: event.target.value } : item))} />
+        </Field>
+        <Field label={es ? "Visibilidad" : "Visibilidade"}>
+          <select className={field} value={custom.mode} onChange={(event) =>
+            setCustomDraft(customFields.map((item) => item.id === custom.id ? { ...item, mode: event.target.value as CustomClientField["mode"] } : item))}>
+            {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
+          </select>
+        </Field>
+        <Button type="button" variant="outline" className="min-h-11 self-end" onClick={() => setCustomDraft(customFields.filter((item) => item.id !== custom.id))}>
+          {es ? "Quitar campo" : "Remover campo"}
+        </Button>
+      </div>)}
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label={es ? "Nuevo campo personalizado" : "Novo campo personalizado"}>
+          <input className={field} value={newLabel} maxLength={80} onChange={(event) => setNewLabel(event.target.value)} />
+        </Field>
+        <Button type="button" variant="outline" className="min-h-11" disabled={!newLabel.trim() || customFields.length >= 25} onClick={() => {
+          setCustomDraft([...customFields, { id: `custom_${crypto.randomUUID()}`, label: newLabel.trim(), mode: "optional" }]);
+          setNewLabel("");
+        }}>{es ? "Añadir campo" : "Adicionar campo"}</Button>
+      </div>
+      <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
+        <input type="checkbox" role="switch" checked={radar ?? settings.birthdayRadar} className="size-4 accent-accent" onChange={(event) => setRadar(event.target.checked)} />
+        {es ? "Activar recordatorio de cumpleaños en el CRM" : "Ativar radar de aniversariantes no CRM"}
+      </label>
+      <Save state={save} disabled={!Object.keys(draft).length && radar === undefined && !customDraft} />
+    </form>
+  </Card>;
+}
+
+const reminderDefaults: ReminderSettings = { enabled: false, hours: 2, template: "buttons", message: "", externalUrl: "" };
+const reminderTemplates = ["buttons", "plain", "whatsapp", "external", "custom"] as const;
+
+function RemindersPanel() {
+  const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id, undefined, true, true);
+  const { locale } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  const [draft, setDraft] = useState<Partial<ReminderSettings>>({});
+  const current = { ...(settings.reminders ?? reminderDefaults), ...draft };
+  const apply = (patch: Partial<ReminderSettings>) => setDraft((previous) => ({ ...previous, ...patch }));
+  const names = es ? ["Estándar con botones", "Texto simple", "Atención por WhatsApp", "Enlace externo", "Personalizado"]
+    : ["Padrão com Botões", "Texto Simples", "Atendimento via WhatsApp", "Link Externo", "Personalizado"];
+  const greeting = es ? `¡Hola, Ana! Tienes una cita en ${session.company.companyName} mañana a las 14:00.`
+    : `Olá, Ana! Você tem um horário em ${session.company.companyName} amanhã às 14h.`;
+  const messages: Record<ReminderSettings["template"], string> = {
+    buttons: greeting,
+    plain: es ? `${greeting} Responde a este mensaje si necesitas cambiar tu cita.` : `${greeting} Responda a esta mensagem se precisar alterar seu horário.`,
+    whatsapp: es ? `${greeting} Habla con nuestro equipo por WhatsApp.` : `${greeting} Fale com nossa equipe pelo WhatsApp.`,
+    external: `${greeting}\n${current.externalUrl}`,
+    custom: current.message.replaceAll("{cliente}", "Ana").replaceAll("{empresa}", session.company.companyName)
+      .replaceAll("{data}", es ? "mañana" : "amanhã").replaceAll("{hora}", "14:00"),
+  };
+
+  return <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,0.72fr)]">
+    <Card title={es ? "Recordatorios de citas" : "Lembretes de agendamento"}>
+      <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        void save.run(async () => { await saveCompanySettings(session.company.id, { reminders: current }); setDraft({}); });
+      }}>
+        <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
+          <input type="checkbox" role="switch" className="size-4 accent-accent" checked={current.enabled} onChange={(event) => apply({ enabled: event.target.checked })} />
+          {es ? "Activar recordatorios de citas" : "Ativar lembretes de agendamento"}
+        </label>
+        <Options label={es ? "Anticipación" : "Antecedência"} values={[1, 2, 4, 24] as const} value={current.hours}
+          onChange={(hours) => apply({ hours })} render={(hours) => `${hours}h`} />
+        <Field label={es ? "Plantilla de mensaje" : "Modelo de mensagem"}>
+          <select className={field} value={current.template} onChange={(event) => apply({ template: event.target.value as ReminderSettings["template"] })}>
+            {reminderTemplates.map((id, index) => <option key={id} value={id}>{names[index]}</option>)}
+          </select>
+        </Field>
+        {current.template === "custom" && <Field label={es ? "Mensaje personalizado" : "Mensagem personalizada"}>
+          <textarea className={field + " py-2"} rows={5} required={current.enabled} maxLength={1500} value={current.message}
+            onChange={(event) => apply({ message: event.target.value })} />
+          <span className="text-xs text-ink-secondary">{es ? "Variables" : "Variáveis"} {"{cliente}, {empresa}, {data}, {hora}"}</span>
+        </Field>}
+        {current.template === "external" && <Field label={es ? "Enlace externo" : "Link externo"}>
+          <input className={field} type="url" required={current.enabled} maxLength={2048} placeholder="https://"
+            value={current.externalUrl} onChange={(event) => apply({ externalUrl: event.target.value })} />
+        </Field>}
+        <Save state={save} disabled={!Object.keys(draft).length} />
+      </form>
+    </Card>
+    <Card title={es ? "Vista previa en WhatsApp" : "Prévia no WhatsApp"}>
+      <div className="rounded-xl bg-emerald-100 p-3 text-sm text-emerald-950 dark:bg-emerald-950 dark:text-emerald-50">
+        <p className="min-h-10 whitespace-pre-wrap break-words">{messages[current.template] || (es ? "Escribe el mensaje para ver la vista previa." : "Escreva a mensagem para visualizar.")}</p>
+        {current.template === "buttons" && <div className="mt-3 flex flex-wrap gap-2 border-t border-emerald-700/40 pt-2 text-xs font-semibold">
+          <span>{es ? "Confirmar" : "Confirmar"}</span><span aria-hidden="true">·</span><span>{es ? "Reprogramar" : "Reagendar"}</span>
+        </div>}
+      </div>
+      <p className="text-xs text-ink-secondary">{es ? `Ejemplo de mensaje · ${current.hours} h antes` : `Exemplo de mensagem · ${current.hours}h antes`}</p>
+    </Card>
+  </div>;
+}
+
+function PackagesPanel() {
+  const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id, undefined, true, true);
+  const { locale } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  const [draft, setDraft] = useState<Partial<NonNullable<CompanySettings["packageSales"]>>>({});
+  const current = { ...(settings.packageSales ?? { enabled: true, notes: "" }), ...draft };
+  return <Card title={es ? "Venta de paquetes" : "Venda de Pacotes"}>
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      void save.run(async () => { await saveCompanySettings(session.company.id, { packageSales: current }); setDraft({}); });
+    }}>
+      <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
+        <input className="size-4 accent-accent" type="checkbox" role="switch" checked={current.enabled}
+          onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
+        {es ? "Permitir nuevas ventas de paquetes" : "Permitir novas vendas de pacotes"}
+      </label>
+      <Field label={es ? "Observaciones internas" : "Observações internas"}>
+        <textarea className={field + " py-2"} rows={3} maxLength={1000} value={current.notes}
+          onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
+      </Field>
+      <Save state={save} disabled={!Object.keys(draft).length} />
+    </form>
+    <Link className="inline-block text-sm font-semibold text-ink underline" href="/owner/services/packages">
+      {es ? "Gestionar paquetes de servicios" : "Gerenciar pacotes de serviços"}
+    </Link>
+  </Card>;
+}
+
+function RegionPanel() {
+  const { session, refreshSession } = useSession();
+  const { t } = useLocale();
+  const timezoneSave = useSave();
+  const currencySave = useSave();
+  const [timezone, setTimezone] = useState(session.company.timezone);
+  const [currency, setCurrency] = useState<Currency>(session.company.currency);
+  return <>
+    <Card title={t.auth.timezoneLabel}>
+      <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        void timezoneSave.run(async () => {
+          await apiRequest("/companies/me/timezone", { method: "PATCH", body: { timezone } });
+          await refreshSession();
+        });
+      }}>
+        <Field label={t.common.timezone}><select className={field} value={timezone} onChange={(event) => setTimezone(event.target.value)}>
+          {!IANA_TIMEZONES.some((zone) => zone.value === timezone) && <option value={timezone}>{timezone}</option>}
+          {IANA_TIMEZONES.map((zone) => <option key={zone.value} value={zone.value}>{zone.label}</option>)}
+        </select></Field>
+        <Save state={timezoneSave} disabled={timezone === session.company.timezone} />
+      </form>
+    </Card>
+    <Card title={t.finance.baseCurrency}>
+      <p className="text-sm text-ink-secondary">{t.finance.baseCurrencyHelp}</p>
+      <form className="space-y-4" onSubmit={(event) => {
+        event.preventDefault();
+        void currencySave.run(async () => {
+          await apiRequest("/companies/me/currency", { method: "PATCH", body: { currency } });
+          await refreshSession();
+        });
+      }}>
+        <Field label={t.dashboard.currency}><select className={field} value={currency} onChange={(event) => setCurrency(event.target.value as Currency)}>
+          <option value="BRL">BRL · R$</option><option value="USD">USD · $</option><option value="VES">VES · Bs.</option>
+        </select></Field>
+        <Save state={currencySave} disabled={currency === session.company.currency} />
+      </form>
+    </Card>
+  </>;
+}
+
+function SecurityPanel() {
+  const { t, locale } = useLocale();
+  const es = locale === "es";
+  const save = useSave();
+  return <Card title={t.collaborator.securityTitle}>
+    <p id="settings-password-hint" className="text-sm text-ink-secondary">{t.auth.passwordHint}</p>
+    <form className="space-y-4" onSubmit={(event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const fields = new FormData(form);
+      const currentPassword = String(fields.get("currentPassword"));
+      const newPassword = String(fields.get("newPassword"));
+      void save.run(async () => {
+        if (!validNewPassword(newPassword)) throw new Error(t.auth.passwordHint);
+        if (newPassword !== fields.get("confirmation")) throw new Error(es ? "Las contraseñas no coinciden." : "As senhas não coincidem.");
+        await apiRequest("/me/password", { method: "PATCH", body: { currentPassword, newPassword } });
+        form.reset();
+      });
+    }}>
+      <Field label={t.common.currentPassword}><input className={field} type="password" name="currentPassword" autoComplete="current-password" required /></Field>
+      <Field label={t.common.newPassword}><input className={field} type="password" name="newPassword" aria-describedby="settings-password-hint" autoComplete="new-password" minLength={6} maxLength={15} required /></Field>
+      <Field label={es ? "Confirmar nueva contraseña" : "Confirmar nova senha"}><input className={field} type="password" name="confirmation" autoComplete="new-password" minLength={6} maxLength={15} required /></Field>
+      <Save state={save} />
+    </form>
+    <PasswordRecovery />
+  </Card>;
+}
+
+const appearanceQueue = new Map<string, Promise<void>>();
+
+function persistAppearance(companyId: string, appearance: OwnerAppearance) {
+  const previous = appearanceQueue.get(companyId) ?? Promise.resolve();
+  const task = previous.catch(() => undefined).then(async () => {
+    await apiRequest("/companies/me/settings/appearance", { method: "PATCH", body: appearance });
+  });
+  appearanceQueue.set(companyId, task);
+  void task.finally(() => {
+    if (appearanceQueue.get(companyId) === task) appearanceQueue.delete(companyId);
+  }).catch(() => undefined);
+  return task;
+}
+
+function AppearancePanel() {
+  const { t, locale, setLocale } = useLocale();
+  const { mode, palette, setMode, setPalette } = useTheme();
+  const es = locale === "es";
+  const { session } = useSession();
+  const appearanceRef = useRef<OwnerAppearance | null>(null);
+  const sequence = useRef(0);
+  const [status, setStatus] = useState<"saving" | "saved" | "error">();
+
+  function update(patch: Partial<OwnerAppearance>) {
+    const appearance = { ...(appearanceRef.current ?? { mode, locale, palette }), ...patch };
+    appearanceRef.current = appearance;
+    setMode(appearance.mode);
+    setPalette(appearance.palette);
+    setLocale(appearance.locale);
+    applyDashboardTheme(appearance.mode, appearance.palette);
+    setStatus("saving");
+    const current = ++sequence.current;
+    void persistAppearance(session.company.id, appearance).then(() => {
+      if (current === sequence.current) setStatus("saved");
+    }).catch(() => {
+      if (current === sequence.current) setStatus("error");
+    });
+  }
+
+  return <Card title={es ? "Tema y apariencia" : "Tema & Aparência"}>
+    <div className="space-y-5">
+      <Options label={es ? "Modo del sistema" : "Modo do sistema"} values={["light", "dark"] as const} value={mode} onChange={(mode) => update({ mode })}
+        render={(value) => value === "light" ? "Claro" : es ? "Oscuro" : "Escuro"} />
+      <Options label={t.common.languageLabel} values={["pt-BR", "es"] as const} value={locale} onChange={(locale) => update({ locale })}
+        render={(value) => value === "pt-BR" ? "Português (PT-BR)" : "Español (ES)"} />
+      <Options label={t.theme.paletteLabel} values={THEME_PALETTES.map((item) => item.id)} value={palette} onChange={(palette) => update({ palette })}
+        render={(value) => {
+          const option = THEME_PALETTES.find((item) => item.id === value);
+          return <><span aria-hidden="true" className="size-4 shrink-0 rounded-full border border-border-strong" style={{ backgroundColor: mode === "dark" ? option?.swatchDark : option?.swatchLight }} />{t.theme.palettes[value]}</>;
+        }} />
+      <div aria-live="polite" className="text-sm text-ink-secondary">
+        {status === "saving" && t.common.saving}
+        {status === "saved" && (es ? "Cambios guardados." : "Alterações salvas.")}
+        {status === "error" && <>
+          <p>{es ? "Tema aplicado en este dispositivo. La sincronización falló." : "Tema aplicado neste dispositivo. A sincronização falhou."}</p>
+          <Button type="button" variant="outline" className="mt-2 min-h-11" onClick={() => update({})}>{es ? "Reintentar" : "Tentar novamente"}</Button>
+        </>}
+      </div>
+    </div>
+  </Card>;
 }

@@ -1,6 +1,6 @@
-﻿import type { AppointmentStatus } from "@/lib/types/appointment";
+import type { AppointmentStatus } from "@/lib/types/appointment";
 
-export type Currency = "BRL" | "USD";
+export type Currency = "BRL" | "USD" | "VES";
 export const paymentMethods = ["CASH", "PIX", "DEBIT_CARD", "CREDIT_CARD", "TRANSFER", "OTHER"] as const;
 export type PaymentMethod = (typeof paymentMethods)[number];
 export type CommissionStatus = "NONE" | "AWAITING_COLLECTION" | "READY" | "PAID";

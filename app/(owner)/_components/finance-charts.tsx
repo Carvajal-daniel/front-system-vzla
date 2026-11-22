@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useId, useState } from "react";
 import { Activity, Bell, ChartBar } from "lucide-react";
@@ -69,7 +69,7 @@ export function FinanceCharts({ data, money }: ChartsProps) {
   const colors = [
     primary,
     palette === "emerald" ? (dark ? "#93C5FD" : "#2563EB") : (dark ? "#5EEAD4" : "#0F766E"),
-    palette === "velvet" ? (dark ? "#FDA4AF" : "#BE123C") : (dark ? "#C4B5FD" : "#7C3AED"),
+    palette === "violet" ? (dark ? "#FDA4AF" : "#BE123C") : (dark ? "#C4B5FD" : "#7C3AED"),
   ];
   const labels = [t.finance.legendRealized, t.finance.legendForecast, t.finance.legendCommissions];
   const points = getFinanceSeries(data.period, data.series);

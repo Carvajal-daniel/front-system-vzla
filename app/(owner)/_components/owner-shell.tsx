@@ -1,5 +1,10 @@
 "use client";
 
+import { apiRequest } from "@/lib/api-client";
+import { displayCompanyRating, type OwnerAppearance } from "@/lib/company-settings";
+import { CompanyRating } from "@/components/ui/company-rating";
+import { useCompanySettings } from "@/lib/use-company-settings";
+
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -37,8 +42,9 @@ import {
   X,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/locale-context";
-import { useTheme } from "@/lib/theme-context";
+import { applyDashboardTheme, useTheme } from "@/lib/theme-context";
 import { useSidebarCollapsed } from "@/lib/use-sidebar-collapsed";
+
 import { useSession } from "@/components/ui/auth-guard";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { NotificationsBell } from "@/components/ui/notifications-bell";
@@ -46,6 +52,10 @@ import { PlanUsagePopover } from "@/components/ui/plan-usage-popover";
 import { usePrivacy } from "@/lib/privacy-context";
 import { usePlanLimits } from "@/lib/use-plan-limits";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
+
+const sidebarActive = "bg-transparent text-white";
+const sidebarInactive = "text-slate-300 hover:bg-white/8 hover:text-white";
+const sidebarActiveDot = <span aria-hidden="true" className="ml-auto block h-2 w-2 shrink-0 rounded-full bg-[#00A8C6]" />;
 
 function CloudGoLogo() {
   return (
@@ -427,9 +437,42 @@ function getInitials(name: string): string {
 
 export function OwnerShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { t } = useLocale();
-  const { mode, palette } = useTheme();
+  const { t, setLocale } = useLocale();
+  const { mode, palette, setMode, setPalette } = useTheme();
   const { session, logout } = useSession();
+  const { settings } = useCompanySettings(session.company.id);
+
+  useEffect(() => {
+    applyDashboardTheme(mode, palette);
+  }, [mode, palette]);
+
+  useEffect(() => () => {
+    const root = document.documentElement;
+    delete root.dataset.theme;
+    delete root.dataset.palette;
+    root.classList.remove("dark");
+  }, []);
+
+  useEffect(() => {
+    const request = new AbortController();
+    const cached = () => {
+      try {
+        return ["atelier_agenda_theme_mode", "atelier_agenda_theme_palette", "atelier_agenda_locale"]
+          .map((key) => localStorage.getItem(key)).join("|");
+      } catch {
+        return "";
+      }
+    };
+    const before = cached();
+    void apiRequest<{ appearance: OwnerAppearance | null }>("/companies/me/settings/appearance", { signal: request.signal })
+      .then(({ appearance }) => {
+        if (!appearance || request.signal.aborted || cached() !== before) return;
+        setMode(appearance.mode);
+        setPalette(appearance.palette);
+        setLocale(appearance.locale);
+      }).catch(() => undefined);
+    return () => request.abort();
+  }, [session.company.id, setLocale, setMode, setPalette]);
   const { collapsed, toggle } = useSidebarCollapsed();
   const { hideSensitiveValues, togglePrivacy } = usePrivacy();
   const { currentPlan } = usePlanLimits();
@@ -569,7 +612,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       {/* ======================================================== */}
       {/* 1. TOPBAR GLOBAL DE LARGURA INTEIRA (W-FULL) */}
       {/* ======================================================== */}
-      <header className="sticky top-0 z-40 w-full border-b border-border-subtle bg-surface/95 backdrop-blur-md shadow-xs">
+      <header data-shell-header className="sticky top-0 z-40 w-full border-b border-border-subtle bg-surface/95 backdrop-blur-md shadow-xs">
         <div className="flex w-full items-center justify-between gap-2 px-3 py-2 sm:px-4 lg:px-6">
           {/* Esquerda: Botão Menu/Colapsar + Logo CloudGo + Atalhos (Tablet/Desktop) */}
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
@@ -727,14 +770,12 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             className="fixed inset-0 bg-black/60 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="owner-sidebar relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-[#263149] bg-[#131B2E] text-slate-100 shadow-2xl animate-in slide-in-from-left duration-200">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-700/60 px-4 py-3.5">
+          <aside className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-slate-800 bg-[#0F172A] text-slate-100 shadow-2xl animate-in slide-in-from-left duration-200">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3.5">
               <div className="flex items-center gap-2.5 min-w-0">
                 <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-slate-100">
-                    {session.company.companyName}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings)} /></div>
                   <p className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 truncate">
                     <Globe2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                     {session.company.timezone}
@@ -745,7 +786,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
                 aria-label="Fechar menu"
-                className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-white/10 hover:text-white cursor-pointer"
+                className={`grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg ${sidebarInactive}`}
               >
                 <X size={16} />
               </button>
@@ -755,22 +796,22 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             <Link
               href="/owner/settings"
               onClick={() => setMobileMenuOpen(false)}
-              className="mx-3 mt-3 flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10 transition-colors"
+              className="mx-3 mt-3 flex items-center gap-3 rounded-xl border border-slate-800 bg-white/5 p-3 text-left hover:bg-white/10 transition-colors"
             >
               <div className="relative grid size-10 shrink-0 place-items-center rounded-full bg-[#25D366] text-white shadow-sm">
                 <WhatsAppIcon className="size-5" />
-                <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-red-500 ring-2 ring-[#131B2E]" />
+                <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-red-500 ring-2 ring-[#0F172A]" />
               </div>
               <div className="min-w-0">
-                <span className="block text-sm font-bold text-white tracking-tight">WhatsApp</span>
-                <span className="block truncate text-xs text-rose-400 font-medium">
+                <span className="block text-sm font-bold tracking-tight">WhatsApp</span>
+                <span className="block truncate text-xs font-medium text-rose-400">
                   {product.whatsappDisconnected}
                 </span>
               </div>
             </Link>
 
             {/* Ações de Plano, Link de Agendamento, Consumo e Privacidade no Mobile */}
-            <div className="mx-3 mt-3 space-y-2 border-b border-slate-700/60 pb-3">
+            <div className="mx-3 mt-3 space-y-2 border-b border-slate-800 pb-3">
               {isTrial && (
                 <Link
                   href="/owner/settings"
@@ -795,7 +836,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-2 text-xs font-medium text-slate-200 hover:bg-white/10"
                 >
-                  <Smartphone size={14} className="text-accent shrink-0" />
+                  <Smartphone size={14} className="text-[#00A8C6] shrink-0" />
                   <span className="truncate">Link Online</span>
                 </Link>
                 <Link
@@ -803,7 +844,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-2 text-xs font-medium text-slate-200 hover:bg-white/10"
                 >
-                  <Gauge size={14} className="text-accent shrink-0" />
+                  <Gauge size={14} className="text-[#00A8C6] shrink-0" />
                   <span className="truncate">Consumo</span>
                 </Link>
               </div>
@@ -832,37 +873,36 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                     <button
                       type="button"
                       onClick={() => setActiveGroup((prev) => (prev === group.key ? null : group.key))}
-                      className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-sm font-semibold transition-colors ${
-                        isSelected ? "text-white bg-white/10" : "text-slate-300 hover:bg-white/8 hover:text-white"
+                      aria-expanded={expanded}
+                      className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition-colors ${
+                        isSelected ? sidebarActive : sidebarInactive
                       }`}
                     >
                       <Icon className="size-4 shrink-0" aria-hidden="true" />
                       <span className="min-w-0 flex-1 truncate text-left">{group.label}</span>
-                      <ChevronDown
+                      {isSelected && !expanded ? sidebarActiveDot : <ChevronDown
                         className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
                         aria-hidden="true"
-                      />
+                      />}
                     </button>
                     {expanded && (
-                      <div className="ml-4 space-y-0.5 border-l border-slate-600/40 py-1 pl-2">
+                      <div className="ml-4 space-y-0.5 border-l border-slate-800 py-1 pl-2">
                         {group.items.map((item, index) =>
                           item.href ? (
                             <Link
                               key={`${group.key}-${item.label}-${index}`}
                               href={item.href}
                               onClick={() => setMobileMenuOpen(false)}
-                              className={`block rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
-                                isActive(item.href)
-                                  ? "bg-accent text-accent-ink font-semibold"
-                                  : "text-slate-300 hover:bg-white/8 hover:text-white"
-                              }`}
+                              aria-current={isActive(item.href) ? "page" : undefined}
+                              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ${isActive(item.href) ? sidebarActive : sidebarInactive}`}
                             >
                               {item.label}
+                              {isActive(item.href) && sidebarActiveDot}
                             </Link>
                           ) : (
                             <span
                               key={`${group.key}-${item.label}-${index}`}
-                              className="flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500"
+                              className="flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500"
                             >
                               <span className="truncate">{item.label}</span>
                               <span className="text-[9px] shrink-0">{product.comingSoon}</span>
@@ -877,16 +917,18 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               <Link
                 href="/owner/settings"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`flex min-h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-semibold ${
-                  isActive("/owner/settings") ? "bg-accent text-accent-ink" : "text-slate-300 hover:bg-white/8 hover:text-white"
+                aria-current={isActive("/owner/settings") ? "page" : undefined}
+                className={`flex min-h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium ${
+                  isActive("/owner/settings") ? sidebarActive : sidebarInactive
                 }`}
               >
                 <Settings className="size-4 shrink-0" aria-hidden="true" />
                 <span>{product.settings}</span>
+                {isActive("/owner/settings") && sidebarActiveDot}
               </Link>
             </nav>
 
-            <div className="border-t border-slate-700/60 p-3">
+            <div className="border-t border-slate-800 p-3">
               <button
                 type="button"
                 onClick={logout}
@@ -909,21 +951,19 @@ export function OwnerShell({ children }: { children: ReactNode }) {
           initial={false}
           animate={{ width: collapsed ? 76 : 232 }}
           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-          className="owner-sidebar hidden lg:flex lg:flex-col lg:fixed lg:top-[57px] lg:bottom-0 z-30 border-r border-[#263149] bg-[#131B2E] text-slate-100 overflow-hidden"
+          className="hidden overflow-hidden border-r border-slate-800 bg-[#0F172A] text-slate-100 lg:fixed lg:top-[57px] lg:bottom-0 lg:z-30 lg:flex lg:flex-col"
         >
           {/* Topo da Sidebar: Nome da Empresa e Fuso Horário */}
           <div
             className={[
-              "flex items-center border-b border-slate-700/60 py-3",
+              "flex items-center border-b border-slate-800 py-3",
               collapsed ? "justify-center px-2" : "gap-2.5 px-3",
             ].join(" ")}
           >
             <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
             {!collapsed && (
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-slate-100">
-                  {session.company.companyName}
-                </p>
+                <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings)} /></div>
                 <p className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 truncate mt-0.5">
                   <Globe2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                   {session.company.timezone}
@@ -936,15 +976,15 @@ export function OwnerShell({ children }: { children: ReactNode }) {
           {!collapsed && (
             <Link
               href="/owner/settings"
-              className="mx-2.5 mt-2.5 flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/5 p-2.5 text-left hover:bg-white/10 transition-colors"
+              className="mx-2.5 mt-2.5 flex items-center gap-2.5 rounded-xl border border-slate-800 bg-white/5 p-2.5 text-left hover:bg-white/10 transition-colors"
             >
               <div className="relative grid size-9 shrink-0 place-items-center rounded-full bg-[#25D366] text-white shadow-sm">
                 <WhatsAppIcon className="size-4.5" />
-                <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-red-500 ring-2 ring-[#131B2E]" />
+                <span className="absolute bottom-0 right-0 size-2.5 rounded-full bg-red-500 ring-2 ring-[#0F172A]" />
               </div>
               <div className="min-w-0">
-                <span className="block text-sm font-bold text-white tracking-tight">WhatsApp</span>
-                <span className="block truncate text-xs text-rose-400 font-medium">
+                <span className="block text-sm font-bold tracking-tight">WhatsApp</span>
+                <span className="block truncate text-xs font-medium text-rose-400">
                   {product.whatsappDisconnected}
                 </span>
               </div>
@@ -972,42 +1012,40 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                         setActiveGroup((prev) => (prev === group.key ? null : group.key));
                       }
                     }}
-                    className={`flex min-h-10 w-full items-center rounded-xl text-sm font-semibold transition-colors ${
+                    className={`relative flex min-h-10 w-full items-center rounded-xl text-sm font-medium transition-colors ${
                       collapsed ? "justify-center" : "gap-2.5 px-3"
-                    } ${isSelected ? "text-white bg-white/10" : "text-slate-300 hover:bg-white/8 hover:text-white"}`}
+                    } ${isSelected ? sidebarActive : sidebarInactive}`}
                   >
                     <Icon className="size-4 shrink-0" aria-hidden="true" />
+                    {collapsed && isSelected && <span className="absolute right-2">{sidebarActiveDot}</span>}
                     {!collapsed && (
                       <>
                         <span className="min-w-0 flex-1 truncate text-left">{group.label}</span>
-                        <ChevronDown
+                        {isSelected && !expanded ? sidebarActiveDot : <ChevronDown
                           className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
                           aria-hidden="true"
-                        />
+                        />}
                       </>
                     )}
                   </button>
                   {!collapsed && expanded && (
-                    <div className="ml-4 space-y-0.5 border-l border-slate-600/40 py-1 pl-2">
+                    <div className="ml-4 space-y-0.5 border-l border-slate-800 py-1 pl-2">
                       {group.items.map((item, index) =>
                         item.href ? (
                           <Link
                             key={`${group.key}-${item.label}-${index}`}
                             href={item.href}
                             aria-current={isActive(item.href) ? "page" : undefined}
-                            className={`block rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
-                              isActive(item.href)
-                                ? "bg-accent text-accent-ink font-semibold"
-                                : "text-slate-300 hover:bg-white/8 hover:text-white"
-                            }`}
+                            className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ${isActive(item.href) ? sidebarActive : sidebarInactive}`}
                           >
                             {item.label}
+                            {isActive(item.href) && sidebarActiveDot}
                           </Link>
                         ) : (
                           <span
                             key={`${group.key}-${item.label}-${index}`}
                             title={product.comingSoon}
-                            className="flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-slate-500"
+                            className="flex items-center justify-between gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-500"
                           >
                             <span className="truncate">{item.label}</span>
                             <span className="text-[9px] shrink-0">{product.comingSoon}</span>
@@ -1021,18 +1059,20 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             })}
             <Link
               href="/owner/settings"
-              className={`flex min-h-10 items-center rounded-xl text-sm font-semibold ${
+              aria-current={isActive("/owner/settings") ? "page" : undefined}
+              className={`relative flex min-h-10 items-center rounded-xl text-sm font-medium ${
                 collapsed ? "justify-center" : "gap-2.5 px-3"
-              } ${isActive("/owner/settings") ? "bg-accent text-accent-ink" : "text-slate-300 hover:bg-white/8 hover:text-white"}`}
+              } ${isActive("/owner/settings") ? sidebarActive : sidebarInactive}`}
               title={collapsed ? product.settings : undefined}
             >
               <Settings className="size-4 shrink-0" aria-hidden="true" />
               {!collapsed && product.settings}
+              {isActive("/owner/settings") && (collapsed ? <span className="absolute right-2">{sidebarActiveDot}</span> : sidebarActiveDot)}
             </Link>
           </nav>
 
           {/* Rodapé da Sidebar: Perfil do Usuário e Logout */}
-          <div className="space-y-2 border-t border-slate-600/40 p-3">
+          <div className="space-y-2 border-t border-slate-800 p-3">
             <Link
               href="/owner/settings"
               title={collapsed ? session.name : undefined}
@@ -1055,7 +1095,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               )}
               {!collapsed && (
                 <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-slate-100">
+                  <p className="truncate text-xs font-semibold">
                     {session.name}
                   </p>
                   <p className="truncate text-[11px] text-slate-400">
@@ -1071,7 +1111,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               aria-label={t.common.logout}
               title={collapsed ? t.common.logout : undefined}
               className={[
-                "flex min-h-11 w-full items-center justify-center rounded-xl border border-slate-600/50 bg-white/5 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer",
+                "flex min-h-11 w-full items-center justify-center rounded-xl border border-slate-800 bg-white/5 text-xs font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer",
                 collapsed ? "px-0" : "gap-2 px-3",
               ].join(" ")}
             >

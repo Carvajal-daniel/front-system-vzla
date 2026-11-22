@@ -1,5 +1,6 @@
 "use client";
 
+import { PasswordRecovery } from "@/components/ui/password-recovery";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -233,6 +234,7 @@ export function LoginForm() {
               {t.auth.loginButton}
             </Button>
           </form>
+          <PasswordRecovery />
 
           <p className="text-center text-sm text-[#475569]">
             {t.auth.noAccount}{" "}

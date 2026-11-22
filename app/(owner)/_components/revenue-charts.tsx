@@ -10,18 +10,24 @@ export const goalStageColors = ["#F43F5E", "#F59E0B", "#3B82F6", "#10B981"] as c
 const goalTrackColors = { light: "#E2E8F0", dark: "#1E293B" };
 
 const columnColors = {
-  cobalt: { light: "#7BA8FF", body: "#2563EB", shade: "#1647B8", cap: "#96B9FF" },
+  royal: { light: "#7BA8FF", body: "#2563EB", shade: "#1647B8", cap: "#96B9FF" },
   emerald: { light: "#68E4BC", body: "#10B981", shade: "#087655", cap: "#8CECCF" },
-  rose: { light: "#FF8CAA", body: "#E11D48", shade: "#A71137", cap: "#FFABBF" },
-  velvet: { light: "#B290FF", body: "#7C3AED", shade: "#5220B1", cap: "#CBADFF" },
-  obsidian: { light: "#6EE7F4", body: "#06B6D4", shade: "#087E96", cap: "#A1F3FA" },
+  ruby: { light: "#FF8CAA", body: "#E11D48", shade: "#A71137", cap: "#FFABBF" },
+  violet: { light: "#B290FF", body: "#7C3AED", shade: "#5220B1", cap: "#CBADFF" },
+  cyan: { light: "#67E8F9", body: "#00A8C6", shade: "#087E96", cap: "#A5F3FC" },
+  gold: { light: "#FBBF24", body: "#D97706", shade: "#92400E", cap: "#FDE68A" },
+  terracotta: { light: "#FDBA74", body: "#C2410C", shade: "#9A3412", cap: "#FED7AA" },
+  teal: { light: "#5EEAD4", body: "#0F766E", shade: "#134E4A", cap: "#99F6E4" },
+  indigo: { light: "#A5B4FC", body: "#4338CA", shade: "#3730A3", cap: "#C7D2FE" },
+  graphite: { light: "#CBD5E1", body: "#334155", shade: "#1E293B", cap: "#E2E8F0" },
+  matte: { light: "#6EE7F4", body: "#06B6D4", shade: "#087E96", cap: "#A1F3FA" },
 } satisfies Record<ThemePalette, { light: string; body: string; shade: string; cap: string }>;
 
 const plotHeight = 176;
 export function revenueComparisonColors(palette: ThemePalette, mode: ThemeMode) {
   const swatch = THEME_PALETTES.find((item) => item.id === palette) ?? THEME_PALETTES[0];
   return { current: mode === "dark" ? swatch.swatchDark : swatch.swatchLight,
-    previous: palette === "velvet" ? (mode === "dark" ? "#67E8F9" : "#0E7490") : (mode === "dark" ? "#C4B5FD" : "#7C3AED") };
+    previous: palette === "violet" ? (mode === "dark" ? "#67E8F9" : "#0E7490") : (mode === "dark" ? "#C4B5FD" : "#7C3AED") };
 }
 
 export function smoothPath(points: readonly (readonly [number, number])[]) {

@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowRight,
   Calendar,
   Check,
   Clock,
@@ -12,16 +11,16 @@ import {
   ExternalLink,
   Globe,
   MapPin,
-  MessageCircle,
   Palette,
-  Phone,
   Printer,
   QrCode,
-  Share2,
   Smartphone,
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { displayCompanyRating, formatCompanyAddress } from "@/lib/company-settings";
+import { useCompanySettings } from "@/lib/use-company-settings";
+import { CompanyRating } from "@/components/ui/company-rating";
 import { useSession } from "@/components/ui/auth-guard";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
@@ -30,6 +29,9 @@ export default function BookingLinkPage() {
   const { session } = useSession();
   const company = session.company;
   const companyId = company.id;
+  const { settings } = useCompanySettings(companyId);
+  const address = formatCompanyAddress(settings.address);
+  const [qr, setQr] = useState<{ png: string; svg: string }>();
 
   const [copied, setCopied] = useState(false);
   const [deviceType, setDeviceType] = useState<"iphone" | "android">("iphone");
@@ -41,6 +43,18 @@ export default function BookingLinkPage() {
   const bookingUrl = typeof window !== "undefined"
     ? `${window.location.origin}/book/${encodeURIComponent(companyId)}`
     : `https://seusalao.com.br/book/${companyId}`;
+
+  useEffect(() => {
+    let active = true;
+    void import("qrcode").then(async ({ toDataURL, toString }) => {
+      const options = { width: 640, margin: 4, errorCorrectionLevel: "M" } as const;
+      const [png, svg] = await Promise.all([toDataURL(bookingUrl, options), toString(bookingUrl, { ...options, type: "svg" })]);
+      if (active) setQr({ png, svg });
+    }).catch(() => {
+      if (active) toast.error("Não foi possível gerar o QR Code.");
+    });
+    return () => { active = false; };
+  }, [bookingUrl]);
 
   function handleCopy() {
     if (navigator.clipboard) {
@@ -59,58 +73,39 @@ export default function BookingLinkPage() {
   }
 
   function handlePrintQrCode() {
+    if (!qr) return;
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
       toast.error("Não foi possível abrir a janela de impressão.");
       return;
     }
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>QR Code de Agendamento - ${customTitle}</title>
-          <style>
-            body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 90vh; text-align: center; }
-            h1 { margin-bottom: 8px; font-size: 28px; }
-            p { color: #555; margin-bottom: 24px; font-size: 16px; }
-            .qr-box { border: 4px solid #000; padding: 20px; border-radius: 20px; display: inline-block; }
-            .url { margin-top: 16px; font-size: 14px; color: #2563eb; }
-          </style>
-        </head>
-        <body>
-          <h1>${customTitle}</h1>
-          <p>Aponte a câmera do seu celular para agendar seu horário online!</p>
-          <div class="qr-box">
-            <svg width="240" height="240" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100" height="100" fill="white"/>
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M10 10h30v30H10V10zm5 5h20v20H15V15zm5 5h10v10H20V20zm40-10h30v30H60V10zm5 5h20v20H65V15zm5 5h10v10H70V20zM10 60h30v30H10V60zm5 5h20v20H15V65zm5 5h10v10H20V70zm45-10h10v10H65V60zm15 0h10v10H80V60zm-15 15h10v10H65V75zm15 0h10v10H80V75zm-35-25h10v10H45V50zm15 0h10v10H60V50zm-15 15h10v10H45V65zm15 15h10v10H60V80zm15 5h10v10H75V85z" fill="black"/>
-            </svg>
-          </div>
-          <div class="url">${bookingUrl}</div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 300);
+    printWindow.opener = null;
+    const doc = printWindow.document;
+    doc.title = "QR Code de agendamento";
+    doc.body.style.cssText = "min-height:90vh;display:grid;place-content:center;justify-items:center;text-align:center;font:16px system-ui;padding:24px";
+    const title = doc.createElement("h1");
+    title.textContent = customTitle;
+    const description = doc.createElement("p");
+    description.textContent = "Aponte a câmera do celular para agendar seu horário.";
+    const image = doc.createElement("img");
+    image.alt = "QR Code de agendamento";
+    image.width = 280;
+    image.height = 280;
+    const url = doc.createElement("p");
+    url.textContent = bookingUrl;
+    doc.body.append(title, description, image, url);
+    image.onload = () => { printWindow.focus(); printWindow.print(); };
+    image.src = qr.png;
   }
 
   function handleDownloadSvg() {
-    const svgEl = document.getElementById("booking-qr-code-svg");
-    if (!svgEl) return;
-    const serializer = new XMLSerializer();
-    const source = serializer.serializeToString(svgEl);
-    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `qrcode-agendamento-${companyId}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("QR Code baixado em SVG com sucesso!");
+    if (!qr) return;
+    const url = URL.createObjectURL(new Blob([qr.svg], { type: "image/svg+xml;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `qrcode-agendamento-${companyId}.svg`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return (
@@ -207,23 +202,10 @@ export default function BookingLinkPage() {
 
             <div className="flex flex-col sm:flex-row items-center gap-6 pt-2">
               <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-md">
-                <svg
-                  id="booking-qr-code-svg"
-                  width="140"
-                  height="140"
-                  viewBox="0 0 100 100"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <rect width="100" height="100" fill="white" />
-                  <path
-                    fillRule="evenodd"
-                    clipRule="evenodd"
-                    d="M10 10h30v30H10V10zm5 5h20v20H15V15zm5 5h10v10H20V20zm40-10h30v30H60V10zm5 5h20v20H65V15zm5 5h10v10H70V20zM10 60h30v30H10V60zm5 5h20v20H15V65zm5 5h10v10H20V70zm45-10h10v10H65V60zm15 0h10v10H80V60zm-15 15h10v10H65V75zm15 0h10v10H80V75zm-35-25h10v10H45V50zm15 0h10v10H60V50zm-15 15h10v10H45V65zm15 15h10v10H60V80zm15 5h10v10H75V85z"
-                    fill="black"
-                  />
-                  <rect x="42" y="42" width="16" height="16" rx="4" fill={primaryColor} />
-                </svg>
+                {qr ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img width={140} height={140} alt="QR Code de agendamento" src={qr.png} />
+                ) : <div className="size-[140px]" aria-hidden="true" />}
               </div>
 
               <div className="flex-1 space-y-3 text-center sm:text-left">
@@ -238,6 +220,7 @@ export default function BookingLinkPage() {
                   <button
                     type="button"
                     onClick={handlePrintQrCode}
+                    disabled={!qr}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink hover:text-accent hover:border-accent transition-colors cursor-pointer"
                   >
                     <Printer size={13} />
@@ -247,6 +230,7 @@ export default function BookingLinkPage() {
                   <button
                     type="button"
                     onClick={handleDownloadSvg}
+                    disabled={!qr}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink hover:text-accent hover:border-accent transition-colors cursor-pointer"
                   >
                     <Download size={13} />
@@ -406,11 +390,14 @@ export default function BookingLinkPage() {
                   <CompanyAvatar url={company.avatarUrl} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white tracking-tight">{customTitle}</h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5 flex items-center justify-center gap-1">
-                    <MapPin size={10} style={{ color: primaryColor }} />
-                    <span>São Paulo, SP · Aberto Hoje</span>
-                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <h3 className="text-base font-bold text-white tracking-tight">{customTitle}</h3>
+                    <CompanyRating rating={displayCompanyRating(settings)} />
+                  </div>
+                  {address && <p className="mt-0.5 flex items-start justify-center gap-1 text-[11px] text-slate-400">
+                    <MapPin size={12} className="mt-0.5 shrink-0" style={{ color: primaryColor }} />
+                    <span>{address}</span>
+                  </p>}
                 </div>
 
                 {instagram && (

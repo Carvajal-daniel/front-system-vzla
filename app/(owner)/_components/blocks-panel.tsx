@@ -11,8 +11,6 @@ import {
 import { useLocale } from "@/lib/i18n/locale-context";
 import type {
   AffectedAppointment,
-  CreateScheduleBlockPayload,
-  CreateScheduleBlockResponse,
   ScheduleBlock,
 } from "@/lib/types/appointment";
 import type { Collaborator, CollaboratorsListResponse } from "@/lib/types/team";
@@ -22,9 +20,8 @@ import { CardListSkeleton } from "@/components/ui/card-list-skeleton";
 import { ConflictAlert } from "@/components/ui/conflict-alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Modal } from "@/components/ui/modal";
+import { AgendaBlockForm } from "@/components/ui/agenda-block-form";
+import { AgendaDialog } from "@/components/ui/agenda-controls";
 import { StatusBadge } from "@/components/ui/status-badge";
 
 export function BlocksPanel() {
@@ -46,13 +43,6 @@ export function BlocksPanel() {
   >([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [collaboratorId, setCollaboratorId] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [startTime, setStartTime] = useState("12:00");
-  const [endDate, setEndDate] = useState("");
-  const [endTime, setEndTime] = useState("13:00");
-  const [reason, setReason] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -77,7 +67,6 @@ export function BlocksPanel() {
 
   useEffect(() => {
     let active = true;
-    const today = getTodayIsoDateInTimezone(timezone);
     void (async () => {
       try {
         const [blocksRes, collabsRes] = await Promise.all([
@@ -87,8 +76,6 @@ export function BlocksPanel() {
           }),
         ]);
         if (!active) return;
-        setStartDate(today);
-        setEndDate(today);
         setBlocks(Array.isArray(blocksRes) ? blocksRes : []);
         setCollaborators(collabsRes.collaborators ?? []);
       } catch (err) {
@@ -103,7 +90,7 @@ export function BlocksPanel() {
     return () => {
       active = false;
     };
-  }, [timezone, t.errors.networkDescription]);
+  }, [t.errors.networkDescription]);
 
   const collaboratorMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -112,13 +99,6 @@ export function BlocksPanel() {
     }
     return map;
   }, [collaborators]);
-
-  // Pré-seleciona o colaborador no formulário quando o filtro via query param estiver ativo
-  useEffect(() => {
-    if (filterCollaboratorId) {
-      setCollaboratorId(filterCollaboratorId);
-    }
-  }, [filterCollaboratorId]);
 
   const filteredBlocks = useMemo(() => {
     if (!filterCollaboratorId) return blocks;
@@ -136,57 +116,11 @@ export function BlocksPanel() {
   }, [filteredBlocks]);
 
   const handleOpenNewBlock = () => {
-    setFormError(null);
-    setCollaboratorId(filterCollaboratorId || "");
+    setAffectedAppointments([]);
     setDrawerOpen(true);
   };
 
-  const handleClearCollaboratorFilter = () => {
-    setCollaboratorId("");
-    router.replace("/owner/blocks");
-  };
-
-  const handleCreateBlock = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setFormError(null);
-
-    const startIso = new Date(`${startDate}T${startTime}:00`).toISOString();
-    const endIso = new Date(`${endDate}T${endTime}:00`).toISOString();
-
-    if (new Date(startIso) >= new Date(endIso)) {
-      setFormError(t.errors.invalidTimeRange);
-      return;
-    }
-
-    setSubmitting(true);
-    const payload: CreateScheduleBlockPayload = {
-      collaboratorId: collaboratorId ? collaboratorId : null,
-      startsAt: startIso,
-      endsAt: endIso,
-      reason: reason.trim() || null,
-    };
-
-    try {
-      const res = await apiRequest<CreateScheduleBlockResponse>(
-        "/schedule-blocks",
-        {
-          method: "POST",
-          auth: true,
-          body: payload,
-        },
-      );
-      setBlocks((prev) => [res.block, ...prev]);
-      setAffectedAppointments(res.affectedAppointments ?? []);
-      setDrawerOpen(false);
-      setReason("");
-    } catch (err) {
-      setFormError(
-        err instanceof ApiError ? err.message : t.errors.unexpectedDescription,
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const handleClearCollaboratorFilter = () => router.replace("/owner/blocks");
 
   const handleDelete = async (blockId: string) => {
     setDeletingId(blockId);
@@ -358,138 +292,24 @@ export function BlocksPanel() {
         </div>
       )}
 
-      <Modal
-        open={drawerOpen}
-        title={t.owner.newBlock}
-        maxWidth="max-w-lg"
-        onClose={() => setDrawerOpen(false)}
-      >
-        <form onSubmit={handleCreateBlock} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="block-collab">{t.booking.stepProfessional}</Label>
-            <select
-              id="block-collab"
-              value={collaboratorId}
-              onChange={(e) => setCollaboratorId(e.target.value)}
-              className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink"
-            >
-              <option value="">{t.owner.globalBlock}</option>
-              {collaborators.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            {collaborators.find((c) => c.id === collaboratorId) && (
-              <div className="flex items-center gap-2.5 rounded-xl border border-border-subtle bg-subtle/40 p-2">
-                {collaborators.find((c) => c.id === collaboratorId)?.avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={collaborators.find((c) => c.id === collaboratorId)!.avatarUrl!}
-                    alt={collaborators.find((c) => c.id === collaboratorId)!.name}
-                    className="h-8 w-8 shrink-0 rounded-full object-cover border border-border-subtle"
-                  />
-                ) : (
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent text-xs font-semibold">
-                    {collaborators.find((c) => c.id === collaboratorId)!.name.slice(0, 2).toUpperCase()}
-                  </span>
-                )}
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-ink truncate">
-                    {collaborators.find((c) => c.id === collaboratorId)!.name}
-                  </p>
-                  {collaborators.find((c) => c.id === collaboratorId)!.specialty && (
-                    <p className="text-[11px] text-ink-secondary truncate">
-                      {collaborators.find((c) => c.id === collaboratorId)!.specialty}
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="block-start-date">{t.common.startDate}</Label>
-              <Input
-                id="block-start-date"
-                type="date"
-                required
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3 tabular-nums"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="block-start-time">{t.common.startTime}</Label>
-              <Input
-                id="block-start-time"
-                type="time"
-                required
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3 tabular-nums"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="block-end-date">{t.common.endDate}</Label>
-              <Input
-                id="block-end-date"
-                type="date"
-                required
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3 tabular-nums"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="block-end-time">{t.common.endTime}</Label>
-              <Input
-                id="block-end-time"
-                type="time"
-                required
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="min-h-11 rounded-xl border-border-strong bg-surface px-3 tabular-nums"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="block-reason">{t.common.reasonOptional}</Label>
-            <Input
-              id="block-reason"
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="min-h-11 rounded-xl border-border-strong bg-surface px-3.5"
-            />
-          </div>
-
-          {formError && (
-            <p
-              role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs font-medium text-[var(--status-danger-ink)]"
-            >
-              {formError}
-            </p>
-          )}
-
-          <Button
-            type="submit"
-            disabled={submitting}
-            className="min-h-11 w-full rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
-          >
-            {submitting && (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            )}
-            {t.common.save}
-          </Button>
-        </form>
-      </Modal>
+      {drawerOpen && (
+        <AgendaDialog title={t.owner.newBlock} closeDisabled={submitting} onClose={() => setDrawerOpen(false)}>
+          <AgendaBlockForm
+            company={session.company}
+            collaborators={collaborators}
+            initialDate={getTodayIsoDateInTimezone(timezone)}
+            initialPersonId={filterCollaboratorId || undefined}
+            onClose={() => setDrawerOpen(false)}
+            onSavingChange={setSubmitting}
+            onCreated={(created) => {
+              setBlocks((current) => [...created.map((result) => result.block).reverse(), ...current]);
+              setAffectedAppointments((current) => Array.from(new Map(
+                [...current, ...created.flatMap((result) => result.affectedAppointments ?? [])].map((row) => [row.id, row]),
+              ).values()));
+            }}
+          />
+        </AgendaDialog>
+      )}
     </div>
   );
 }

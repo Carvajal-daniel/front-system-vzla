@@ -13,6 +13,11 @@ import {
   User,
 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
+import { displayCompanyRating, collectedClientFields, defaultCompanySettings, emptyClientFields, formatCompanyAddress, type CompanySettings } from "@/lib/company-settings";
+import { useCompanySettings } from "@/lib/use-company-settings";
+import { ClientDataFields } from "@/components/ui/client-data-fields";
+import { CompanyRating } from "@/components/ui/company-rating";
+import { announcePublicBooking } from "@/lib/agenda-sync";
 import {
   formatDateInTimezone,
   formatDateTimeInTimezone,
@@ -24,7 +29,13 @@ import {
   isValidInternationalPhone,
 } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
-import { registerClientIfMissing } from "@/lib/use-clients";
+import {
+  clientWhatsAppUrl,
+  getClientBookingStatus,
+  getCompanyBookingPhone,
+  registerClientIfMissing,
+  subscribeToClientStorage,
+} from "@/lib/use-clients";
 import type { Appointment } from "@/lib/types/appointment";
 import type {
   AvailabilitySlot,
@@ -45,14 +56,18 @@ import { PhoneInput } from "@/components/ui/phone-input";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface BookingWizardProps {
-  company: PublicCompany;
+  company: PublicCompany & { whatsapp?: string | null };
   services: PublicService[];
+  initialSettings?: CompanySettings;
 }
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
-export function BookingWizard({ company, services }: BookingWizardProps) {
+export function BookingWizard({ company, services, initialSettings = defaultCompanySettings }: BookingWizardProps) {
   const { locale, t } = useLocale();
+  const { settings } = useCompanySettings(company.id, initialSettings);
+  const address = formatCompanyAddress(settings.address);
+  const [clientDetails, setClientDetails] = useState(emptyClientFields);
 
   const [step, setStep] = useState<Step>(1);
   const [selectedService, setSelectedService] = useState<PublicService | null>(
@@ -72,16 +87,33 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
   );
 
   const [clientName, setClientName] = useState("");
-  const [countryCode, setCountryCode] = useState<PhoneCountryCode>("+55");
+  const [countryCode, setCountryCode] = useState<PhoneCountryCode>(company.timezone === "America/Caracas" ? "+58" : "+55");
   const [clientPhoneDigits, setClientPhoneDigits] = useState("");
+  const [clientStatus, setClientStatus] = useState({ isBlocked: false, hasDebt: false });
+  const [companyWhatsApp, setCompanyWhatsApp] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [cancelLink, setCancelLink] = useState("");
   const [confirmedAppointment, setConfirmedAppointment] =
     useState<Appointment | null>(null);
   const [confirmedCollaboratorName, setConfirmedCollaboratorName] =
     useState<string>("");
 
   useEffect(() => () => availabilityRequest.current?.abort(), []);
+
+  const bookingPhone = isValidInternationalPhone(countryCode, clientPhoneDigits)
+    ? formatPhoneToE164(countryCode, clientPhoneDigits)
+    : "";
+  useEffect(() => {
+    if (step !== 4) return;
+    const check = () => {
+      setClientStatus(getClientBookingStatus(company.id, bookingPhone));
+      const companyPhone = company.whatsapp || getCompanyBookingPhone(company.id);
+      setCompanyWhatsApp(clientWhatsAppUrl(companyPhone, company.timezone === "America/Caracas" ? "+58" : "+55"));
+    };
+    check();
+    return subscribeToClientStorage(check);
+  }, [step, company.id, company.whatsapp, company.timezone, bookingPhone]);
 
   const fetchAvailability = useCallback(
     async (serviceId: string, date: string, collaboratorId: string | null) => {
@@ -161,7 +193,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
 
   const handleConfirmBooking = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedService || !selectedSlot) return;
+    if (!selectedService || !selectedSlot || submitting) return;
 
     const trimmedName = clientName.trim();
     if (trimmedName.length < 2) {
@@ -169,10 +201,14 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
       return;
     }
 
-    if (!isValidInternationalPhone(countryCode, clientPhoneDigits)) {
+    if (!bookingPhone) {
       setFormError(t.errors.invalidPhone);
       return;
     }
+
+    const currentClientStatus = getClientBookingStatus(company.id, bookingPhone);
+    setClientStatus(currentClientStatus);
+    if (currentClientStatus.isBlocked) return;
 
     setSubmitting(true);
     setFormError(null);
@@ -182,11 +218,12 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
       collaboratorId: selectedSlot.collaboratorId,
       startsAt: selectedSlot.startsAt,
       clientName: trimmedName,
-      clientPhone: formatPhoneToE164(countryCode, clientPhoneDigits),
+      clientPhone: bookingPhone,
+      clientData: collectedClientFields(clientDetails, settings.clientFields),
     };
 
     try {
-      const created = await apiRequest<Appointment>(
+      const created = await apiRequest<Appointment & { cancellationToken?: string }>(
         `/public/companies/${encodeURIComponent(company.id)}/appointments`,
         {
           method: "POST",
@@ -194,12 +231,14 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
           body: payload,
         },
       );
+      announcePublicBooking(company.id, created.id);
       // Registra automaticamente o cliente na base local da empresa caso ainda não exista pelo telefone
       registerClientIfMissing(company.id, {
         name: created.clientName || trimmedName,
         phone: created.clientPhone || payload.clientPhone,
       });
       setConfirmedAppointment(created);
+      setCancelLink(created.cancellationToken ? `/book/${company.id}/cancel?appointment=${created.id}#${created.cancellationToken}` : "");
       setConfirmedCollaboratorName(selectedSlot.collaboratorName);
       setStep(5);
     } catch (error) {
@@ -231,8 +270,10 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
     setSelectedSlot(null);
     setClientName("");
     setClientPhoneDigits("");
+    setClientDetails(emptyClientFields);
     setFormError(null);
     setConfirmedAppointment(null);
+    setCancelLink("");
     setConfirmedCollaboratorName("");
   };
 
@@ -271,9 +312,14 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
               <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-accent">
                 {t.common.appName}
               </p>
-              <h1 className="mt-0.5 text-display-md text-ink truncate">
-                {company.companyName}
-              </h1>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2">
+                <h1 className="min-w-0 break-words text-display-md text-ink">{company.companyName}</h1>
+                <CompanyRating rating={displayCompanyRating(settings)} />
+              </div>
+              {address && <address className="mt-1 break-words text-xs not-italic text-ink-secondary">{address}</address>}
+              {settings.googleMapsUrl && <a href={settings.googleMapsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex min-h-9 items-center text-xs font-semibold text-ink underline underline-offset-4">
+                {locale === "es" ? "Cómo llegar en Google Maps" : "Como chegar no Google Maps"}
+              </a>}
               <p className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-ink-muted">
                 <Globe2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span>
@@ -630,6 +676,25 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
                     onCountryCodeChange={setCountryCode}
                     onChange={setClientPhoneDigits}
                   />
+                  <ClientDataFields modes={settings.clientFields} values={clientDetails} onChange={setClientDetails}
+                    today={getTodayIsoDateInTimezone(company.timezone)} fieldClass="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm" />
+
+                  {clientStatus.isBlocked ? (
+                    <div role="alert" className="space-y-2 rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3.5 py-2.5 text-xs text-[var(--status-danger-ink)]">
+                      <p>{locale === "es"
+                        ? "No pudimos completar tu cita. Tu registro tiene una restricción. Por favor, comunícate directamente con la empresa."
+                        : "Não foi possível concluir seu agendamento. Seu cadastro possui uma restrição/bloqueio — por favor, entre em contato diretamente com a empresa."}</p>
+                      {companyWhatsApp && (
+                        <a href={companyWhatsApp} target="_blank" rel="noopener noreferrer" className="inline-flex rounded-lg border border-current px-2.5 py-1.5 font-semibold hover:underline">
+                          {locale === "es" ? "Contactar por WhatsApp" : "Entrar em contato pelo WhatsApp"}
+                        </a>
+                      )}
+                    </div>
+                  ) : clientStatus.hasDebt && (
+                    <p role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-300">
+                      {locale === "es" ? "Hay un saldo pendiente que puedes abonar en el establecimiento." : "Consta uma pendência financeira em aberto para acerto no estabelecimento."}
+                    </p>
+                  )}
 
                   {formError && (
                     <p
@@ -642,7 +707,7 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
 
                   <Button
                     type="submit"
-                    disabled={submitting}
+                    disabled={submitting || clientStatus.isBlocked}
                     className="min-h-11 w-full rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
                   >
                     {submitting && (
@@ -708,6 +773,11 @@ export function BookingWizard({ company, services }: BookingWizardProps) {
           </Card>
         )}
       </div>
+
+      {step === 5 && cancelLink && <div className="mx-auto mt-5 max-w-2xl px-4">
+        <a className="inline-flex min-h-11 items-center text-sm font-semibold text-accent underline" href={cancelLink}>{locale === "es" ? "Cancelar reserva" : "Cancelar agendamento"}</a>
+      </div>}
+      {address && <footer className="mx-auto mt-6 max-w-2xl px-4 text-sm text-ink-secondary"><address className="not-italic">{address}</address></footer>}
 
       {/* Resumo fixo na zona do polegar (mobile) na etapa de seleção de horário */}
       {step === 3 && selectedService && selectedSlot && (

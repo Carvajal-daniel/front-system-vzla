@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { ApiError, apiRequest } from "@/lib/api-client";
+import { defaultCompanySettings, type CompanySettings } from "@/lib/company-settings";
 import type { PublicCatalogResponse } from "@/lib/types/public-booking";
 import { BookingWizard } from "./booking-wizard";
 
@@ -17,11 +18,16 @@ export async function PublicCatalogLoader({
   const { companyId } = await params;
 
   let catalog: PublicCatalogResponse;
+  let settings: CompanySettings;
   try {
-    catalog = await apiRequest<PublicCatalogResponse>(
-      `/public/companies/${encodeURIComponent(companyId)}/services`,
-      { auth: false, cache: "no-store" },
-    );
+    const path = `/public/companies/${encodeURIComponent(companyId)}`;
+    [catalog, settings] = await Promise.all([
+      apiRequest<PublicCatalogResponse>(`${path}/services`, { auth: false }),
+      apiRequest<CompanySettings>(`${path}/settings`, { auth: false }).catch((error) => {
+        if (error instanceof ApiError && error.status === 404) return defaultCompanySettings;
+        throw error;
+      }),
+    ]);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
       notFound();
@@ -30,6 +36,6 @@ export async function PublicCatalogLoader({
   }
 
   return (
-    <BookingWizard company={catalog.company} services={catalog.services} />
+    <BookingWizard company={catalog.company} services={catalog.services} initialSettings={{ ...defaultCompanySettings, ...settings }} />
   );
 }

@@ -17,7 +17,7 @@ import type { Collaborator } from "@/lib/types/team";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
 import { GoalGauge, goalStageColors, RevenueColumns, RevenueComparisonChart, revenueComparisonColors, smoothPath } from "./revenue-charts";
 
-type GoalResponse = { monthlyGoalInCents: number; currency: "BRL" | "USD" };
+type GoalResponse = { monthlyGoalInCents: number; currency: FinanceSummaryResponse["currency"] };
 type DashboardData = { current: FinanceSummaryResponse; previous: FinanceSummaryResponse; months: FinanceSummaryResponse[]; appointments: Appointment[]; collaborators: Collaborator[]; goal: GoalResponse };
 type DashboardPeriod = "week" | "month" | "30days";
 

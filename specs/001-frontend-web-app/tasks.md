@@ -162,6 +162,12 @@ description: "Actionable, dependency-ordered task list for Etapa 4 — Frontend 
 
 ---
 
+## Revisão financeira independente
+
+- [ ] Auditar o saldo devedor da Base de Clientes. Em `lib/use-clients.ts`, o resumo de pagamentos pode retornar saldo em aberto antes da conclusão de um agendamento confirmado. Se o resumo não estiver disponível, o preço do serviço pode entrar no saldo de agendamentos não concluídos, inclusive faltas. Isso permite exibir saldo devedor para clientes sem visitas concluídas e sem total gasto. Na revisão, conferir a origem do saldo por cobrança e o vínculo com clientes, incluindo fiado avulso, pagamentos parciais e integrais, estornos e duplicidades. Qualquer mudança financeira depende de aprovação específica.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

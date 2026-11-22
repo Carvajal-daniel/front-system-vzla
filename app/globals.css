@@ -13,31 +13,31 @@
 }
 
 [data-agenda-status="PENDING"] {
-  --appointment-accent: #eab308;
-  --appointment-ink: #713f12;
-  --appointment-dark: #fde047;
+  --appointment-accent: #b45309;
+  --appointment-ink: #92400e;
+  --appointment-dark: #fcd34d;
 }
 
 [data-agenda-status="CANCELED"] {
-  --appointment-accent: #ef4444;
+  --appointment-accent: #b91c1c;
   --appointment-ink: #991b1b;
   --appointment-dark: #fca5a5;
 }
 
 [data-agenda-status="NO_SHOW"] {
-  --appointment-accent: #f97316;
+  --appointment-accent: #c2410c;
   --appointment-ink: #9a3412;
   --appointment-dark: #fdba74;
 }
 
 [data-agenda-status="COMPLETED"] {
-  --appointment-accent: #3b82f6;
+  --appointment-accent: #1d4ed8;
   --appointment-ink: #1e40af;
   --appointment-dark: #93c5fd;
 }
 
 [data-agenda-status] {
-  --appointment-fill: color-mix(in srgb, var(--appointment-accent) 13%, var(--surface-elevated));
+  --appointment-fill: color-mix(in srgb, var(--appointment-accent) 17%, var(--surface-elevated));
 }
 
 .dark [data-agenda-status] {
@@ -78,8 +78,7 @@
  * Design System Clean & Minimalista
  * - Landing Page (/) e Auth (/login, /register): identidade editorial fixa
  *   monocromática de alto contraste inspirada em front.jpg.
- * - Dashboards (/owner/* e /collaborator/*): wrapper com data-palette (5 paletas
- *   sem tons de marrom: cobalt, rose, emerald, velvet, obsidian) e classe .dark.
+ * - Dashboards (/owner/* e /collaborator/*): wrapper com data-palette e classe .dark.
  * ========================================================================== */
 :root {
   --surface-canvas: #f8fafc;
@@ -225,6 +224,7 @@
 }
 .dark.dashboard-shell,
 .dashboard-shell[data-theme="dark"] {
+  color-scheme: dark;
   --surface-canvas: #09090b;
   --surface-elevated: #111114;
   --surface-subtle: #1c1c21;
@@ -261,9 +261,93 @@
 }
 
 /* ============================================================================
- * 5 Paletas Exclusivas dos Dashboards (sem tons de marrom, contraste WCAG AA)
+ * Paletas dos dashboards
  * ========================================================================== */
-[data-palette="cobalt"] {
+[data-palette="cyan"] {
+  --accent-primary: #00A8C6;
+  --accent-primary-hover: color-mix(in srgb, #00A8C6, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #00A8C6, #fff 86%);
+  --accent-ink: #09090b;
+}
+.dark[data-palette="cyan"] {
+  --accent-primary: #67E8F9;
+  --accent-primary-hover: color-mix(in srgb, #67E8F9, #fff 22%);
+  --accent-soft: color-mix(in srgb, #67E8F9, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+[data-palette="gold"] {
+  --accent-primary: #D97706;
+  --accent-primary-hover: color-mix(in srgb, #D97706, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #D97706, #fff 86%);
+  --accent-ink: #09090b;
+}
+.dark[data-palette="gold"] {
+  --accent-primary: #FBBF24;
+  --accent-primary-hover: color-mix(in srgb, #FBBF24, #fff 22%);
+  --accent-soft: color-mix(in srgb, #FBBF24, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+[data-palette="terracotta"] {
+  --accent-primary: #C2410C;
+  --accent-primary-hover: color-mix(in srgb, #C2410C, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #C2410C, #fff 86%);
+  --accent-ink: #fff;
+}
+.dark[data-palette="terracotta"] {
+  --accent-primary: #FDBA74;
+  --accent-primary-hover: color-mix(in srgb, #FDBA74, #fff 22%);
+  --accent-soft: color-mix(in srgb, #FDBA74, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+[data-palette="teal"] {
+  --accent-primary: #0F766E;
+  --accent-primary-hover: color-mix(in srgb, #0F766E, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #0F766E, #fff 86%);
+  --accent-ink: #fff;
+}
+.dark[data-palette="teal"] {
+  --accent-primary: #5EEAD4;
+  --accent-primary-hover: color-mix(in srgb, #5EEAD4, #fff 22%);
+  --accent-soft: color-mix(in srgb, #5EEAD4, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+[data-palette="indigo"] {
+  --accent-primary: #4338CA;
+  --accent-primary-hover: color-mix(in srgb, #4338CA, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #4338CA, #fff 86%);
+  --accent-ink: #fff;
+}
+.dark[data-palette="indigo"] {
+  --accent-primary: #A5B4FC;
+  --accent-primary-hover: color-mix(in srgb, #A5B4FC, #fff 22%);
+  --accent-soft: color-mix(in srgb, #A5B4FC, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+[data-palette="graphite"] {
+  --accent-primary: #334155;
+  --accent-primary-hover: color-mix(in srgb, #334155, #09090b 16%);
+  --accent-soft: color-mix(in srgb, #334155, #fff 86%);
+  --accent-ink: #fff;
+}
+.dark[data-palette="graphite"] {
+  --accent-primary: #CBD5E1;
+  --accent-primary-hover: color-mix(in srgb, #CBD5E1, #fff 22%);
+  --accent-soft: color-mix(in srgb, #CBD5E1, #09090b 82%);
+  --accent-ink: #09090b;
+}
+
+:is([data-palette="cyan"], [data-palette="gold"], [data-palette="terracotta"], [data-palette="teal"], [data-palette="indigo"], [data-palette="graphite"]) {
+  --primary: var(--accent-primary);
+  --primary-foreground: var(--accent-ink);
+  --ring: var(--accent-primary);
+}
+
+[data-palette="royal"] {
   --accent-primary: #1d4ed8;
   --accent-primary-hover: #1e40af;
   --accent-soft: #dbeafe;
@@ -272,7 +356,7 @@
   --primary-foreground: var(--accent-ink);
   --ring: var(--accent-primary);
 }
-.dark[data-palette="cobalt"] {
+.dark[data-palette="royal"] {
   --accent-primary: #60a5fa;
   --accent-primary-hover: #93c5fd;
   --accent-soft: #172554;
@@ -282,7 +366,7 @@
   --ring: var(--accent-primary);
 }
 
-[data-palette="rose"] {
+[data-palette="ruby"] {
   --accent-primary: #be185d;
   --accent-primary-hover: #9d174d;
   --accent-soft: #fce7f3;
@@ -291,7 +375,7 @@
   --primary-foreground: var(--accent-ink);
   --ring: var(--accent-primary);
 }
-.dark[data-palette="rose"] {
+.dark[data-palette="ruby"] {
   --accent-primary: #f472b6;
   --accent-primary-hover: #f9a8d4;
   --accent-soft: #500724;
@@ -320,7 +404,7 @@
   --ring: var(--accent-primary);
 }
 
-[data-palette="velvet"] {
+[data-palette="violet"] {
   --accent-primary: #6d28d9;
   --accent-primary-hover: #5b21b6;
   --accent-soft: #ede9fe;
@@ -329,7 +413,7 @@
   --primary-foreground: var(--accent-ink);
   --ring: var(--accent-primary);
 }
-.dark[data-palette="velvet"] {
+.dark[data-palette="violet"] {
   --accent-primary: #a78bfa;
   --accent-primary-hover: #c4b5fd;
   --accent-soft: #2e1065;
@@ -339,7 +423,7 @@
   --ring: var(--accent-primary);
 }
 
-[data-palette="obsidian"] {
+[data-palette="matte"] {
   --accent-primary: #18181b;
   --accent-primary-hover: #27272a;
   --accent-soft: #f4f4f5;
@@ -348,7 +432,7 @@
   --primary-foreground: var(--accent-ink);
   --ring: var(--accent-primary);
 }
-.dark[data-palette="obsidian"] {
+.dark[data-palette="matte"] {
   --accent-primary: #fafafa;
   --accent-primary-hover: #e4e4e7;
   --accent-soft: #27272a;

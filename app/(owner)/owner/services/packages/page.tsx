@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useCompanySettings } from "@/lib/use-company-settings";
 import { apiRequest } from "@/lib/api-client";
 import { formatDateTimeInTimezone, formatPriceFromCents } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
@@ -33,6 +34,8 @@ import {
 
 export default function ServicePackagesPage() {
   const { session } = useSession();
+  const { settings } = useCompanySettings(session.company.id, undefined, true, true);
+  const salesEnabled = settings.packageSales?.enabled ?? true;
   const { locale } = useLocale();
   const timezone = session.company.timezone;
   const currency = session.company.currency ?? "BRL";
@@ -139,12 +142,12 @@ export default function ServicePackagesPage() {
   const handleOpenSell = (pkg: ServicePackage) => {
     setSelectedPkgForSale(pkg);
     setSelectedClientId(clients[0]?.id || "");
-    setSellModalOpen(true);
+    if (salesEnabled) setSellModalOpen(true);
   };
 
   const handleConfirmSell = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPkgForSale || !selectedClientId) return;
+    if (!salesEnabled || !selectedPkgForSale || !selectedClientId) return;
 
     const client = clients.find((c) => c.id === selectedClientId);
     if (!client) {
@@ -284,6 +287,8 @@ export default function ServicePackagesPage() {
                     <button
                       type="button"
                       onClick={() => handleOpenSell(pkg)}
+                      disabled={!salesEnabled}
+                      title={!salesEnabled ? "Venda de pacotes desativada em Configurações" : undefined}
                       className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors shadow-xs"
                     >
                       <ShoppingCart size={13} />

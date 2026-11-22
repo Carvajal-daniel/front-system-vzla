@@ -210,7 +210,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
           collapsed ? "md:pl-[76px]" : "md:pl-[260px]",
         ].join(" ")}
       >
-        <header className="sticky top-0 z-20 border-b border-border-subtle bg-surface/90 backdrop-blur-md">
+        <header data-shell-header className="sticky top-0 z-20 border-b border-border-subtle bg-surface/90 backdrop-blur-md">
           <div className="flex w-full items-center justify-between gap-3 px-4 py-3 lg:px-6">
             <div className="min-w-0">
               <p className="text-xs font-medium text-ink-muted md:hidden truncate">

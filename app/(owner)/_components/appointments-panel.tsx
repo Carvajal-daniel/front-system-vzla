@@ -6,5 +6,9 @@ import { ReceiptDialog } from "./receipt-dialog";
 
 export function AppointmentsPanel() {
   const { session } = useSession();
-  return <AgendaWorkspace session={session} renderReceipt={(props) => <ReceiptDialog {...props} />} />;
+  return (
+    <div className="-mt-6">
+      <AgendaWorkspace session={session} renderReceipt={(props) => <ReceiptDialog {...props} />} />
+    </div>
+  );
 }

@@ -21,7 +21,7 @@ export function moneyCents(value: string) {
   return amount <= maxInt ? amount : null;
 }
 
-function dateValue(value: string) {
+export function dateValue(value: string) {
   const parts = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
   const iso = parts ? parts[3] + "-" + parts[2].padStart(2, "0") + "-" + parts[1].padStart(2, "0") : value;
   if (!/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
@@ -56,7 +56,7 @@ export function templateRows(kind: ImportKind, t: Dictionary, today: string) {
   ])];
 }
 
-function readCsv(text: string) {
+export function readCsv(text: string) {
   const source = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
   const first = source.split("\n", 1)[0].replace(/"(?:""|[^"])*"/g, "");
   const separator = [";", ",", "\t"].sort((a, b) => first.split(b).length - first.split(a).length)[0];

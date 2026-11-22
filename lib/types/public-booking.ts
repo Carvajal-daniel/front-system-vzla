@@ -1,6 +1,7 @@
+import type { ClientFieldValues } from "@/lib/company-settings";
 import type { Currency } from "./finance";
 
-export type PhoneCountryCode = "+55" | "+58";
+export type PhoneCountryCode = "+55" | "+58" | "+1" | "+34" | "+351";
 
 export interface PublicCompany {
   id: string;
@@ -63,6 +64,7 @@ export interface PublicBookingFormInput {
   clientName: string;
   countryCode: PhoneCountryCode;
   clientPhone: string;
+  clientData?: Partial<ClientFieldValues>;
 }
 
 /**
@@ -75,4 +77,5 @@ export interface CreatePublicAppointmentPayload {
   startsAt: string;
   clientName: string;
   clientPhone: string;
+  clientData?: Partial<ClientFieldValues>;
 }

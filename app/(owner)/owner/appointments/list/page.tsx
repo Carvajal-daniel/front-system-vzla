@@ -1,24 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
-  CalendarDays,
-  CheckCircle2,
-  Clock,
-  Clock3,
   Download,
-  Filter,
   Loader2,
   RefreshCw,
   Search,
-  UserX,
-  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiRequest } from "@/lib/api-client";
 import { formatDateTimeInTimezone, formatPrice, formatTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
+import { AgendaStatusBadge } from "@/components/ui/agenda-status";
 import { useSession } from "@/components/ui/auth-guard";
 import type { Appointment, AppointmentStatus } from "@/lib/types/appointment";
 import type { Collaborator } from "@/lib/types/team";
@@ -38,32 +31,21 @@ function formatIsoInTimezone(date: Date, timezone: string): string {
   return `${year}-${month}-${day}`;
 }
 
-const statusBadgeStyles: Record<AppointmentStatus, { label: string; className: string }> = {
-  COMPLETED: {
-    label: "Concluído",
-    className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  },
-  CONFIRMED: {
-    label: "Confirmado",
-    className: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  },
-  PENDING: {
-    label: "Agendado / Pendente",
-    className: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  },
-  CANCELED: {
-    label: "Cancelado",
-    className: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30",
-  },
-  NO_SHOW: {
-    label: "Não Compareceu",
-    className: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  },
+const statusLabels: Record<AppointmentStatus, string> = {
+  COMPLETED: "Concluído",
+  CONFIRMED: "Confirmado",
+  PENDING: "Agendado / Pendente",
+  CANCELED: "Cancelado",
+  NO_SHOW: "Não Compareceu",
 };
+
+const focusClass = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+const filterControl = `h-10 min-w-0 rounded-lg border border-border-strong bg-surface px-3 text-sm text-ink ${focusClass}`;
+const dateControl = `${filterControl} dark:[color-scheme:dark]`;
 
 export default function AppointmentsListPage() {
   const { session } = useSession();
-  const { locale, t } = useLocale();
+  const { locale } = useLocale();
   const timezone = session.company.timezone;
   const currency = session.company.currency ?? "BRL";
 
@@ -155,7 +137,7 @@ export default function AppointmentsListPage() {
       const timeStr = formatTimeInTimezone(app.startsAt, timezone, locale);
       const collab = collaboratorMap.get(app.collaboratorId);
       const priceStr = (app.servicePriceInCentsSnapshot / 100).toFixed(2);
-      const statusLabel = statusBadgeStyles[app.status]?.label ?? app.status;
+      const statusLabel = Object.hasOwn(statusLabels, app.status) ? statusLabels[app.status] : app.status;
 
       return [
         `"${dateStr}"`,
@@ -209,10 +191,10 @@ export default function AppointmentsListPage() {
       {/* Header com título, botões de atalho e exportação */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">
+          <h2 id="appointments-list-title" className="text-xl sm:text-2xl font-bold tracking-tight text-ink">
             Listagem de Agendamentos
           </h2>
-          <p className="mt-1 text-xs sm:text-sm text-ink-muted">
+          <p className="mt-1 text-xs sm:text-sm text-ink-secondary">
             Visualize, filtre e exporte o histórico completo de atendimentos da sua empresa.
           </p>
         </div>
@@ -222,9 +204,9 @@ export default function AppointmentsListPage() {
             type="button"
             onClick={handleExportCsv}
             disabled={loading || filteredAppointments.length === 0}
-            className="flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer"
+            className={`flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors disabled:opacity-50 cursor-pointer ${focusClass}`}
           >
-            <Download size={14} />
+            <Download size={14} aria-hidden="true" />
             Salvar em CSV
           </button>
 
@@ -232,10 +214,11 @@ export default function AppointmentsListPage() {
             type="button"
             onClick={() => void loadData()}
             disabled={loading}
-            className="grid size-9 place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink disabled:opacity-50 transition-colors"
+            className={`grid size-9 place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink disabled:opacity-50 transition-colors ${focusClass}`}
+            aria-label="Atualizar lista"
             title="Atualizar lista"
           >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={14} aria-hidden="true" className={loading ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
@@ -248,45 +231,49 @@ export default function AppointmentsListPage() {
             <span className="font-semibold text-ink-secondary">Período:</span>
             <input
               type="date"
+              aria-label="Data inicial"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
+              className={dateControl}
             />
-            <span className="text-ink-muted">até</span>
-            <input
-              type="date"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
-            />
+            <div className="flex items-center gap-2">
+              <span className="text-ink-secondary">até</span>
+              <input
+                type="date"
+                aria-label="Data final"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className={dateControl}
+              />
+            </div>
           </div>
 
-          <div className="flex rounded-xl border border-border-subtle bg-canvas/40 p-1 text-xs">
+          <div className="flex flex-wrap gap-1 rounded-xl border border-border-subtle bg-canvas/40 p-1 text-xs">
             <button
               type="button"
               onClick={() => handleQuickPeriod("today")}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors ${focusClass}`}
             >
               Hoje
             </button>
             <button
               type="button"
               onClick={() => handleQuickPeriod("7days")}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors ${focusClass}`}
             >
               7 dias
             </button>
             <button
               type="button"
               onClick={() => handleQuickPeriod("thisMonth")}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors ${focusClass}`}
             >
               Este mês
             </button>
             <button
               type="button"
               onClick={() => handleQuickPeriod("30days")}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className={`rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors ${focusClass}`}
             >
               30 dias
             </button>
@@ -294,22 +281,24 @@ export default function AppointmentsListPage() {
         </div>
 
         {/* Linha 2: Busca por cliente/telefone e Filtro de Status */}
-        <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-muted" />
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_200px]">
+          <div className="relative min-w-0">
+            <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-secondary" />
             <input
               type="text"
+              aria-label="Buscar por cliente, telefone ou serviço"
               placeholder="Buscar por cliente, telefone ou serviço..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-border-subtle bg-canvas/40 pl-9 pr-3 py-2 text-xs text-ink outline-none focus-visible:border-accent"
+              className={`${filterControl} w-full pl-9 placeholder:text-ink-secondary`}
             />
           </div>
 
           <select
+            aria-label="Status do agendamento"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink outline-none focus-visible:border-accent"
+            className={`${filterControl} w-full`}
           >
             <option value="ALL">Todos os Status</option>
             <option value="PENDING">Agendado / Pendente</option>
@@ -324,32 +313,37 @@ export default function AppointmentsListPage() {
       {/* Tabela de Agendamentos */}
       <div className="rounded-2xl border border-border-subtle bg-surface shadow-xs overflow-hidden">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="size-8 animate-spin text-accent" />
-            <p className="mt-3 text-xs text-ink-muted">Carregando listagem de agendamentos...</p>
+          <div role="status" className="flex flex-col items-center justify-center py-20">
+            <Loader2 aria-hidden="true" className="size-8 animate-spin text-accent" />
+            <p className="mt-3 text-xs text-ink-secondary">Carregando listagem de agendamentos...</p>
           </div>
         ) : filteredAppointments.length === 0 ? (
-          <div className="py-16 text-center text-xs text-ink-muted">
+          <div role="status" className="py-16 text-center text-xs text-ink-secondary">
             Nenhum agendamento encontrado para o filtro e período selecionados.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div
+            role="region"
+            aria-labelledby="appointments-list-title"
+            tabIndex={0}
+            className="overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+          >
             <table className="w-full text-left text-xs">
-              <thead className="bg-canvas/50 border-b border-border-subtle text-ink-muted font-semibold">
+              <thead className="bg-canvas/50 border-b border-border-subtle text-ink-secondary font-semibold">
                 <tr>
-                  <th className="py-3 px-4">Data e Hora</th>
-                  <th className="py-3 px-4">Cliente</th>
-                  <th className="py-3 px-4">Profissional</th>
-                  <th className="py-3 px-4">Serviço</th>
-                  <th className="py-3 px-4">Duração</th>
-                  <th className="py-3 px-4">Valor</th>
-                  <th className="py-3 px-4">Status</th>
+                  <th scope="col" className="py-3 px-4">Data e Hora</th>
+                  <th scope="col" className="py-3 px-4">Cliente</th>
+                  <th scope="col" className="py-3 px-4">Profissional</th>
+                  <th scope="col" className="py-3 px-4">Serviço</th>
+                  <th scope="col" className="py-3 px-4 text-right">Duração</th>
+                  <th scope="col" className="py-3 px-4 text-right">Valor</th>
+                  <th scope="col" className="py-3 px-4">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle/50">
                 {filteredAppointments.map((app) => {
                   const collab = collaboratorMap.get(app.collaboratorId);
-                  const st = statusBadgeStyles[app.status] ?? statusBadgeStyles.PENDING;
+                  const status = Object.hasOwn(statusLabels, app.status) ? app.status : "PENDING";
                   const formattedDateTime = formatDateTimeInTimezone(app.startsAt, timezone, locale);
 
                   return (
@@ -359,7 +353,7 @@ export default function AppointmentsListPage() {
                       </td>
                       <td className="py-3 px-4 min-w-[140px]">
                         <p className="font-semibold text-ink truncate">{app.clientName}</p>
-                        <p className="text-[11px] text-ink-muted font-mono">{app.clientPhone}</p>
+                        <p className="text-[11px] text-ink-secondary font-mono">{app.clientPhone}</p>
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap text-ink-secondary">
                         {collab?.name ?? "Profissional"}
@@ -367,18 +361,14 @@ export default function AppointmentsListPage() {
                       <td className="py-3 px-4 max-w-[200px] truncate text-ink font-medium">
                         {app.serviceNameSnapshot}
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap text-ink-muted">
+                      <td className="py-3 px-4 whitespace-nowrap text-right tabular-nums text-ink-secondary">
                         {app.serviceDurationMinutesSnapshot} min
                       </td>
-                      <td className="py-3 px-4 whitespace-nowrap font-medium text-ink">
+                      <td className="py-3 px-4 whitespace-nowrap text-right font-medium tabular-nums text-ink">
                         {formatPrice(app.servicePriceInCentsSnapshot / 100, locale, currency)}
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold ${st.className}`}
-                        >
-                          {st.label}
-                        </span>
+                        <AgendaStatusBadge status={status} label={statusLabels[status]} />
                       </td>
                     </tr>
                   );

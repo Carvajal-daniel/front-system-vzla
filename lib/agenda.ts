@@ -138,7 +138,7 @@ export function isUnpaidCompleted(appointment: Pick<Appointment, "status">, paym
   return appointment.status === "COMPLETED" && (payment?.openInCents ?? 0) > 0;
 }
 
-export function whatsAppReminder(appointment: Appointment, locale: string, timezone: string) {
+export function whatsAppReminder(appointment: Appointment, locale: string, timezone: string, purpose: "reminder" | "placement" = "reminder") {
   const raw = appointment.clientPhone.trim();
   const digits = raw.replace(/\D/g, "");
   let phone = raw.startsWith("+") || /^(55\d{10,11}|58\d{10})$/.test(digits) ? digits : "";
@@ -146,7 +146,11 @@ export function whatsAppReminder(appointment: Appointment, locale: string, timez
   if (!phone && timezone === "America/Caracas" && /^4\d{9}$/.test(digits)) phone = `58${digits}`;
   if (!/^[1-9]\d{9,14}$/.test(phone)) return null;
   const date = new Intl.DateTimeFormat(locale, { timeZone: timezone, dateStyle: "short", timeStyle: "short" }).format(new Date(appointment.startsAt));
-  const message = locale === "es"
+  const message = purpose === "placement"
+    ? locale === "es"
+      ? `Hola, ${appointment.clientName}. Se liberó un horario y confirmamos tu cita de ${appointment.serviceNameSnapshot} el ${date}.`
+      : `Olá, ${appointment.clientName}. Surgiu uma vaga e confirmamos seu agendamento de ${appointment.serviceNameSnapshot} em ${date}.`
+    : locale === "es"
     ? `Hola, ${appointment.clientName}. Te recordamos tu cita de ${appointment.serviceNameSnapshot} el ${date}. ¿Puedes confirmar tu asistencia?`
     : `Olá, ${appointment.clientName}. Lembramos do seu agendamento de ${appointment.serviceNameSnapshot} em ${date}. Pode confirmar sua presença?`;
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;

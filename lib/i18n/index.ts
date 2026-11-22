@@ -503,11 +503,17 @@ export interface Dictionary {
     toggleDark: string;
     paletteLabel: string;
     palettes: {
-      cobalt: string;
-      rose: string;
+      royal: string;
+      ruby: string;
       emerald: string;
-      velvet: string;
-      obsidian: string;
+      violet: string;
+      matte: string;
+      cyan: string;
+      gold: string;
+      terracotta: string;
+      teal: string;
+      indigo: string;
+      graphite: string;
     };
   };
   notifications: {

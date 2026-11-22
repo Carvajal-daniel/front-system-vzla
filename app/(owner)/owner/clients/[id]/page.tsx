@@ -1,5 +1,7 @@
 "use client";
 
+import { ClientProfileFields } from "../../../_components/client-profile-fields";
+
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -456,6 +458,8 @@ export default function ClientProfilePage({
             </div>
           </div>
         )}
+
+        {activeTab === "anamnesis" && <ClientProfileFields key={client.id} companyId={companyId} clientId={client.id} />}
 
         {/* Conteúdo Aba 3: Fidelidade */}
         {activeTab === "loyalty" && (

@@ -13,11 +13,12 @@ export interface PhoneInputProps {
   onChange: (rawDigits: string) => void;
   error?: string;
   disabled?: boolean;
+  countries?: readonly PhoneCountryCode[];
 }
 
-/**
- * Entrada de WhatsApp internacional com seletor explícito Brasil (+55) e Venezuela (+58).
- */
+const countryLabels: Record<PhoneCountryCode, string> = {
+  "+55": "BR +55", "+58": "VE +58", "+1": "US/CA +1", "+34": "ES +34", "+351": "PT +351",
+};
 export function PhoneInput({
   id,
   label,
@@ -27,11 +28,12 @@ export function PhoneInput({
   onChange,
   error,
   disabled,
+  countries = ["+55", "+58"],
 }: PhoneInputProps) {
   const { t } = useLocale();
   const displayValue = formatNationalPhoneDisplay(countryCode, value);
   const placeholder =
-    countryCode === "+55" ? t.phone.placeholderBR : t.phone.placeholderVE;
+    countryCode === "+55" ? t.phone.placeholderBR : countryCode === "+58" ? t.phone.placeholderVE : undefined;
 
   return (
     <div className="flex flex-col gap-1.5 min-w-0">
@@ -48,8 +50,7 @@ export function PhoneInput({
           }
           className="min-h-11 rounded-xl border border-border-strong bg-surface px-2.5 text-sm font-medium text-ink tabular-nums"
         >
-          <option value="+55">BR +55</option>
-          <option value="+58">VE +58</option>
+          {countries.map((code) => <option key={code} value={code}>{countryLabels[code]}</option>)}
         </select>
         <input
           id={id}
@@ -62,7 +63,7 @@ export function PhoneInput({
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${id}-error` : undefined}
           onChange={(e) => {
-            const maxDigits = countryCode === "+55" ? 11 : 11;
+            const maxDigits = countryCode === "+55" || countryCode === "+58" ? 11 : countryCode === "+1" ? 10 : 9;
             const digits = stripNonDigits(e.target.value).slice(0, maxDigits);
             onChange(digits);
           }}

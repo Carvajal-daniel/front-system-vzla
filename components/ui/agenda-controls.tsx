@@ -3,10 +3,12 @@
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { Users, X } from "lucide-react";
+import { Popover } from "@base-ui/react/popover";
+import { ChevronDown, Search, Users, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useTheme } from "@/lib/theme-context";
+import { agendaStrings } from "@/lib/i18n/agenda";
 
 export type AgendaPerson = { id: string; name: string; avatarUrl?: string | null };
 
@@ -50,23 +52,67 @@ export function AgendaSelect({ label, placeholder, value, options, onChange, dis
   </div>;
 }
 
-export function AgendaProfessionalFilter({ label, allLabel, people, value, onChange }: {
-  label: string; allLabel: string; people: AgendaPerson[]; value: string; onChange: (id: string) => void;
+export function AgendaProfessionalFilter({ people, value, onChange }: {
+  people: AgendaPerson[]; value: ReadonlySet<string> | null; onChange: (ids: ReadonlySet<string> | null) => void;
 }) {
-  return <fieldset className="min-w-0">
-    <legend className="mb-2 text-xs font-semibold text-ink-secondary">{label}</legend>
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 lg:grid-cols-3">
-      {[{ id: "", name: allLabel }, ...people].map((person) => {
-        const active = person.id === value;
-        return <button key={person.id} type="button" aria-pressed={active} title={person.name} onClick={() => onChange(person.id)}
-          className={`flex min-w-0 cursor-pointer flex-col items-center gap-1 rounded-xl border p-1.5 text-center text-xs font-medium text-ink hover:border-accent focus-visible:outline-2 focus-visible:outline-accent ${active ? "border-accent bg-accent-soft ring-1 ring-accent" : "border-border-subtle bg-surface"}`}>
-          {person.id ? <ProfessionalAvatar person={person} className="size-8" />
-            : <span aria-hidden="true" className="grid size-8 place-items-center rounded-full bg-accent-soft text-accent"><Users size={16} /></span>}
-          <span className="line-clamp-2 w-full wrap-break-word text-[11px] leading-tight">{person.name}</span>
-        </button>;
-      })}
-    </div>
-  </fieldset>;
+  const { locale } = useLocale();
+  const { mode, palette } = useTheme();
+  const copy = agendaStrings(locale);
+  const labelId = useId();
+  const summaryId = useId();
+  const [query, setQuery] = useState("");
+  const selected = new Set(people.filter(({ id }) => value === null || value.has(id)).map(({ id }) => id));
+  const summary = people.length === 0 ? copy.noActiveProfessionals
+    : selected.size === people.length ? copy.allProfessionalsSelected : copy.selectedProfessionals(selected.size);
+  const normalize = (name: string) => name.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase(locale);
+  const search = normalize(query.trim());
+  const matching = people.filter(({ name }) => normalize(name).includes(search));
+
+  function toggle(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(next.size === people.length ? null : next);
+  }
+
+  return <div className="min-w-0 space-y-1.5">
+    <span id={labelId} className="block text-xs font-semibold text-ink-secondary">{copy.professional}</span>
+    <Popover.Root onOpenChange={(open) => { if (!open) setQuery(""); }}>
+      <Popover.Trigger aria-labelledby={`${labelId} ${summaryId}`} title={summary}
+        className="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-xl border border-border-subtle bg-surface px-3 text-left text-xs font-medium text-ink hover:border-accent focus-visible:outline-2 focus-visible:outline-accent">
+        <Users size={15} aria-hidden="true" className="shrink-0 text-ink-secondary" />
+        <span id={summaryId} className="min-w-0 flex-1 truncate">{summary}</span>
+        <ChevronDown size={14} aria-hidden="true" className="shrink-0 text-ink-muted" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="start" sideOffset={6} className="z-80">
+          <Popover.Popup data-palette={palette} data-theme={mode}
+            className={`${mode === "dark" ? "dark" : ""} flex max-h-[var(--available-height)] w-[min(18rem,calc(100vw-1.5rem))] flex-col gap-2 rounded-xl border border-border-subtle bg-surface p-2 text-ink shadow-xl outline-none`}>
+            <Popover.Title className="sr-only">{copy.professional}</Popover.Title>
+            <label className="flex shrink-0 items-center gap-2 rounded-lg border border-border-subtle px-2 focus-within:border-accent">
+              <Search size={14} aria-hidden="true" className="shrink-0 text-ink-muted" />
+              <input type="search" aria-label={copy.searchProfessionals} placeholder={copy.searchProfessionals} value={query}
+                onChange={(event) => setQuery(event.target.value)} className="min-h-8 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-ink-muted" />
+            </label>
+            <div className="flex shrink-0 justify-between gap-2 border-b border-border-subtle pb-1 text-xs font-medium">
+              <button type="button" disabled={selected.size === people.length} onClick={() => onChange(null)}
+                className="cursor-pointer rounded-md px-2 py-1 text-accent enabled:hover:bg-subtle disabled:cursor-default disabled:opacity-50">{copy.selectAllProfessionals}</button>
+              <button type="button" disabled={!selected.size} onClick={() => onChange(new Set())}
+                className="cursor-pointer rounded-md px-2 py-1 text-ink-secondary enabled:hover:bg-subtle disabled:cursor-default disabled:opacity-50">{copy.clearProfessionals}</button>
+            </div>
+            <div className="min-h-0 max-h-60 overflow-y-auto overscroll-contain">
+              {matching.map((person) => <label key={person.id} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-lg px-2 text-xs hover:bg-subtle">
+                <input type="checkbox" checked={selected.has(person.id)} onChange={() => toggle(person.id)} className="size-4 shrink-0 accent-accent" />
+                <ProfessionalAvatar person={person} className="size-6" />
+                <span className="min-w-0 truncate" title={person.name}>{person.name}</span>
+              </label>)}
+              {!matching.length && <p className="px-2 py-2 text-xs text-ink-secondary">{people.length ? copy.noMatchingProfessionals : copy.noActiveProfessionals}</p>}
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  </div>;
 }
 
 export function AgendaDialog({ title, children, onClose, centered = false, closeDisabled = false }: {

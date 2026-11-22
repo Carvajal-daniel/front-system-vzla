@@ -12,7 +12,6 @@ import {
   Info,
   LoaderCircle,
   Plus,
-  Repeat,
   ShieldAlert,
   Sparkles,
   UserPlus,
@@ -20,9 +19,9 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useClients } from "@/lib/use-clients";
+import { clientPhoneKey, getClientBookingStatus, useClients } from "@/lib/use-clients";
 import { ApiError, apiRequest } from "@/lib/api-client";
-import { agendaClock, agendaMonth, localDayMinuteToUtcIso, shiftAgendaDay } from "@/lib/agenda";
+import { agendaMonth, shiftAgendaDay } from "@/lib/agenda";
 import {
   formatNationalPhoneDisplay,
   formatPhoneToE164,
@@ -36,8 +35,6 @@ import { agendaStrings } from "@/lib/i18n/agenda";
 import type {
   Appointment,
   CreateAppointmentPayload,
-  CreateScheduleBlockPayload,
-  CreateScheduleBlockResponse,
   RescheduleAppointmentPayload,
 } from "@/lib/types/appointment";
 import type { Company } from "@/lib/types/auth";
@@ -45,6 +42,7 @@ import type { PhoneCountryCode, PublicAvailabilityResponse } from "@/lib/types/p
 import type { Service, ServiceCollaboratorsResponse } from "@/lib/types/service";
 import type { Collaborator } from "@/lib/types/team";
 import { useWaitlist } from "@/lib/use-waitlist";
+import { AgendaBlockForm } from "./agenda-block-form";
 import { AgendaMonthGrid } from "./agenda-calendar";
 import { AgendaDialog, AgendaSelect } from "./agenda-controls";
 
@@ -55,16 +53,12 @@ const emptyDays = new Set<string>();
 type Result<T> = { key: string; value?: T; failed?: boolean };
 export type AgendaEditorTab = "appointment" | "block" | "waitlist";
 
-const quickDurations = [
-  { label: "30 min", minutes: 30 },
-  { label: "1 hora", minutes: 60 },
-  { label: "2 horas", minutes: 120 },
-  { label: "3 horas", minutes: 180 },
-  { label: "4 horas", minutes: 240 },
-  { label: "5 horas", minutes: 300 },
-  { label: "6 horas", minutes: 360 },
-  { label: "7 horas", minutes: 420 },
-];
+function splitClientPhone(value: string, fallback: PhoneCountryCode) {
+  const digits = stripNonDigits(value);
+  if (/^55\d{10,11}$/.test(digits)) return { country: "+55" as const, digits: digits.slice(2) };
+  if (/^58\d{10}$/.test(digits)) return { country: "+58" as const, digits: digits.slice(2) };
+  return { country: fallback, digits };
+}
 
 export function AgendaEditor({
   company,
@@ -74,6 +68,7 @@ export function AgendaEditor({
   focusDate,
   initialDate,
   initialTime,
+  initialEndTime,
   initialPersonId,
   initialTab = "appointment",
   initialClientName,
@@ -91,6 +86,7 @@ export function AgendaEditor({
   focusDate: string;
   initialDate?: string;
   initialTime?: string;
+  initialEndTime?: string;
   initialPersonId?: string;
   initialTab?: AgendaEditorTab;
   initialClientName?: string;
@@ -104,7 +100,7 @@ export function AgendaEditor({
   const { locale, t } = useLocale();
   const copy = agendaStrings(locale);
   const waitlist = useWaitlist(company.id);
-  const { clients, createClient } = useClients(company.id);
+  const { clients, loading: clientsLoading, createClient } = useClients(company.id);
 
   // Controle de abas: Novo Agendamento, Bloquear Agenda, Fila de Espera
   const [activeTab, setActiveTab] = useState<AgendaEditorTab>(
@@ -127,9 +123,11 @@ export function AgendaEditor({
   );
   const [date, setDate] = useState(initialD);
   const [time, setTime] = useState(appointment ? appointment.startsAt : initialTime ?? "");
+  const selectedRange = initialTime && initialEndTime && initialD === date ? { start: initialTime, end: initialEndTime } : null;
   const [name, setName] = useState(initialClientName ?? "");
-  const [phone, setPhone] = useState(initialClientPhone ?? "");
-  const [country, setCountry] = useState<PhoneCountryCode>(locale === "es" ? "+58" : "+55");
+  const initialPhone = splitClientPhone(initialClientPhone ?? "", locale === "es" ? "+58" : "+55");
+  const [phone, setPhone] = useState(initialPhone.digits);
+  const [country, setCountry] = useState<PhoneCountryCode>(initialPhone.country);
   const [notes, setNotes] = useState("");
   const [confirmed, setConfirmed] = useState(true);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -138,6 +136,7 @@ export function AgendaEditor({
   );
   const [sendWhatsAppReminder, setSendWhatsAppReminder] = useState(true);
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [phoneValidationError, setPhoneValidationError] = useState("");
   const phoneInputRef = useRef<HTMLInputElement>(null);
 
@@ -152,16 +151,7 @@ export function AgendaEditor({
   // ==========================================
   // ESTADOS DA ABA 2: BLOQUEAR AGENDA
   // ==========================================
-  const [blockCollaboratorId, setBlockCollaboratorId] = useState<string>("");
-  const [blockAllDay, setBlockAllDay] = useState(false);
-  const [blockStartDate, setBlockStartDate] = useState(initialD || today);
-  const [blockStartTime, setBlockStartTime] = useState("12:00");
-  const [blockEndDate, setBlockEndDate] = useState(initialD || today);
-  const [blockEndTime, setBlockEndTime] = useState("13:00");
-  const [blockFrequency, setBlockFrequency] = useState<"ONCE" | "DAILY" | "WEEKLY">("ONCE");
-  const [blockReason, setBlockReason] = useState("");
   const [savingBlock, setSavingBlock] = useState(false);
-  const [blockError, setBlockError] = useState("");
 
   // ==========================================
   // ESTADOS DA ABA 3: FILA DE ESPERA
@@ -288,11 +278,17 @@ export function AgendaEditor({
     availability.key === availabilityKey && availability.value
       ? new Set(availability.value)
       : emptyDays;
-  const people = collaborators.filter(
-    (person) =>
-      person.isActive && links.key === serviceId && links.value?.includes(person.id),
-  );
-  const activeSlots = slots.key === slotKey ? slots.value?.slots : undefined;
+  const people = collaborators.filter((person) => person.isActive && (
+    links.key === serviceId && links.value
+      ? links.value.includes(person.id)
+      : person.id === initialPersonId
+  ));
+  const activeSlots = slots.key === slotKey ? slots.value?.slots.filter((slot) => {
+    if (!selectedRange) return true;
+    const start = Date.parse(slot.startsAt);
+    const end = Math.max(Date.parse(slot.endsAt), start + totalDurationMinutes * 60_000);
+    return start >= Date.parse(selectedRange.start) && end <= Date.parse(selectedRange.end);
+  }) : undefined;
 
   const matchingClients = useMemo(() => {
     if (!name.trim()) return [];
@@ -304,17 +300,14 @@ export function AgendaEditor({
     );
   }, [clients, name]);
 
-  const selectedClient = useMemo(() => {
-    const cleanPhone = phone.replace(/\D/g, "");
-    return clients.find(
-      (c) =>
-        (c.name ?? "").toLowerCase() === name.trim().toLowerCase() ||
-        (cleanPhone && (c.phone ?? "").replace(/\D/g, "") === cleanPhone),
-    );
-  }, [clients, name, phone]);
-
-  const isClientBlocked = Boolean(selectedClient?.isBlocked);
-  const canSaveAppointment = !!activeSlots?.some((slot) => slot.startsAt === time) && !isClientBlocked;
+  const clientPhone = appointment?.clientPhone || (isValidInternationalPhone(country, phone) ? formatPhoneToE164(country, phone) : "");
+  const phoneKey = clientPhoneKey(clientPhone);
+  const matchedClients = useMemo(() => clients.filter((client) => client.id === selectedClientId || Boolean(phoneKey && (
+    clientPhoneKey(client.phone) === phoneKey || client.appointments.some((visit) => clientPhoneKey(visit.clientPhone) === phoneKey)
+  ))), [clients, phoneKey, selectedClientId]);
+  const isClientBlocked = matchedClients.some((client) => client.isBlocked) || getClientBookingStatus(company.id, clientPhone).isBlocked;
+  const pendingDebt = matchedClients.reduce((sum, client) => sum + client.pendingDebtCents, 0);
+  const canSaveAppointment = !!activeSlots?.some((slot) => Date.parse(slot.startsAt) === Date.parse(time)) && !isClientBlocked && !clientsLoading;
   const isChecking =
     !!serviceId && !!personId && from <= to && availability.key !== availabilityKey;
   const availabilityFailed = availability.key === availabilityKey && availability.failed;
@@ -322,7 +315,7 @@ export function AgendaEditor({
 
   const selectDate = (day: string) => {
     setDate(day);
-    setTime("");
+    setTime(day && day === initialD ? initialTime ?? "" : "");
   };
 
   // Cadastro rápido de novo cliente exigindo telefone válido (mínimo 8 dígitos)
@@ -334,12 +327,13 @@ export function AgendaEditor({
       return;
     }
     setPhoneValidationError("");
-    createClient({
-      name: name.trim(),
-      phone: formatPhoneToE164(country, phone),
-    });
-    toast.success(`Cliente "${name.trim()}" cadastrado com sucesso!`);
-    setIsClientDropdownOpen(false);
+    try {
+      createClient({ name: name.trim(), phone: formatPhoneToE164(country, phone) });
+      toast.success(`Cliente "${name.trim()}" cadastrado com sucesso!`);
+      setIsClientDropdownOpen(false);
+    } catch {
+      toast.error(t.errors.unexpectedDescription);
+    }
   };
 
   // ==========================================
@@ -347,7 +341,7 @@ export function AgendaEditor({
   // ==========================================
   async function submitAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canSaveAppointment || savingAppointment) return;
+    if (!canSaveAppointment || savingAppointment || getClientBookingStatus(company.id, clientPhone).isBlocked) return;
     if (!appointment) {
       const cleanDigits = stripNonDigits(phone);
       if (cleanDigits.length < 8) {
@@ -404,7 +398,7 @@ export function AgendaEditor({
     } catch (failure) {
       setAppointmentError(
         failure instanceof ApiError &&
-          failure.message === "Appointment must start on a 30-minute boundary."
+          /^Appointment must start on a \d+-minute boundary\.$/.test(failure.message)
           ? copy.slotBoundary
           : failure instanceof ApiError && failure.status === 409
             ? t.common.noAvailableSlotsForDay
@@ -414,79 +408,6 @@ export function AgendaEditor({
       setRefreshAvailability((value) => value + 1);
     } finally {
       setSavingAppointment(false);
-    }
-  }
-
-  // ==========================================
-  // SUBMISSÃO: ABA 2 (BLOQUEAR AGENDA)
-  // ==========================================
-  function handleQuickDuration(minutes: number) {
-    const [startH, startM] = blockStartTime.split(":").map(Number);
-    const totalMinutes = startH * 60 + startM + minutes;
-    const endH = Math.min(23, Math.floor(totalMinutes / 60));
-    const endM = totalMinutes % 60;
-    setBlockEndTime(
-      `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`,
-    );
-  }
-
-  async function submitBlock(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (savingBlock) return;
-    setSavingBlock(true);
-    setBlockError("");
-
-    const startTimeVal = blockAllDay ? "08:00" : blockStartTime;
-    const endTimeVal = blockAllDay ? "20:00" : blockEndTime;
-
-    const [sH, sM] = startTimeVal.split(":").map(Number);
-    const [eH, eM] = endTimeVal.split(":").map(Number);
-    const startMinute = sH * 60 + sM;
-    const endMinute = eH * 60 + eM;
-
-    const startsAt = localDayMinuteToUtcIso(blockStartDate, startMinute, company.timezone);
-    const endsAt = localDayMinuteToUtcIso(blockEndDate, endMinute, company.timezone);
-
-    if (new Date(endsAt).getTime() <= new Date(startsAt).getTime()) {
-      setBlockError("O horário final do bloqueio deve ser posterior ao horário inicial.");
-      setSavingBlock(false);
-      return;
-    }
-
-    const payload: CreateScheduleBlockPayload = {
-      collaboratorId: blockCollaboratorId ? blockCollaboratorId : null,
-      startsAt,
-      endsAt,
-      reason: blockReason.trim()
-        ? `${blockReason.trim()}${blockFrequency !== "ONCE" ? ` [Repete: ${blockFrequency}]` : ""}`
-        : blockFrequency !== "ONCE"
-          ? `[Repete: ${blockFrequency}]`
-          : null,
-    };
-
-    try {
-      const res = await apiRequest<CreateScheduleBlockResponse>("/schedule-blocks", {
-        auth: true,
-        method: "POST",
-        body: payload,
-      });
-
-      if (res.affectedAppointments && res.affectedAppointments.length > 0) {
-        toast.warning(
-          `Bloqueio criado! Atenção: ${res.affectedAppointments.length} agendamento(s) entraram em conflito.`,
-        );
-      } else {
-        toast.success("Bloqueio de agenda criado com sucesso!");
-      }
-
-      onBlockSaved?.();
-      onClose();
-    } catch (err) {
-      setBlockError(
-        err instanceof ApiError ? err.message : t.errors.networkDescription,
-      );
-    } finally {
-      setSavingBlock(false);
     }
   }
 
@@ -544,7 +465,7 @@ export function AgendaEditor({
     : activeTab === "appointment"
       ? "Novo Agendamento"
       : activeTab === "block"
-        ? "Bloquear Agenda"
+        ? t.owner.newBlock
         : "Fila de Espera";
 
   return (
@@ -558,6 +479,7 @@ export function AgendaEditor({
         <div className="mb-4 flex rounded-xl border border-border-subtle bg-canvas/60 p-1 text-xs">
           <button
             type="button"
+            disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("appointment")}
             className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
               activeTab === "appointment"
@@ -571,6 +493,7 @@ export function AgendaEditor({
 
           <button
             type="button"
+            disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("block")}
             className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
               activeTab === "block"
@@ -584,6 +507,7 @@ export function AgendaEditor({
 
           <button
             type="button"
+            disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("waitlist")}
             className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
               activeTab === "waitlist"
@@ -691,6 +615,12 @@ export function AgendaEditor({
             />
           </div>
 
+          {selectedRange && (
+            <p className="rounded-xl bg-blue-500/10 px-3 py-2 text-sm text-ink">
+              Intervalo selecionado · {formatTimeInTimezone(selectedRange.start, company.timezone, locale)}–{formatTimeInTimezone(selectedRange.end, company.timezone, locale)}
+            </p>
+          )}
+
           {/* Resumo acumulado de serviços, duração e valor */}
           {selectedServices.length > 0 && (
             <div className="flex items-center justify-between rounded-xl bg-accent-soft/30 px-3 py-2 text-xs text-ink border border-accent/20">
@@ -757,11 +687,11 @@ export function AgendaEditor({
                     <button
                       key={slot.startsAt}
                       type="button"
-                      aria-pressed={time === slot.startsAt}
+                      aria-pressed={Date.parse(time) === Date.parse(slot.startsAt)}
                       onClick={() => setTime(slot.startsAt)}
                       disabled={savingAppointment}
                       className={`cursor-pointer rounded-lg border p-2 text-xs font-semibold tabular-nums hover:border-accent disabled:cursor-not-allowed ${
-                        time === slot.startsAt
+                        Date.parse(time) === Date.parse(slot.startsAt)
                           ? "border-accent bg-accent text-accent-ink"
                           : "border-border-subtle bg-surface text-ink"
                       }`}
@@ -776,17 +706,25 @@ export function AgendaEditor({
             </div>
           </div>
 
+          {isClientBlocked && (
+            <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs font-semibold text-rose-700 dark:text-rose-300">
+              <ShieldAlert aria-hidden="true" size={18} className="shrink-0" />
+              <span>{locale === "es" ? "Cliente bloqueado. Desbloquea su ficha para continuar." : "Cliente bloqueado para agendamentos. Desbloqueie na ficha do cliente para continuar."}</span>
+            </div>
+          )}
+          {pendingDebt > 0 && (
+            <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-800 dark:text-amber-300">
+              <Info aria-hidden="true" size={18} className="shrink-0" />
+              <span>{locale === "es" ? "Saldo pendiente" : "Saldo devedor"} · {formatPriceFromCents(pendingDebt, locale, company.currency)}</span>
+            </div>
+          )}
           {!appointment && (
             <>
-              {isClientBlocked && (
-                <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-500 font-semibold">
-                  <ShieldAlert size={18} className="shrink-0" />
-                  <span>Cliente bloqueado para novos agendamentos na base de clientes. Desbloqueie na ficha do cliente para continuar.</span>
-                </div>
-              )}
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="relative space-y-1.5 text-xs font-semibold text-ink-secondary">
+                <div className="relative space-y-1.5 text-xs font-semibold text-ink-secondary" onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setIsClientDropdownOpen(false);
+                }}>
                   <label htmlFor="agenda-client-name" className="block">
                     {copy.clientName}
                   </label>
@@ -801,55 +739,50 @@ export function AgendaEditor({
                     onFocus={() => setIsClientDropdownOpen(true)}
                     onChange={(event) => {
                       setName(event.target.value);
+                      setSelectedClientId(null);
                       setIsClientDropdownOpen(true);
                     }}
                   />
 
                   {/* Sugestões de clientes cadastrados */}
-                  {isClientDropdownOpen && matchingClients.length > 0 && !selectedClient && (
+                  {isClientDropdownOpen && matchingClients.length > 0 && (
                     <ul className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-xl border border-border-strong bg-surface py-1 shadow-xl text-xs">
                       {matchingClients.slice(0, 5).map((c) => (
-                        <li
-                          key={c.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
+                        <li key={c.id}>
+                          <button type="button" onClick={() => {
+                            const nextPhone = splitClientPhone(c.phone, country);
+                            setSelectedClientId(c.id);
                             setName(c.name);
-                            if (c.phone.startsWith("+55")) {
-                              setCountry("+55");
-                              setPhone(c.phone.slice(3));
-                            } else if (c.phone.startsWith("+58")) {
-                              setCountry("+58");
-                              setPhone(c.phone.slice(3));
-                            } else {
-                              setPhone(c.phone.replace(/\D/g, ""));
-                            }
+                            setCountry(nextPhone.country);
+                            setPhone(nextPhone.digits);
+                            setPhoneValidationError("");
                             setIsClientDropdownOpen(false);
                           }}
-                          className="flex items-center justify-between px-3 py-2 hover:bg-surface-hover cursor-pointer"
-                        >
-                          <div className="min-w-0 pr-2">
-                            <p className="font-semibold text-ink truncate">{c.name}</p>
-                            <p className="text-[11px] text-ink-muted">{c.phone}</p>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {c.isBlocked && (
-                              <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-500 font-bold">
-                                Bloqueado
-                              </span>
-                            )}
-                            {c.pendingDebtCents > 0 && (
-                              <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-500 font-bold">
-                                Débito
-                              </span>
-                            )}
-                          </div>
+                          className="flex w-full cursor-pointer items-center justify-between px-3 py-2 text-left hover:bg-surface-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent">
+                            <div className="min-w-0 pr-2">
+                              <p className="font-semibold text-ink truncate">{c.name}</p>
+                              <p className="text-[11px] text-ink-muted">{c.phone}</p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {c.isBlocked && (
+                                <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-500 font-bold">
+                                  Bloqueado
+                                </span>
+                              )}
+                              {c.pendingDebtCents > 0 && (
+                                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-500 font-bold">
+                                  Débito
+                                </span>
+                              )}
+                            </div>
+                          </button>
                         </li>
                       ))}
                     </ul>
                   )}
 
                   {/* Cadastro Rápido Inline se não existir na base */}
-                  {name.trim().length >= 2 && !selectedClient && (
+                  {name.trim().length >= 2 && matchedClients.length === 0 && (
                     <button
                       type="button"
                       onClick={handleQuickCreateClient}
@@ -1016,167 +949,25 @@ export function AgendaEditor({
       {/* ========================================================= */}
       {/* ABA 2: BLOQUEAR AGENDA */}
       {/* ========================================================= */}
-      {activeTab === "block" && (
-        <form onSubmit={submitBlock} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-ink-secondary">
-              Profissional a ser bloqueado
-            </label>
-            <select
-              className={field}
-              value={blockCollaboratorId}
-              onChange={(e) => setBlockCollaboratorId(e.target.value)}
-              disabled={savingBlock}
-            >
-              <option value="">Todos os profissionais (Bloqueio Geral)</option>
-              {collaborators
-                .filter((c) => c.isActive)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.specialty})
-                  </option>
-                ))}
-            </select>
-          </div>
-
-          {/* Toggle de Bloquear dia inteiro */}
-          <div className="flex items-center justify-between rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2.5">
-            <div>
-              <p className="text-xs font-semibold text-ink">Bloquear dia inteiro</p>
-              <p className="text-[11px] text-ink-muted">
-                Bloqueia automaticamente das 08:00 às 20:00
-              </p>
-            </div>
-            <input
-              type="checkbox"
-              checked={blockAllDay}
-              onChange={(e) => setBlockAllDay(e.target.checked)}
-              className="size-4 cursor-pointer accent-accent"
-            />
-          </div>
-
-          {/* Datas e Horários */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-ink-secondary">Data Inicial</label>
-              <input
-                type="date"
-                required
-                className={field}
-                value={blockStartDate}
-                onChange={(e) => setBlockStartDate(e.target.value)}
-              />
-            </div>
-
-            {!blockAllDay && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-ink-secondary">Horário Inicial</label>
-                <input
-                  type="time"
-                  required
-                  className={field}
-                  value={blockStartTime}
-                  onChange={(e) => setBlockStartTime(e.target.value)}
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-ink-secondary">Data Final</label>
-              <input
-                type="date"
-                required
-                className={field}
-                value={blockEndDate}
-                onChange={(e) => setBlockEndDate(e.target.value)}
-              />
-            </div>
-
-            {!blockAllDay && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-ink-secondary">Horário Final</label>
-                <input
-                  type="time"
-                  required
-                  className={field}
-                  value={blockEndTime}
-                  onChange={(e) => setBlockEndTime(e.target.value)}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Botões Rápidos de Duração */}
-          {!blockAllDay && (
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-ink-secondary">Duração rápida:</p>
-              <div className="flex flex-wrap gap-1.5">
-                {quickDurations.map((qd) => (
-                  <button
-                    key={qd.label}
-                    type="button"
-                    onClick={() => handleQuickDuration(qd.minutes)}
-                    className="rounded-lg border border-border-subtle bg-surface px-2.5 py-1 text-xs font-medium text-ink-secondary hover:border-accent hover:text-ink transition-colors"
-                  >
-                    {qd.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Frequência de Repetição */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-ink-secondary">
-              Frequência de Repetição
-            </label>
-            <select
-              className={field}
-              value={blockFrequency}
-              onChange={(e) =>
-                setBlockFrequency(e.target.value as "ONCE" | "DAILY" | "WEEKLY")
-              }
-            >
-              <option value="ONCE">Única vez</option>
-              <option value="DAILY">Diário</option>
-              <option value="WEEKLY">Semanal</option>
-            </select>
-          </div>
-
-          {/* Motivo do bloqueio */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-ink-secondary">
-              Motivo do Bloqueio
-            </label>
-            <textarea
-              className={`${field} min-h-16 resize-y`}
-              placeholder="Ex: Treinamento da equipe, Manutenção predial, Almoço prolongado..."
-              maxLength={500}
-              value={blockReason}
-              onChange={(e) => setBlockReason(e.target.value)}
-            />
-          </div>
-
-          {blockError && (
-            <p
-              role="alert"
-              className="rounded-xl bg-[var(--status-danger-bg)] p-3 text-xs text-[var(--status-danger-ink)]"
-            >
-              {blockError}
-            </p>
-          )}
-
-          <button
-            disabled={savingBlock}
-            className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-55 transition-colors"
-            type="submit"
-          >
-            {savingBlock && <LoaderCircle size={16} className="animate-spin" />}
-            Confirmar Bloqueio
-          </button>
-        </form>
+      {!appointment && (
+        <div hidden={activeTab !== "block"}>
+          <AgendaBlockForm
+            company={company}
+            collaborators={collaborators}
+            initialDate={initialD || focusDate}
+            initialTime={initialTime}
+            initialEndTime={initialEndTime}
+            initialPersonId={initialPersonId}
+            onClose={onClose}
+            onSavingChange={setSavingBlock}
+            onCreated={(created, complete) => {
+              onBlockSaved?.();
+              const conflicts = new Set(created.flatMap((response) => (response.affectedAppointments ?? []).map((row) => row.id)));
+              if (conflicts.size) toast.warning(`Agendamentos em conflito com os bloqueios criados: ${conflicts.size}.`);
+              else if (complete) toast.success(created.length > 1 ? "Bloqueios criados com sucesso!" : "Bloqueio criado com sucesso!");
+            }}
+          />
+        </div>
       )}
 
       {/* ========================================================= */}

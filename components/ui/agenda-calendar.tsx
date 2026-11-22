@@ -19,10 +19,11 @@ import { agendaStrings } from "@/lib/i18n/agenda";
 import type { Company } from "@/lib/types/auth";
 import { formatTimeInTimezone } from "@/lib/format";
 import type { Appointment, ScheduleBlock } from "@/lib/types/appointment";
+import type { WorkScheduleSlot } from "@/lib/types/team";
 import { getCanonicalClientId } from "@/lib/use-clients";
 import { AppointmentHoverCard } from "./agenda-card";
 import type { AgendaPayment, HoverCardAnchor } from "./agenda-card";
-import type { AgendaPerson } from "./agenda-controls";
+import { ProfessionalAvatar, type AgendaPerson } from "./agenda-controls";
 
 const arrow = "grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink focus-visible:outline-2 focus-visible:outline-accent";
 const closedSurface = "bg-[color-mix(in_srgb,var(--status-danger-bg)_60%,var(--surface-elevated))]";
@@ -31,6 +32,13 @@ function formatMinute(minute: number): string {
   const h = String(Math.floor(minute / 60)).padStart(2, "0");
   const m = String(minute % 60).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+function parseGridMinute(value?: string | null) {
+  if (!value || !/^\d{2}:\d{2}(?::\d{2})?$/.test(value)) return NaN;
+  const hour = Number(value.slice(0, 2));
+  const minute = Number(value.slice(3, 5));
+  return minute < 60 && (hour < 24 || (hour === 24 && minute === 0)) ? hour * 60 + minute : NaN;
 }
 
 export function AgendaMonthGrid({ month, selected, today, company, counts, available, booking = false, onMonth, onSelect, renderDay }: {
@@ -49,6 +57,7 @@ export function AgendaMonthGrid({ month, selected, today, company, counts, avail
   const copy = agendaStrings(locale);
   const { start, end, days } = agendaMonth(month);
   const spacious = !!renderDay;
+  const sidebar = !spacious && !booking;
   const monthLabel = formatAgendaDay(start, locale, { month: "long", year: "numeric" });
 
   return <section aria-label={`${copy.calendar} · ${monthLabel}`} className={spacious ? "overflow-hidden rounded-2xl border border-border-subtle bg-surface" : "min-w-0"}>
@@ -75,15 +84,24 @@ export function AgendaMonthGrid({ month, selected, today, company, counts, avail
         const label = [formatAgendaDay(date, locale, { dateStyle: "full" }), closed && copy.closed,
           count > 0 && `${count} ${copy.appointments.toLowerCase()}`,
           booking && !closed && available !== undefined && (hasSlot ? copy.available : copy.unavailable)].filter(Boolean).join(" · ");
-        const tone = closed ? `bg-[var(--status-danger-bg)] font-semibold text-[var(--status-danger-ink)] ring-inset focus-visible:outline-[var(--status-danger-ink)] ${active ? "ring-2 ring-[var(--status-danger-ink)]" : "ring-1 ring-[var(--status-danger-border)]"}`
+        const tone = sidebar
+          ? active ? "bg-accent font-bold text-accent-ink"
+            : date === today ? "bg-accent-soft text-accent"
+            : outside ? "text-ink-muted" : "text-ink"
+          : closed ? `bg-[var(--status-danger-bg)] font-semibold text-[var(--status-danger-ink)] ring-inset focus-visible:outline-[var(--status-danger-ink)] ${active ? "ring-2 ring-[var(--status-danger-ink)]" : "ring-1 ring-[var(--status-danger-border)]"}`
           : active ? "bg-accent text-accent-ink"
           : hasSlot || date === today ? "bg-accent-soft text-accent"
           : outside || disabled ? "text-ink-muted" : "text-ink";
         const button = <button key={date} type="button" disabled={disabled} aria-label={label} title={label} data-agenda-date={date} data-closed={closed || undefined}
           aria-pressed={active} aria-current={date === today ? "date" : undefined} onClick={() => onSelect(date)}
-          className={`relative flex min-w-0 cursor-pointer items-center justify-center rounded-lg text-xs tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 disabled:cursor-not-allowed ${closed ? "" : "font-medium focus-visible:outline-accent enabled:hover:ring-1 enabled:hover:ring-accent"} ${tone} ${spacious ? "size-7" : "aspect-square w-full"} ${outside && !closed ? "opacity-55" : ""}`}>
+          className={`relative flex min-w-0 cursor-pointer items-center justify-center rounded-lg text-xs tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 disabled:cursor-not-allowed ${sidebar ? "leading-none" : ""} ${closed && !sidebar ? "" : "focus-visible:outline-accent enabled:hover:ring-1 enabled:hover:ring-accent"} ${!closed && (!sidebar || !active) ? "font-medium" : ""} ${tone} ${spacious ? "size-7" : "aspect-square w-full"} ${outside && (sidebar ? !active : !closed) ? "opacity-55" : ""}`}>
           {Number(date.slice(-2))}
-          {count > 0 ? (
+          {sidebar ? (
+            <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-[12%] flex justify-center gap-0.5">
+              {count > 0 && <i className={`size-1 rounded-full ${active ? "bg-current" : "bg-emerald-500"}`} />}
+              {closed && <i className={`size-1 rounded-full ${active ? "ring-1 ring-inset ring-current" : "bg-[var(--status-danger-ink)]/65"}`} />}
+            </span>
+          ) : count > 0 ? (
             <span
               aria-hidden="true"
               className={`absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-xs ${
@@ -141,6 +159,8 @@ interface DragState {
   originDate: string;
   originMinute: number;
   targetDate: string;
+  targetColumn: string;
+  targetPersonId: string;
   targetMinute: number;
   duration: number;
   isInvalid: boolean;
@@ -152,6 +172,7 @@ interface DragState {
 
 export function AgendaTimeGrid({
   days,
+  dayPeople,
   selected,
   today,
   now,
@@ -159,6 +180,8 @@ export function AgendaTimeGrid({
   byDay,
   appointments,
   blocks,
+  workSchedules,
+  slotInterval = 30,
   staff,
   payments,
   firstVisitClientIds,
@@ -168,9 +191,11 @@ export function AgendaTimeGrid({
   renderBlock,
   onRescheduleDrop,
   onRescheduleConflict,
-  onEmptySlotClick,
+  collaboratorId,
+  onEmptySlotSelect,
 }: {
   days: string[];
+  dayPeople?: AgendaPerson[];
   selected: string;
   today: string;
   now: number;
@@ -178,6 +203,8 @@ export function AgendaTimeGrid({
   byDay: Map<string, Appointment[]>;
   appointments: readonly Appointment[];
   blocks: ScheduleBlock[];
+  workSchedules: readonly WorkScheduleSlot[];
+  slotInterval?: number;
   staff: ReadonlyMap<string, AgendaPerson>;
   payments?: ReadonlyMap<string, AgendaPayment>;
   firstVisitClientIds?: ReadonlySet<string>;
@@ -185,20 +212,41 @@ export function AgendaTimeGrid({
   isOwner?: boolean;
   onSelect: (date: string) => void;
   renderBlock: (appointment: Appointment, compact: boolean) => ReactNode;
-  onRescheduleDrop?: (appointment: Appointment, targetDate: string, targetMinute: number) => void;
+  onRescheduleDrop?: (appointment: Appointment, targetDate: string, targetMinute: number, targetPersonId: string) => void;
   onRescheduleConflict: () => void;
-  onEmptySlotClick?: (date: string, minute: number) => void;
+  collaboratorId?: string;
+  onEmptySlotSelect?: (date: string, startMinute: number, endMinute?: number, personId?: string) => void;
 }) {
   const { locale } = useLocale();
   const copy = agendaStrings(locale);
   const viewportRef = useRef<HTMLDivElement>(null);
   const clock = useMemo(() => agendaClock(company.timezone), [company.timezone]);
+  const hasProfessionalHeader = !!dayPeople;
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const shellHeader = document.querySelector("[data-shell-header]");
+    if (!hasProfessionalHeader || !viewport || !shellHeader) return;
+    const updateOffset = () => {
+      viewport.style.setProperty("--agenda-header-offset", `${shellHeader.getBoundingClientRect().height}px`);
+    };
+    updateOffset();
+    const observer = new ResizeObserver(updateOffset);
+    observer.observe(shellHeader);
+    return () => observer.disconnect();
+  }, [hasProfessionalHeader]);
 
   // Estados e referências de arraste (Drag & Drop) com tolerância de > 6px
   const [dragState, setDragState] = useState<DragState | null>(null);
   const dragTargetRef = useRef<DragState | null>(null);
-  const [hoveredSlot, setHoveredSlot] = useState<{ day: string; minute: number } | null>(null);
+  const [hoveredSlot, setHoveredSlot] = useState<{ column: string; minute: number } | null>(null);
   const [hoveredEvent, setHoveredEvent] = useState<{ appointment: Appointment; anchor: HoverCardAnchor } | null>(null);
+  const hasHoveredEvent = hoveredEvent !== null;
+  useEffect(() => {
+    if (!hasHoveredEvent) return;
+    const clearHover = () => setHoveredEvent(null);
+    window.addEventListener("scroll", clearHover);
+    return () => window.removeEventListener("scroll", clearHover);
+  }, [hasHoveredEvent]);
   const dragPendingRef = useRef<{
     appointment: Appointment;
     startX: number;
@@ -208,7 +256,14 @@ export function AgendaTimeGrid({
     duration: number;
   } | null>(null);
   const dragMovedRef = useRef(false);
-  const emptyClickRef = useRef<{ day: string; x: number; y: number } | null>(null);
+  const selectionOrigin = useRef<{
+    minute: number;
+    pointerId: number;
+    x: number;
+    y: number;
+    bounds?: { first: number; last: number; closes: number };
+  } | null>(null);
+  const [selection, setSelection] = useState<{ column: string; start: number; end: number } | null>(null);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -227,25 +282,59 @@ export function AgendaTimeGrid({
     return () => observer.disconnect();
   }, [days, selected]);
 
-  const columns = days.map((day) => ({ day, ...companyDay(company, day), events: layoutDay([...(byDay.get(day) ?? []), ...(Array.isArray(blocks) ? blocks : [])], day, clock) }));
-  const events = columns.flatMap((column) => column.events);
-  const parse = (value?: string | null, fallback = 0) => {
-    if (!value || typeof value !== "string" || value.length < 5) return fallback;
-    const h = Number(value.slice(0, 2));
-    const m = Number(value.slice(3, 5));
-    const total = h * 60 + m;
-    return Number.isFinite(total) ? total : fallback;
-  };
-  const startsRaw = Math.floor(Math.min(8 * 60, ...events.map((event) => event.start), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.openTime, 8 * 60))) / 60) * 60;
-  const endsRaw = Math.ceil(Math.max(19 * 60, ...events.map((event) => event.end), ...columns.filter((c) => !c.closed).map(({ hours }) => parse(hours?.closeTime, 19 * 60))) / 60) * 60;
-  const starts = Number.isFinite(startsRaw) ? Math.max(0, Math.min(23 * 60, startsRaw)) : 8 * 60;
-  const ends = Number.isFinite(endsRaw) && endsRaw > starts ? Math.min(24 * 60, endsRaw) : Math.max(starts + 60, 19 * 60);
+  const columnSpecs = dayPeople
+    ? dayPeople.map((person) => ({ key: person.id, day: selected, person }))
+    : days.map((day) => ({ key: day, day, person: undefined }));
+  const columns = columnSpecs.map(({ key, day, person }) => {
+    const dayAppointments = byDay.get(day) ?? [];
+    const columnBlocks = Array.isArray(blocks) ? blocks : [];
+    const rows = person
+      ? [...dayAppointments.filter((row) => row.collaboratorId === person.id),
+        ...columnBlocks.filter((row) => !row.collaboratorId || row.collaboratorId === person.id)]
+      : [...dayAppointments, ...columnBlocks];
+    return { key, day, person, personId: person?.id ?? collaboratorId, ...companyDay(company, day), events: layoutDay(rows, day, clock) };
+  });
+  const defaultHours = { start: 8 * 60, end: 19 * 60 };
+  const intervals = columns.flatMap(({ closed, hours, events }) => [
+    ...events,
+    ...(!closed ? [hours ? { start: parseGridMinute(hours.openTime), end: parseGridMinute(hours.closeTime) } : defaultHours] : []),
+  ]);
+  for (const schedule of workSchedules) {
+    const companyHours = company.operatingSchedule?.find((day) => day.dayOfWeek === schedule.dayOfWeek);
+    if (!companyHours && schedule.isWorkingDay && days.some((day) => new Date(`${day}T00:00:00Z`).getUTCDay() === schedule.dayOfWeek && !companyDay(company, day).closed)) {
+      intervals.push({ start: parseGridMinute(schedule.startTime), end: parseGridMinute(schedule.endTime) });
+    }
+  }
+  let starts = 1440;
+  let ends = 0;
+  for (const { start, end } of intervals) {
+    if (start < end) {
+      starts = Math.min(starts, start);
+      ends = Math.max(ends, end);
+    }
+  }
+  if (starts >= ends) {
+    ({ start: starts, end: ends } = defaultHours);
+  }
   const pixelsPerMinute = 1.15;
   const height = (ends - starts) * pixelsPerMinute;
-  const hourCount = Math.max(1, Math.floor((ends - starts) / 60));
-  const hourLabels = Array.from({ length: hourCount }, (_, index) => starts + index * 60);
+  const gridLines: number[] = [];
+  for (let minute = Math.floor(starts / slotInterval) * slotInterval + slotInterval; minute < ends; minute += slotInterval) {
+    gridLines.push(minute);
+  }
+  const hourLabels = [starts, ...Array.from({ length: 24 }, (_, hour) => hour * 60)
+    .filter((minute) => minute - starts >= 15 && ends - minute >= 20)];
   const current = now ? clock(now) : null;
-  const gridStyle = { gridTemplateColumns: `3.25rem repeat(${days.length}, minmax(0, 1fr))` };
+  const gridStyle = { gridTemplateColumns: `3.25rem repeat(${columns.length}, minmax(0, 1fr))` };
+
+  function dayBounds(day: string) {
+    const { closed, hours } = companyDay(company, day);
+    return {
+      closed,
+      opens: hours?.openTime ? parseGridMinute(hours.openTime) : starts,
+      closes: hours?.closeTime ? parseGridMinute(hours.closeTime) : ends,
+    };
+  }
 
   // Handlers globais de ponteiro para cálculo de arrasto e soltura
   function handleEventPointerDown(e: React.PointerEvent, appointment: Appointment) {
@@ -254,7 +343,6 @@ export function AgendaTimeGrid({
     if (appointment.status !== "PENDING" && appointment.status !== "CONFIRMED") return;
     setHoveredSlot(null);
     setHoveredEvent(null);
-    emptyClickRef.current = null;
     const pointerId = e.pointerId;
 
     const from = clock(appointment.startsAt);
@@ -301,30 +389,34 @@ export function AgendaTimeGrid({
       }
 
       const targetDay = targetEl.getAttribute("data-agenda-column-day") ?? dragPendingRef.current.originDate;
+      const targetColumn = targetEl.getAttribute("data-agenda-column-key") ?? targetDay;
+      const targetPersonId = targetEl.getAttribute("data-agenda-column-person") ?? appointment.collaboratorId;
       const rect = targetEl.getBoundingClientRect();
       const relY = moveEvent.clientY - rect.top;
       const rawMinute = starts + (relY / pixelsPerMinute);
 
-      // Encaixe estrito na grade de 30 em 30 minutos
-      let snappedMinute = Math.round(rawMinute / 30) * 30;
+      let snappedMinute = Math.round(rawMinute / slotInterval) * slotInterval;
       const duration = dragPendingRef.current.duration;
-      snappedMinute = Math.max(starts, Math.min(ends - duration, snappedMinute));
-
-      const { closed } = companyDay(company, targetDay);
+      const { closed, opens, closes } = dayBounds(targetDay);
+      const firstSlot = Math.ceil(opens / slotInterval) * slotInterval;
+      const lastSlot = Math.floor((closes - duration) / slotInterval) * slotInterval;
+      snappedMinute = Math.max(firstSlot, Math.min(lastSlot, snappedMinute));
       const targetIso = localDayMinuteToUtcIso(targetDay, snappedMinute, company.timezone);
       const targetStart = Date.parse(targetIso);
       const targetEnd = targetStart + duration * 60_000;
       const isPast = targetStart <= Date.now();
-      const isBlocked = overlapsScheduleBlock(blocks, targetStart, targetEnd, appointment.collaboratorId);
-      const conflict = findAppointmentConflict(appointments, appointment, targetStart, targetEnd);
+      const isBlocked = overlapsScheduleBlock(blocks, targetStart, targetEnd, targetPersonId);
+      const conflict = findAppointmentConflict(appointments, { id: appointment.id, collaboratorId: targetPersonId }, targetStart, targetEnd);
       const invalidReason = conflict ? copy.appointmentConflict(conflict.clientName)
-        : closed ? copy.closedDay : isBlocked ? copy.blockedTime : isPast ? copy.pastTime : null;
+        : closed ? copy.closedDay : isBlocked || firstSlot > lastSlot ? copy.blockedTime : isPast ? copy.pastTime : null;
 
       const target = {
         appointment: dragPendingRef.current.appointment,
         originDate: dragPendingRef.current.originDate,
         originMinute: dragPendingRef.current.originMinute,
         targetDate: targetDay,
+        targetColumn,
+        targetPersonId,
         targetMinute: snappedMinute,
         duration,
         isInvalid: invalidReason !== null,
@@ -347,9 +439,9 @@ export function AgendaTimeGrid({
 
       const target = dragTargetRef.current;
       if (event.type === "pointerup" && target &&
-        (target.targetDate !== target.originDate || target.targetMinute !== target.originMinute)) {
+        (target.targetDate !== target.originDate || target.targetMinute !== target.originMinute || target.targetPersonId !== target.appointment.collaboratorId)) {
         if (target.hasAppointmentConflict) onRescheduleConflict();
-        else if (!target.isInvalid) onRescheduleDrop?.(target.appointment, target.targetDate, target.targetMinute);
+        else if (!target.isInvalid) onRescheduleDrop?.(target.appointment, target.targetDate, target.targetMinute, target.targetPersonId);
       }
       setDragState(null);
       dragTargetRef.current = null;
@@ -364,40 +456,90 @@ export function AgendaTimeGrid({
     window.addEventListener("pointercancel", endDrag);
   }
 
-  function availableSlot(day: string, minute: number) {
-    if (minute < starts || minute >= ends) return false;
+  function availableSlot(day: string, minute: number, personId?: string, minimumStart = now) {
+    const { closed, opens, closes } = dayBounds(day);
+    if (closed || minute < opens || minute >= closes) return false;
     const start = Date.parse(localDayMinuteToUtcIso(day, minute, company.timezone));
-    return start > now && !overlapsScheduleBlock(blocks, start, start + 30 * 60_000);
+    const end = Date.parse(localDayMinuteToUtcIso(day, Math.min(minute + slotInterval, closes), company.timezone));
+    return start > minimumStart
+      && !overlapsScheduleBlock(blocks, start, end, personId)
+      && !appointments.some((row) =>
+        (!personId || row.collaboratorId === personId)
+        && (row.status === "PENDING" || row.status === "CONFIRMED" || row.status === "COMPLETED")
+        && Date.parse(row.startsAt) < end && Date.parse(row.endsAt) > start,
+      );
   }
 
-  return <div ref={viewportRef} onScroll={() => { if (hoveredEvent) setHoveredEvent(null); }} onPointerLeave={() => { if (hoveredEvent) setHoveredEvent(null); }} className="relative overflow-auto rounded-2xl border border-border-subtle bg-surface" tabIndex={0} aria-label={copy.calendar}>
-    <div className={days.length > 1 ? "min-w-198" : "min-w-0"}>
-      <div className="grid border-b border-border-subtle" style={gridStyle}>
+  function minuteAtPointer(event: React.PointerEvent<HTMLDivElement>) {
+    const y = event.clientY - event.currentTarget.getBoundingClientRect().top;
+    return Math.floor((starts + y / pixelsPerMinute) / slotInterval) * slotInterval;
+  }
+
+  function freeBounds(day: string, anchor: number, personId: string | undefined, minimumStart: number) {
+    let first = anchor;
+    let last = anchor;
+    while (availableSlot(day, first - slotInterval, personId, minimumStart)) first -= slotInterval;
+    while (availableSlot(day, last + slotInterval, personId, minimumStart)) last += slotInterval;
+    return { first, last, closes: dayBounds(day).closes };
+  }
+
+  function selectionRange(anchor: number, minute: number, { first, last, closes }: { first: number; last: number; closes: number }) {
+    const edge = Math.max(first, Math.min(last, minute));
+    return { start: Math.min(anchor, edge), end: Math.min(Math.max(anchor, edge) + slotInterval, closes) };
+  }
+
+  function clearSelection() {
+    selectionOrigin.current = null;
+    setSelection(null);
+  }
+
+  return <div ref={viewportRef} onScroll={() => { if (hoveredEvent) setHoveredEvent(null); }} onPointerLeave={() => { if (hoveredEvent) setHoveredEvent(null); }} className={`relative rounded-2xl border border-border-subtle bg-surface ${dayPeople ? "min-w-0" : "overflow-x-auto"}`} tabIndex={0} aria-label={copy.calendar}>
+    <div className={!dayPeople && days.length > 1 ? "min-w-198" : "min-w-0"}>
+      <div className={`grid border-b border-border-subtle ${dayPeople ? "sticky top-0 z-20 rounded-t-2xl bg-surface" : ""}`} style={dayPeople ? { ...gridStyle, top: "var(--agenda-header-offset, 0px)" } : gridStyle}>
         <div data-agenda-gutter aria-hidden="true" className="sticky left-0 z-30 bg-surface" />
-        {columns.map(({ day, closed }) => <button key={day} data-agenda-date={day} type="button" onClick={() => onSelect(day)} aria-pressed={day === selected}
+        {columns.map(({ key, day, closed, person }) => person ? (
+          <div key={key} className="flex min-w-0 items-center gap-1.5 overflow-hidden border-l border-border-subtle px-2 py-1.5">
+            <ProfessionalAvatar person={person} className="size-6" />
+            <span className="min-w-0 truncate text-xs font-medium text-ink" title={person.name}>{person.name}</span>
+          </div>
+        ) : <button key={key} data-agenda-date={day} type="button" onClick={() => onSelect(day)} aria-pressed={day === selected}
           className={`flex min-h-16 cursor-pointer items-center justify-center gap-2 border-l border-border-subtle px-1 text-sm hover:bg-subtle ${closed ? `${closedSurface} text-[var(--status-danger-ink)]` : "text-ink-secondary"}`}>
           <span className="min-w-0 truncate capitalize" title={closed ? copy.closed : undefined}>{formatAgendaDay(day, locale, { weekday: "short" })}</span>
           <strong className={`grid size-7 shrink-0 place-items-center rounded-lg tabular-nums ${day === today && !closed ? "bg-accent text-accent-ink" : day === selected ? "ring-1 ring-current" : ""}`}>{Number(day.slice(-2))}</strong>
         </button>)}
       </div>
 
-      <div className="grid" style={gridStyle}>
+      <div className="isolate grid" style={gridStyle}>
         <div className="sticky left-0 z-30 select-none bg-surface" aria-hidden="true" style={{ height }}>
           {hourLabels.map((minute) => <div key={minute} className="absolute inset-x-0 pr-2 pt-1 text-right text-[10px] tabular-nums text-ink-muted" style={{ top: (minute - starts) * pixelsPerMinute }}>
-            {String(minute / 60).padStart(2, "0")}:00
+            {formatMinute(minute)}
           </div>)}
+          <div className="absolute inset-x-0 bottom-0 pb-0.5 pr-2 text-right text-[10px] tabular-nums text-ink-muted">
+            {formatMinute(ends)}
+          </div>
         </div>
 
-        {columns.map(({ day, closed, hours, events: dayEvents }) => (
+        {columns.map(({ key, day, person, personId, closed, hours, events: dayEvents }) => (
           <div
-            key={day}
+            key={key}
             data-agenda-column-day={day}
-            className={`relative border-l border-border-subtle ${closed ? closedSurface : ""} ${
-              isOwner && !dragState ? hoveredSlot?.day === day ? "cursor-pointer" : "cursor-not-allowed" : ""
+            data-agenda-column-key={key}
+            data-agenda-column-person={person?.id}
+            className={`relative border-l border-border-subtle ${isOwner ? "select-none" : ""} ${closed ? closedSurface : ""} ${
+              isOwner && !dragState ? hoveredSlot?.column === key ? "cursor-pointer" : "cursor-not-allowed" : ""
             }`}
-            aria-label={closed ? copy.closed : undefined}
+            role={person ? "group" : undefined}
+            aria-label={person ? (closed ? `${person.name} · ${copy.closed}` : person.name) : closed ? copy.closed : undefined}
             style={{ height }}
             onPointerMove={(e) => {
+              const origin = selectionOrigin.current;
+              if (origin?.pointerId === e.pointerId) {
+                if (e.pointerType === "mouse" && Math.abs(e.clientY - origin.y) > 6) {
+                  origin.bounds ??= freeBounds(day, origin.minute, personId, Date.now());
+                  setSelection({ column: key, ...selectionRange(origin.minute, minuteAtPointer(e), origin.bounds) });
+                }
+                return;
+              }
               if (!isOwner || !blocksReady || closed || dragState !== null) {
                 if (hoveredSlot) setHoveredSlot(null);
                 return;
@@ -406,50 +548,60 @@ export function AgendaTimeGrid({
                 if (hoveredSlot) setHoveredSlot(null);
                 return;
               }
-              const rect = e.currentTarget.getBoundingClientRect();
-              const relY = e.clientY - rect.top;
-              const rawMinute = starts + (relY / pixelsPerMinute);
-              const snappedMinute = Math.floor(rawMinute / 30) * 30;
-              if (!availableSlot(day, snappedMinute)) {
+              const snappedMinute = minuteAtPointer(e);
+              if (!availableSlot(day, snappedMinute, personId)) {
                 if (hoveredSlot) setHoveredSlot(null);
                 return;
               }
-              if (!hoveredSlot || hoveredSlot.day !== day || hoveredSlot.minute !== snappedMinute) {
-                setHoveredSlot({ day, minute: snappedMinute });
+              if (!hoveredSlot || hoveredSlot.column !== key || hoveredSlot.minute !== snappedMinute) {
+                setHoveredSlot({ column: key, minute: snappedMinute });
               }
             }}
             onPointerLeave={() => {
               if (hoveredSlot) setHoveredSlot(null);
             }}
             onPointerDown={(e) => {
-              if (e.button !== 0 || !isOwner || !blocksReady) return;
+              if (e.button !== 0 || !isOwner || !blocksReady || closed || !onEmptySlotSelect || selectionOrigin.current) return;
               if ((e.target as HTMLElement).closest("[data-agenda-event-wrapper], [data-agenda-schedule-block]")) return;
-              emptyClickRef.current = { day, x: e.clientX, y: e.clientY };
+              const minute = minuteAtPointer(e);
+              if (!availableSlot(day, minute, personId, Date.now())) return;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              selectionOrigin.current = { minute, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+              setHoveredSlot(null);
+              setHoveredEvent(null);
             }}
             onPointerUp={(e) => {
-              if (!emptyClickRef.current || emptyClickRef.current.day !== day) return;
-              const startPoint = emptyClickRef.current;
-              emptyClickRef.current = null;
-              const dist = Math.hypot(e.clientX - startPoint.x, e.clientY - startPoint.y);
-              if (dist > 6) return;
-              if (closed || !isOwner || !blocksReady) return;
-
-              const rect = e.currentTarget.getBoundingClientRect();
-              const relY = e.clientY - rect.top;
-              const rawMinute = starts + (relY / pixelsPerMinute);
-              const snappedMinute = Math.floor(rawMinute / 30) * 30;
-              if (!availableSlot(day, snappedMinute)) return;
-
-              onEmptySlotClick?.(day, snappedMinute);
+              const origin = selectionOrigin.current;
+              if (origin?.pointerId !== e.pointerId) return;
+              clearSelection();
+              const minimumStart = Date.now();
+              if (!blocksReady || !availableSlot(day, origin.minute, personId, minimumStart)) return;
+              const moved = Math.abs(e.clientY - origin.y) > 6;
+              if (e.pointerType === "mouse" && moved) {
+                const { start, end } = selectionRange(origin.minute, minuteAtPointer(e), freeBounds(day, origin.minute, personId, minimumStart));
+                onEmptySlotSelect?.(day, start, end, personId);
+              } else if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) <= 6) {
+                onEmptySlotSelect?.(day, origin.minute, undefined, personId);
+              }
+            }}
+            onLostPointerCapture={(e) => {
+              if (selectionOrigin.current?.pointerId === e.pointerId) clearSelection();
             }}
           >
+            {selection?.column === key && (
+              <div className="pointer-events-none absolute inset-x-1 z-10 flex flex-col justify-between overflow-hidden rounded-md border border-blue-500 bg-blue-500/35 text-[11px] font-semibold tabular-nums text-ink"
+                style={{ top: (selection.start - starts) * pixelsPerMinute, height: (selection.end - selection.start) * pixelsPerMinute }}>
+                <span className="px-2">{formatMinute(selection.start)}</span>
+                <span className="bg-blue-500/20 px-2">{formatMinute(selection.end)}</span>
+              </div>
+            )}
             {/* Feedback sutil de hover com ícone + e horário em slots livres */}
-            {blocksReady && hoveredSlot?.day === day && !dragState && availableSlot(day, hoveredSlot.minute) && (
+            {blocksReady && hoveredSlot?.column === key && !dragState && availableSlot(day, hoveredSlot.minute, personId) && (
               <div
                 className="pointer-events-none absolute inset-x-1 z-5 flex items-center gap-1.5 rounded-lg border border-dashed border-accent/45 bg-accent/8 px-2 text-[11px] font-semibold text-accent transition-opacity animate-in fade-in-0 duration-150"
                 style={{
                   top: (hoveredSlot.minute - starts) * pixelsPerMinute,
-                  height: 30 * pixelsPerMinute,
+                  height: Math.min(slotInterval, dayBounds(day).closes - hoveredSlot.minute) * pixelsPerMinute,
                 }}
               >
                 <Plus size={13} className="shrink-0" />
@@ -458,14 +610,13 @@ export function AgendaTimeGrid({
             )}
 
             {!closed && hours?.openTime && hours.closeTime && <>
-              <div aria-hidden="true" className="absolute inset-x-0 top-0 bg-subtle/65" style={{ height: Math.max(0, (parse(hours.openTime) - starts) * pixelsPerMinute) }} />
-              <div aria-hidden="true" className="absolute inset-x-0 bottom-0 bg-subtle/65" style={{ height: Math.max(0, (ends - parse(hours.closeTime)) * pixelsPerMinute) }} />
+              <div aria-hidden="true" className="absolute inset-x-0 top-0 bg-subtle/65" style={{ height: Math.max(0, (parseGridMinute(hours.openTime) - starts) * pixelsPerMinute) }} />
+              <div aria-hidden="true" className="absolute inset-x-0 bottom-0 bg-subtle/65" style={{ height: Math.max(0, (ends - parseGridMinute(hours.closeTime)) * pixelsPerMinute) }} />
             </>}
-            {hourLabels.map((minute) => <div key={minute} aria-hidden="true" className="pointer-events-none absolute inset-x-0 border-t border-border-subtle" style={{ top: (minute - starts) * pixelsPerMinute }} />)}
-            {hourLabels.map((minute) => <div key={minute} aria-hidden="true" className="pointer-events-none absolute inset-x-0 border-t border-dashed border-border-subtle/75" style={{ top: (minute + 30 - starts) * pixelsPerMinute }} />)}
+            {gridLines.map((minute) => <div key={minute} aria-hidden="true" className={`pointer-events-none absolute inset-x-0 border-t ${minute % 60 === 0 ? "border-border-subtle" : "border-dashed border-border-subtle/75"}`} style={{ top: (minute - starts) * pixelsPerMinute }} />)}
 
             {/* Pré-visualização do slot de destino durante o arrasto */}
-            {dragState && dragState.targetDate === day && (
+            {dragState && dragState.targetColumn === key && (
               <div
                 className={`pointer-events-none absolute inset-x-1 z-25 flex flex-col justify-center rounded-lg border-2 border-dashed p-1.5 text-xs font-semibold shadow-sm transition-all ${
                   dragState.isInvalid
@@ -534,10 +685,10 @@ export function AgendaTimeGrid({
                   }}
                   className={`absolute z-10 px-0.5 select-none transition-opacity ${
                     isBeingDragged ? "opacity-35 pointer-events-none" : ""
-                  } ${isDraggable ? "group/agenda-drag cursor-pointer active:cursor-grabbing" : ""}`}
+                  } ${isDraggable ? "group/agenda-drag cursor-pointer active:cursor-grabbing" : ""} ${isDraggable && dayPeople ? "touch-none" : ""}`}
                   style={position}
                 >
-                  {renderBlock(row, end - start < 30)}
+                  {renderBlock(row, end - start < 22)}
                 </div>
               );
             })}

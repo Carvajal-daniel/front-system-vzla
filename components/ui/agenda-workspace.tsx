@@ -1,25 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, Users, Wallet, XCircle } from "lucide-react";
-import { toast } from "sonner";
-import { agendaBoundary, agendaClock, agendaMonth, agendaRange, agendaViews, findAppointmentConflict, formatAgendaDay, isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, localDayMinuteToUtcIso, overlapsScheduleBlock, shiftAgendaDay, shiftAgendaMonth } from "@/lib/agenda";
+import { toast, Toaster } from "sonner";
+import { agendaBoundary, agendaClock, agendaMonth, agendaRange, agendaViews, findAppointmentConflict, formatAgendaDay, isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, localDayMinuteToUtcIso, overlapsScheduleBlock, shiftAgendaDay, shiftAgendaMonth, whatsAppReminder } from "@/lib/agenda";
 import type { AgendaView } from "@/lib/agenda";
 import { ApiError, apiRequest } from "@/lib/api-client";
+import { agendaBookingSignal } from "@/lib/agenda-sync";
 import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone, getTodayIsoDateInTimezone } from "@/lib/format";
 import { agendaStrings } from "@/lib/i18n/agenda";
 import { useLocale } from "@/lib/i18n/locale-context";
-import type { Appointment, AppointmentStatus, ScheduleBlock, UpdatableAppointmentStatus } from "@/lib/types/appointment";
+import { useTheme } from "@/lib/theme-context";
+import type { Appointment, AppointmentStatus, CreateAppointmentPayload, ScheduleBlock, UpdatableAppointmentStatus } from "@/lib/types/appointment";
 import type { MeResponse } from "@/lib/types/auth";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
+import type { PublicAvailabilityResponse } from "@/lib/types/public-booking";
 import type { Service } from "@/lib/types/service";
-import type { Collaborator, CollaboratorsListResponse } from "@/lib/types/team";
+import type { Collaborator, CollaboratorsListResponse, WorkScheduleSlot } from "@/lib/types/team";
 import { getCanonicalClientId, useClients } from "@/lib/use-clients";
-import { useWaitlist } from "@/lib/use-waitlist";
+import { useWaitlist, waitlistCandidates, type WaitlistEntry } from "@/lib/use-waitlist";
 import { AgendaAppointmentDetails, AgendaCard, WhatsAppLink } from "./agenda-card";
 import type { AgendaItemProps, AgendaPayment } from "./agenda-card";
+import { useCompanySettings } from "@/lib/use-company-settings";
 import { AgendaMonthGrid, agendaRangeLabel, AgendaTimeGrid } from "./agenda-calendar";
 import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect, ProfessionalAvatar } from "./agenda-controls";
 import type { AgendaPerson } from "./agenda-controls";
@@ -36,6 +40,7 @@ type EditorTarget =
       mode: "new";
       date?: string;
       time?: string;
+      endTime?: string;
       personId?: string;
       initialTab?: AgendaEditorTab;
       initialClientName?: string;
@@ -49,6 +54,12 @@ const statuses: AppointmentStatus[] = ["PENDING", "CONFIRMED", "COMPLETED", "CAN
 const emptyAppointments: Appointment[] = [];
 const emptyBlocks: ScheduleBlock[] = [];
 const metricIcons = [CalendarDays, CheckCircle2, Clock3, XCircle];
+const metricIconTones = [
+  "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+];
 const control = "inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-2.5 text-xs font-semibold text-ink-secondary hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-accent";
 const alertColors: Record<AlertType, string> = {
   PENDING: "border-amber-500/40 bg-amber-500/12 text-amber-400",
@@ -56,33 +67,90 @@ const alertColors: Record<AlertType, string> = {
   unpaidCompleted: "border-orange-500/40 bg-orange-500/12 text-orange-400",
 };
 
-function useAgendaRange<T>(path: string, from: string, to: string, timezone: string, refresh: number, empty: T[], enabled = true) {
-  const key = `${path}/${from}/${to}/${timezone}/${refresh}`;
+function useAgendaRange<T extends { id: string }>(
+  path: string, from: string, to: string, timezone: string, refresh: number, empty: T[],
+  enabled = true, syncKey?: string, onSyncedRows?: (rows: T[], previousIds?: ReadonlyMap<string, string>) => void,
+) {
+  const key = `${path}/${from}/${to}/${timezone}/${refresh}/${syncKey ?? ""}`;
   const [result, setResult] = useState<{ key: string; rows?: T[]; error?: boolean }>({ key: "" });
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    void apiRequest<T[] | { appointments?: T[]; blocks?: T[]; items?: T[] }>(path, {
-      query: { from: agendaBoundary(from, timezone), to: agendaBoundary(to, timezone) },
-      signal: controller.signal,
-    }).then((response) => {
-      const rows = Array.isArray(response)
-        ? response
-        : Array.isArray(response?.appointments)
-          ? response.appointments
-          : Array.isArray(response?.blocks)
-            ? response.blocks
-            : Array.isArray(response?.items)
-              ? response.items
-              : [];
-      if (!controller.signal.aborted) setResult({ key, rows });
-    }).catch(() => {
-      if (!controller.signal.aborted) setResult({ key, error: true });
-    });
-    return () => controller.abort();
-  }, [enabled, from, key, path, timezone, to]);
+    let snapshot: Map<string, string> | undefined;
+    let inFlight = false;
+    let revalidateAfterRequest = false;
+    let lastSignal: string | undefined;
+
+    async function load(background = false) {
+      if (inFlight || controller.signal.aborted) return;
+      inFlight = true;
+      try {
+        const response = await apiRequest<T[] | { appointments?: T[]; blocks?: T[]; items?: T[] }>(path, {
+          query: { from: agendaBoundary(from, timezone), to: agendaBoundary(to, timezone) },
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        const rows = Array.isArray(response) ? response
+          : Array.isArray(response?.appointments) ? response.appointments
+          : Array.isArray(response?.blocks) ? response.blocks
+          : Array.isArray(response?.items) ? response.items : [];
+        const next = new Map(rows.map((row) => [row.id, JSON.stringify(row)]));
+        if (!snapshot || snapshot.size !== next.size || [...next].some(([id, value]) => snapshot?.get(id) !== value)) {
+          onSyncedRows?.(rows, snapshot);
+          snapshot = next;
+          setResult({ key, rows });
+        }
+      } catch {
+        if (!controller.signal.aborted && !background) setResult({ key, error: true });
+      } finally {
+        inFlight = false;
+        if (revalidateAfterRequest) {
+          revalidateAfterRequest = false;
+          void load(true);
+        }
+      }
+    }
+
+    void load();
+    if (!syncKey) return () => controller.abort();
+
+    function revalidate() {
+      if (inFlight) revalidateAfterRequest = true;
+      else void load(true);
+    }
+    function onVisibilityChange() {
+      if (!document.hidden) revalidate();
+    }
+    function onBookingSignal(id: unknown) {
+      if (typeof id !== "string" || !id || id === lastSignal) return;
+      lastSignal = id;
+      revalidate();
+    }
+    function onStorage(event: StorageEvent) {
+      if (event.key === syncKey) onBookingSignal(event.newValue);
+    }
+    let channel: BroadcastChannel | undefined;
+    try {
+      if (typeof BroadcastChannel !== "undefined") channel = new BroadcastChannel(syncKey);
+    } catch {
+      // Storage events and polling remain available.
+    }
+    if (channel) channel.onmessage = (event) => onBookingSignal(event.data);
+    const timer = window.setInterval(() => void load(true), 10_000);
+    window.addEventListener("focus", revalidate);
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      controller.abort();
+      channel?.close();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", revalidate);
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [enabled, from, key, onSyncedRows, path, syncKey, timezone, to]);
   return {
-    rows: result.key === key ? result.rows ?? empty : empty,
+    rows: enabled && result.key === key ? result.rows ?? empty : empty,
     loading: enabled && result.key !== key,
     error: enabled && result.key === key && result.error,
   };
@@ -171,12 +239,14 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   renderReceipt?: (props: { appointmentId: string; timezone: string; onClose: () => void; onChanged: () => void }) => ReactNode;
 }) {
   const { locale, t } = useLocale();
+  const { mode } = useTheme();
   const copy = agendaStrings(locale);
   const searchParams = useSearchParams();
   const targetId = searchParams.get("appointmentId");
   const actionParam = searchParams.get("action");
   const { company } = session;
   const timezone = company?.timezone || "America/Sao_Paulo";
+  const { settings } = useCompanySettings(company?.id ?? "", undefined, !!company);
   const currency = company?.currency ?? "BRL";
   const isOwner = session.role === "OWNER";
   const canManagePayments = isOwner && !!renderReceipt;
@@ -185,7 +255,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [focus, setFocus] = useState(initialToday);
   const [miniMonth, setMiniMonth] = useState(initialToday);
   const [view, setView] = useState<AgendaView>("week");
-  const [personId, setPersonId] = useState("");
+  const [selectedPersonIds, setSelectedPersonIds] = useState<ReadonlySet<string> | null>(null);
   const [status, setStatus] = useState<Filter>("");
   const [highlightedId, setHighlightedId] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -196,6 +266,25 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [cancelReason, setCancelReason] = useState("");
   const [editor, setEditor] = useState<EditorTarget>(null);
   const waitlist = useWaitlist(company.id);
+  const [vacancies, setVacancies] = useState<Appointment[]>([]);
+  const [offer, setOffer] = useState<{ vacancy: Appointment; entry: WaitlistEntry; serviceName: string } | null>(null);
+  const [offerError, setOfferError] = useState("");
+  const [offerRetry, setOfferRetry] = useState(0);
+  const [placingWaitlist, setPlacingWaitlist] = useState(false);
+  const placementPending = useRef(false);
+  const seenCancellations = useRef(new Set<string>());
+  const [watchStartedAt] = useState(Date.now);
+  const seenBookings = useRef(new Set<string>());
+  const onSyncedAppointments = useCallback((rows: Appointment[], previousIds?: ReadonlyMap<string, string>) => {
+    let received = false;
+    for (const row of rows) {
+      if (seenBookings.current.has(row.id)) continue;
+      seenBookings.current.add(row.id);
+      if (previousIds ? !previousIds.has(row.id) : Date.parse(row.createdAt) >= watchStartedAt) received = true;
+    }
+    if (received) toast.info(copy.newBookingReceived);
+  }, [copy.newBookingReceived, watchStartedAt]);
+  const vacancy = vacancies[0];
   // Carrega a base de clientes uma única vez no workspace para identificar primeira visita e cadastro automático
   const {
     clients: clientRecords,
@@ -217,15 +306,103 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [waitlistDrawerOpen, setWaitlistDrawerOpen] = useState(false);
   const [pendingReschedule, setPendingReschedule] = useState<{
     appointment: Appointment;
+    targetPersonId: string;
     targetStartsAt: string;
     targetEndsAt: string;
-    targetDate: string;
-    targetMinute: number;
   } | null>(null);
   const [receiptId, setReceiptId] = useState("");
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const [catalog, setCatalog] = useState<{ people: Collaborator[]; services: Service[]; error: boolean }>({ people: [], services: [], error: false });
+
+  const registerVacancy = useCallback((row: Appointment) => {
+    const key = `${row.id}/${row.updatedAt}`;
+    if (row.status !== "CANCELED" || Date.parse(row.startsAt) <= Date.now() || seenCancellations.current.has(key)) return false;
+    seenCancellations.current.add(key);
+    setVacancies((current) => [...current, row]);
+    return true;
+  }, []);
+
+  const hasWaitlist = waitlist.count > 0;
+  useEffect(() => {
+    if (!isOwner || !hasWaitlist) return;
+    let activeRequest: AbortController | undefined;
+    function checkCancellations() {
+      if (activeRequest || document.hidden) return;
+      const request = new AbortController();
+      activeRequest = request;
+      void apiRequest<Appointment[]>("/appointments", {
+        query: { status: "CANCELED", from: new Date().toISOString() },
+        signal: request.signal,
+      }).then((rows) => {
+        if (request.signal.aborted) return;
+        let changed = false;
+        const recent = rows.filter((row) => Date.parse(row.updatedAt) >= watchStartedAt)
+          .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+        for (const row of recent) if (registerVacancy(row)) changed = true;
+        if (changed) setRefresh((current) => current + 1);
+      }).catch(() => {
+        // The next poll or focus event retries the read.
+      }).finally(() => { activeRequest = undefined; });
+    }
+    checkCancellations();
+    const timer = window.setInterval(checkCancellations, 15_000);
+    window.addEventListener("focus", checkCancellations);
+    document.addEventListener("visibilitychange", checkCancellations);
+    return () => {
+      activeRequest?.abort();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", checkCancellations);
+      document.removeEventListener("visibilitychange", checkCancellations);
+    };
+  }, [company.id, hasWaitlist, isOwner, registerVacancy, watchStartedAt]);
+
+  useEffect(() => {
+    if (!vacancy || offer?.vacancy === vacancy && waitlist.entries.some((entry) => entry.id === offer.entry.id)) return;
+    const candidates = waitlistCandidates(waitlist.entries, vacancy, timezone);
+    const request = new AbortController();
+    const startsAt = Date.parse(vacancy.startsAt);
+    const endsAt = Date.parse(vacancy.endsAt);
+    const date = clock(startsAt).date;
+
+    async function findOffer(opening: Appointment) {
+      const availability = new Map<string, boolean>();
+      for (const entry of candidates) {
+        const clientId = getCanonicalClientId(entry.clientPhone, entry.clientName);
+        if (clientRecords.some((client) => client.id === clientId && client.isBlocked)) continue;
+        if (!availability.has(entry.serviceId)) {
+          try {
+            const result = await apiRequest<PublicAvailabilityResponse>("/appointments/availability", {
+              query: { serviceId: entry.serviceId, collaboratorId: opening.collaboratorId, date },
+              signal: request.signal,
+            });
+            availability.set(entry.serviceId, result.slots.some((slot) =>
+              Date.parse(slot.startsAt) === startsAt && Date.parse(slot.endsAt) <= endsAt,
+            ));
+          } catch (error) {
+            if (!(error instanceof ApiError) || ![400, 403, 404, 409, 422].includes(error.status)) throw error;
+            availability.set(entry.serviceId, false);
+          }
+        }
+        if (request.signal.aborted) return;
+        if (availability.get(entry.serviceId)) {
+          const serviceName = catalog.services.find((service) => service.id === entry.serviceId)?.name
+            || entry.serviceName || (opening.serviceId === entry.serviceId ? opening.serviceNameSnapshot : "Serviço");
+          setOfferError("");
+          setOffer({ vacancy: opening, entry, serviceName });
+          return;
+        }
+      }
+      if (!request.signal.aborted) {
+        setOfferError("");
+        setVacancies((current) => current.filter((row) => row !== opening));
+      }
+    }
+    void findOffer(vacancy).catch(() => {
+      if (!request.signal.aborted) setOfferError("Não foi possível verificar a disponibilidade da fila de espera.");
+    });
+    return () => request.abort();
+  }, [catalog.services, clientRecords, clock, offer, offerRetry, timezone, vacancy, waitlist.entries]);
 
   useEffect(() => {
     if (actionParam === "new-appointment") {
@@ -238,9 +415,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const range = useMemo(() => agendaRange(view, focus), [focus, view]);
   const month = useMemo(() => agendaMonth(miniMonth), [miniMonth]);
   const path = isOwner ? "/appointments" : "/me/appointments";
-  const main = useAgendaRange(path, range.from, range.to, timezone, refresh, emptyAppointments);
-  // Garante busca completa do mês visível no mini-calendário lateral independentemente da vista ativa
-  const mini = useAgendaRange(path, month.from, month.to, timezone, refresh, emptyAppointments);
+  const bookingSignal = agendaBookingSignal(company.id);
+  const sameMonthRange = month.from === range.from && month.to === range.to;
+  const main = useAgendaRange(path, range.from, range.to, timezone, refresh, emptyAppointments, true, bookingSignal, onSyncedAppointments);
+  const mini = useAgendaRange(path, month.from, month.to, timezone, refresh, emptyAppointments, !sameMonthRange, bookingSignal, onSyncedAppointments);
+  const openedAppointment = opened && (main.rows.find((row) => row.id === opened.id) ?? opened);
   const schedule = useAgendaRange(isOwner ? "/schedule-blocks" : "/me/schedule-blocks",
     range.from, range.to, timezone, refresh, emptyBlocks, view === "day" || view === "week");
   const global = useGlobalAppointments(path, canManagePayments, refresh + changedPayment);
@@ -288,15 +467,37 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     void apiRequest<Appointment>(`/appointments/${encodeURIComponent(targetId)}`, { signal: ctl.signal }).then((row) => {
       if (ctl.signal.aborted) return;
       const date = clock(row.startsAt).date;
-      setFocus(date); setMiniMonth(date); setOpened(row); setPersonId(""); setStatus("");
+      setFocus(date); setMiniMonth(date); setOpened(row); setSelectedPersonIds(null); setStatus("");
     }).catch((error) => { if (!ctl.signal.aborted) setActionError(error instanceof ApiError && error.status === 404 ? copy.empty : t.errors.networkDescription); });
     return () => ctl.abort();
   }, [clock, copy.empty, targetId, t.errors.networkDescription]);
 
   const staff = useMemo(() => new Map<string, AgendaPerson>((isOwner ? catalog.people : [session]).map((person) => [person.id, person])), [isOwner, catalog.people, session]);
-  const blocks = useMemo(() => schedule.rows.filter((block) => !personId || !block.collaboratorId || block.collaboratorId === personId),
-    [personId, schedule.rows]);
-  const periodRows = useMemo(() => main.rows.filter((row) => !personId || row.collaboratorId === personId), [main.rows, personId]);
+  const activePeople = useMemo(() => isOwner ? catalog.people.filter((person) => person.isActive) : [session], [isOwner, catalog.people, session]);
+  const selectedPeople = useMemo(() => selectedPersonIds === null ? activePeople : activePeople.filter(({ id }) => selectedPersonIds.has(id)),
+    [activePeople, selectedPersonIds]);
+  const showTimeGrid = view === "day" || view === "week";
+  const [workSchedules, setWorkSchedules] = useState<{ people: AgendaPerson[]; slots: WorkScheduleSlot[] }>();
+  useEffect(() => {
+    if (!showTimeGrid) return;
+    const controller = new AbortController();
+    const paths = isOwner
+      ? selectedPeople.map(({ id }) => `/collaborators/${encodeURIComponent(id)}/work-schedules`)
+      : ["/me/work-schedules"];
+    void Promise.all(paths.map((path) =>
+      apiRequest<{ schedules: WorkScheduleSlot[] } | WorkScheduleSlot[]>(path, { signal: controller.signal })
+        .then((response) => Array.isArray(response) ? response : response.schedules ?? [])
+        .catch(() => []),
+    )).then((schedules) => {
+      if (!controller.signal.aborted) setWorkSchedules({ people: selectedPeople, slots: schedules.flat() });
+    });
+    return () => controller.abort();
+  }, [isOwner, selectedPeople, showTimeGrid, refresh]);
+  const filteredPersonIds = useMemo(() => selectedPersonIds === null ? null : new Set(selectedPeople.map(({ id }) => id)), [selectedPeople, selectedPersonIds]);
+  const gridPersonId = selectedPeople.length === 1 ? selectedPeople[0].id : undefined;
+  const blocks = useMemo(() => schedule.rows.filter((block) => !filteredPersonIds || !block.collaboratorId || filteredPersonIds.has(block.collaboratorId)),
+    [filteredPersonIds, schedule.rows]);
+  const periodRows = useMemo(() => main.rows.filter((row) => !filteredPersonIds || filteredPersonIds.has(row.collaboratorId)), [main.rows, filteredPersonIds]);
   const metricRows = view === "month" ? periodRows.filter((row) => clock(row.startsAt).date.slice(0, 7) === focus.slice(0, 7)) : periodRows;
   const miniCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -304,13 +505,13 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     for (const row of mini.rows) if (row?.id) all.set(row.id, row);
     for (const row of main.rows) if (row?.id) all.set(row.id, row);
     for (const row of all.values()) {
-      if (personId && row.collaboratorId !== personId) continue;
+      if (filteredPersonIds && !filteredPersonIds.has(row.collaboratorId)) continue;
       if (!row.startsAt || Number.isNaN(Date.parse(row.startsAt))) continue;
       const day = clock(row.startsAt).date;
       counts.set(day, (counts.get(day) ?? 0) + 1);
     }
     return counts;
-  }, [mini.rows, main.rows, personId, clock]);
+  }, [mini.rows, main.rows, filteredPersonIds, clock]);
   const paymentIds = useMemo(() => canManagePayments ? [...new Set([...periodRows.map((row) => row.id), ...(opened ? [opened.id] : [])])].sort().join(",") : "", [canManagePayments, opened, periodRows]);
   const paymentKey = `${paymentIds}/${changedPayment}/${refresh}`;
   const [pay, setPay] = useState<{ key: string; rows?: Map<string, AgendaPayment>; error?: boolean }>({ key: "" });
@@ -325,25 +526,33 @@ export function AgendaWorkspace({ session, renderReceipt }: {
 
   const visiblePayments = pay.key === paymentKey ? pay.rows : undefined;
   const paymentError = pay.key === paymentKey && pay.error;
-  const paymentLoading = !!paymentIds && pay.key !== paymentKey;
+  const displayedPayments = visiblePayments ?? (pay.key.endsWith(`/${changedPayment}/${refresh}`) ? pay.rows : undefined);
+  const paymentLoading = pay.key !== paymentKey && !displayedPayments && periodRows.some((row) => row.status === "COMPLETED");
   const readyToComplete = useMemo(() => global.confirmed.filter((row) => isReadyToComplete(row, now)), [global.confirmed, now]);
   const shown = useMemo(() => periodRows.filter((row) => {
     if (status === "readyToComplete") return isReadyToComplete(row, now);
-    if (status === "unpaidCompleted") return isUnpaidCompleted(row, visiblePayments?.get(row.id));
+    if (status === "unpaidCompleted") return isUnpaidCompleted(row, displayedPayments?.get(row.id));
     return filterStatus(row, status);
-  }), [now, periodRows, status, visiblePayments]);
+  }), [now, periodRows, status, displayedPayments]);
   const rowsByDay = useMemo(() => {
     const rows = new Map<string, Appointment[]>();
     for (const row of shown) {
       if (!row?.startsAt || Number.isNaN(Date.parse(row.startsAt))) continue;
       const date = clock(row.startsAt).date;
-      const day = date < range.from ? range.from : date;
-      const group = rows.get(day) ?? [];
-      group.push(row);
-      rows.set(day, group);
+      const startDay = date < range.from ? range.from : date;
+      let appointmentDays = [startDay];
+      if (showTimeGrid && Number.isFinite(Date.parse(row.endsAt))) {
+        const end = clock(row.endsAt);
+        appointmentDays = range.days.filter((day) => day >= startDay && (day < end.date || (day === end.date && end.minute > 0)));
+      }
+      for (const day of appointmentDays) {
+        const group = rows.get(day) ?? [];
+        group.push(row);
+        rows.set(day, group);
+      }
     }
     return rows;
-  }, [clock, shown, range.from]);
+  }, [clock, shown, range.days, range.from, showTimeGrid]);
   const monthCounts = useMemo(() => new Map(Array.from(rowsByDay, ([day, rows]) => [day, rows.length])), [rowsByDay]);
   const alertItems: { filter: AlertType; rows: Appointment[]; countLabel: (count: number) => string; icon: typeof Clock3 }[] = [
     { filter: "PENDING", rows: global.pending, countLabel: copy.pendingConfirmationCount, icon: CalendarDays },
@@ -352,8 +561,8 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   ];
 
   const metrics: { filter: StatusFilter; label: string; count: number }[] = [
-    { filter: "", label: copy.total, count: metricRows.length },
-    ...([ ["COMPLETED", copy.completed], ["PENDING", copy.pending], ["CANCELED_OR_ABSENT", copy.canceled] ] as const)
+    { filter: "", label: isOwner ? "Total" : copy.total, count: metricRows.length },
+    ...([ ["COMPLETED", copy.completed], ["PENDING", isOwner ? "Pendientes" : copy.pending], ["CANCELED_OR_ABSENT", copy.canceled] ] as const)
       .map(([filter, label]) => ({ filter, label, count: metricRows.filter((row) => filterStatus(row, filter)).length })),
   ];
   const expectedCommission = isOwner ? 0 : metricRows
@@ -365,7 +574,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   function openAlert(row: Appointment, filter: AlertType) {
     navigate(clock(row.startsAt).date);
     if (view === "month" || view === "list") setView("day");
-    setPersonId("");
+    setSelectedPersonIds(null);
     setStatus(filter);
     setOpenedFromAlert(true);
     setHighlightedId(row.id);
@@ -398,31 +607,30 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     navigate(view === "month" || view === "list" ? shiftAgendaMonth(focus, direction) : shiftAgendaDay(focus, direction * (view === "week" ? 7 : 1)));
   }
 
-  function handleRescheduleDrop(appointment: Appointment, targetDate: string, targetMinute: number) {
+  function handleRescheduleDrop(appointment: Appointment, targetDate: string, targetMinute: number, targetPersonId: string) {
     const targetStartsAt = localDayMinuteToUtcIso(targetDate, targetMinute, timezone);
     const durationMs = appointment.serviceDurationMinutesSnapshot * 60_000;
     const targetEndsAt = new Date(Date.parse(targetStartsAt) + durationMs).toISOString();
-    if (overlapsScheduleBlock(schedule.rows, Date.parse(targetStartsAt), Date.parse(targetEndsAt), appointment.collaboratorId)) return;
+    if (overlapsScheduleBlock(schedule.rows, Date.parse(targetStartsAt), Date.parse(targetEndsAt), targetPersonId)) return;
     setPendingReschedule({
       appointment,
+      targetPersonId,
       targetStartsAt,
       targetEndsAt,
-      targetDate,
-      targetMinute,
     });
   }
 
   async function confirmReschedule() {
     if (!pendingReschedule || busy) return;
-    const { appointment, targetStartsAt, targetEndsAt } = pendingReschedule;
+    const { appointment, targetPersonId, targetStartsAt, targetEndsAt } = pendingReschedule;
     const start = Date.parse(targetStartsAt);
     const end = Date.parse(targetEndsAt);
-    if (findAppointmentConflict(main.rows, appointment, start, end)) {
+    if (findAppointmentConflict(main.rows, { id: appointment.id, collaboratorId: targetPersonId }, start, end)) {
       setPendingReschedule(null);
       toast.warning(copy.professionalAlreadyBooked);
       return;
     }
-    if (overlapsScheduleBlock(schedule.rows, start, end, appointment.collaboratorId)) {
+    if (overlapsScheduleBlock(schedule.rows, start, end, targetPersonId)) {
       setPendingReschedule(null);
       toast.error(copy.blockedTime);
       return;
@@ -432,7 +640,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     try {
       await apiRequest<Appointment>(`/appointments/${appointment.id}/reschedule`, {
         method: "PATCH",
-        body: { startsAt: targetStartsAt },
+        body: { startsAt: targetStartsAt, ...(targetPersonId !== appointment.collaboratorId && { collaboratorId: targetPersonId }) },
       });
       toast.success(copy.rescheduledSuccess);
       setRefresh((value) => value + 1);
@@ -449,23 +657,74 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     }
   }
 
-  function handleEmptySlotClick(date: string, minute: number) {
+  function handleEmptySlotSelect(date: string, minute: number, endMinute?: number, targetPersonId?: string) {
     if (!isOwner) return;
-    const targetIso = localDayMinuteToUtcIso(date, minute, timezone);
     setEditor({
       mode: "new",
       date,
-      time: targetIso,
-      personId: personId || undefined,
+      time: localDayMinuteToUtcIso(date, minute, timezone),
+      endTime: endMinute === undefined ? undefined : localDayMinuteToUtcIso(date, endMinute, timezone),
+      personId: targetPersonId,
     });
   }
 
+  function dismissWaitlistOffer() {
+    setOffer(null);
+    setOfferError("");
+    setVacancies((current) => current.slice(1));
+  }
+
+  async function confirmWaitlistPlacement() {
+    if (!offer || offer.vacancy !== vacancy || placementPending.current) return;
+    if (!waitlist.entries.some((entry) => entry.id === offer.entry.id)) return;
+    placementPending.current = true;
+    setPlacingWaitlist(true);
+    setOfferError("");
+    const { entry } = offer;
+    const payload: CreateAppointmentPayload = {
+      serviceId: entry.serviceId,
+      collaboratorId: vacancy.collaboratorId,
+      startsAt: vacancy.startsAt,
+      clientName: entry.clientName,
+      clientPhone: entry.clientPhone,
+      notes: entry.notes,
+      initialStatus: "CONFIRMED",
+    };
+    async function bookEntry() {
+      if (!waitlist.hasEntry(entry.id)) return null;
+      const row = await apiRequest<Appointment>("/appointments", { method: "POST", body: payload });
+      waitlist.removeEntry(entry.id);
+      return row;
+    }
+    try {
+      const row = navigator.locks
+        ? await navigator.locks.request(`waitlist-placement/${company.id}/${entry.id}`, bookEntry)
+        : await bookEntry();
+      dismissWaitlistOffer();
+      if (!row) return;
+      saved(row);
+      const link = whatsAppReminder(row, locale, timezone, "placement");
+      toast.success("Encaixe confirmado!", link ? {
+        duration: 15_000,
+        action: { label: "Enviar WhatsApp", onClick: () => window.open(link, "_blank", "noopener,noreferrer") },
+      } : undefined);
+    } catch (failure) {
+      setOfferError(failure instanceof ApiError && failure.status === 409
+        ? "O horário já está ocupado. O cliente continua na fila de espera."
+        : "Não foi possível confirmar o encaixe. O cliente continua na fila de espera.");
+    } finally {
+      placementPending.current = false;
+      setPlacingWaitlist(false);
+    }
+  }
+
   function saved(row: Appointment) {
+    seenBookings.current.add(row.id);
     setEditor(null);
     setActionError("");
     setRefresh((value) => value + 1);
     navigate(clock(row.startsAt).date);
-    setPersonId(""); setStatus("");
+    setSelectedPersonIds(null); setStatus("");
     setOpened(row);
   }
 
@@ -527,7 +786,10 @@ export function AgendaWorkspace({ session, renderReceipt }: {
         setStatus("");
         setOpenedFromAlert(false);
       }
-      if (next === "CANCELED") setCanceling(null);
+      if (next === "CANCELED") {
+        setCanceling(null);
+        if (isOwner && hasWaitlist) registerVacancy(updated);
+      }
       if (isConfirmingPending) setMissingPhoneConfirm(null);
       setRefresh((value) => value + 1);
 
@@ -576,7 +838,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       appointment: row, currency, timezone, now, person: staff.get(row.collaboratorId), busy: !!busy,
       isFirstVisit: firstVisitClientIds.has(getCanonicalClientId(row.clientPhone, row.clientName)),
       ...(canManagePayments ? {
-        payment: visiblePayments?.get(row.id),
+      payment: displayedPayments?.get(row.id),
         paymentError,
         onPayments: () => openPayments(row.id),
       } : {}),
@@ -593,11 +855,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     const person = staff.get(row.collaboratorId);
     const start = formatTimeInTimezone(row.startsAt, timezone, locale);
     const end = formatTimeInTimezone(row.endsAt, timezone, locale);
-    const payment = visiblePayments?.get(row.id);
+    const payment = displayedPayments?.get(row.id);
     const paid = isAppointmentPaid(payment);
     const readyToComplete = showAlertActions && isReadyToComplete(row, now);
     const unpaidCompleted = showAlertActions && isUnpaidCompleted(row, payment);
-    const description = [row.clientName, row.serviceNameSnapshot, `${start} – ${end}`, t.status[row.status],
+    const description = [row.clientName, row.serviceNameSnapshot, `${start} – ${end}`, person?.name, t.status[row.status],
       unpaidCompleted ? copy.unpaidCompleted : paid ? copy.paid : null].filter(Boolean).join(" · ");
     const alertAction = readyToComplete ? {
       label: copy.endedComplete,
@@ -616,17 +878,20 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       <div className="flex min-h-0 min-w-0 flex-1">
       <button type="button" onClick={() => { setActionError(""); setOpened(row); }}
         aria-label={`${copy.openDetails} · ${description}`}
-        className="flex min-h-0 min-w-0 flex-1 cursor-pointer flex-col items-start justify-center gap-0.5 overflow-hidden px-1.5 text-left hover:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent group-active/agenda-drag:cursor-grabbing">
-        <span className="flex w-full min-w-0 items-center justify-between gap-1">
-          <span className="min-w-0 truncate text-[11px] font-semibold leading-tight">{row.serviceNameSnapshot}</span>
+        className={`flex min-h-0 min-w-0 flex-1 cursor-pointer flex-col items-start gap-px overflow-hidden px-1.5 text-left hover:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent group-active/agenda-drag:cursor-grabbing ${compact ? "justify-center-safe" : "justify-start py-0.5"}`}>
+        <span className="flex w-full min-w-0 shrink-0 items-center justify-between gap-1">
+          <span className="min-w-0 truncate text-[11px] font-bold leading-tight">{row.serviceNameSnapshot}</span>
           {unpaidCompleted ? <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[var(--status-warning-bg)] px-0.5 text-[9px] font-semibold text-[var(--status-warning-ink)]">
             <Wallet size={11} aria-hidden="true" />
             <span className="hidden @min-[5rem]:inline @min-[10rem]:hidden">{copy.unpaidCompletedShort}</span>
             <span className="hidden @min-[10rem]:inline">{copy.unpaidCompleted}</span>
           </span> : paid && <PaidBadge compact label={copy.paid} />}
         </span>
-        {!compact && (!alertAction || row.serviceDurationMinutesSnapshot >= 45) && <span className="max-w-full truncate text-[10px] font-medium leading-tight tabular-nums">{start} – {end} · {row.clientName}</span>}
-        {!compact && !alertAction && row.serviceDurationMinutesSnapshot >= 45 && person && <span className="mt-0.5 flex max-w-full items-center gap-1 text-[9px]"><ProfessionalAvatar person={person} className="size-3.5" /><span className="truncate">{person.name}</span></span>}
+        {!compact && <span className="flex w-full min-w-0 shrink-0 items-baseline gap-1 text-[10px] leading-tight">
+          <span className="max-w-full shrink-0 truncate font-semibold tabular-nums">{start} – {end}</span>
+          <span className="min-w-0 truncate">{row.clientName}</span>
+        </span>}
+        {!compact && !alertAction && row.serviceDurationMinutesSnapshot >= 45 && person && <span className="flex max-w-full shrink-0 items-center gap-1 text-[9px] leading-tight"><ProfessionalAvatar person={person} className="size-3" /><span className="truncate">{person.name}</span></span>}
       </button>
       {showAlertActions && !compact && <div className="hidden self-start pe-0.5 pt-0.5 @min-[5rem]:block [&_a]:size-5 [&_svg]:size-3">
         <WhatsAppLink appointment={row} timezone={timezone} />
@@ -644,28 +909,36 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   }
 
   const visibleDateLabel = agendaRangeLabel(focus, range.days, view === "list" || view === "month", locale);
-  return <div data-slot="agenda-workspace" className="min-w-0 space-y-4 sm:space-y-5">
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div className="min-w-0"><h2 className="text-xl font-semibold leading-tight tracking-tight text-ink sm:text-2xl">{isOwner ? t.owner.agendaTitle : t.collaborator.agendaTitle}</h2>
-        {!isOwner && <p className="mt-1 text-xs text-ink-secondary">{t.owner.commissions} <span className="font-semibold text-accent">{formatPriceFromCents(expectedCommission, locale, currency)}</span></p>}
-      </div>
-      <div className="flex items-center gap-2">
-        <button type="button" aria-label={t.common.retry} onClick={() => setRefresh((value) => value + 1)} className={`${control} size-9 p-0`}><RotateCw size={15} className={main.loading ? "animate-spin" : ""} /></button>
-        {isOwner && <button type="button" onClick={() => setEditor("new")} className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink shadow-xs hover:bg-accent-hover sm:text-sm"><Plus size={16} />{t.owner.newAppointment}</button>}
-      </div>
-    </header>
-
-    <section aria-label={copy.appointments} className="grid grid-cols-2 gap-2 md:grid-cols-4 sm:gap-3">
+  const refreshButton = <button type="button" aria-label={t.common.retry} onClick={() => setRefresh((value) => value + 1)} className={`${control} size-9 p-0`}><RotateCw size={15} className={main.loading ? "animate-spin" : ""} /></button>;
+  const metricCards = (
+    <section aria-label={copy.appointments} className={`grid grid-cols-2 gap-2 ${isOwner ? "" : "sm:gap-3 md:grid-cols-4"}`}>
       {metrics.map((metric, index) => {
         const active = status === metric.filter;
         const Icon = metricIcons[index];
         return <button key={metric.filter} type="button" aria-pressed={active} onClick={() => changeStatus(active ? "" : metric.filter)}
-          className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2.5 text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-accent sm:gap-3 sm:px-3.5 sm:py-3 ${active ? "border-accent/65 bg-accent-soft" : "border-border-subtle bg-surface"}`}>
-          <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${active ? "bg-accent text-accent-ink" : "bg-subtle text-accent"}`}><Icon size={16} /></span>
-          <span className="min-w-0"><span className="block text-[10px] font-medium leading-tight text-ink-secondary sm:text-xs">{metric.label}</span><strong className="block text-lg leading-tight text-ink tabular-nums">{main.loading ? "—" : metric.count}</strong></span>
+          className={`flex min-w-0 cursor-pointer border bg-surface text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-accent ${isOwner ? "flex-col items-start gap-1 rounded-2xl p-3" : "items-center gap-2 rounded-xl px-2.5 py-1.5 sm:gap-2.5 sm:px-3 sm:py-2"} ${active ? "border-accent/65" : "border-border-subtle"}`}>
+          <span className={`grid shrink-0 place-items-center rounded-lg ${isOwner ? "size-6" : "size-7"} ${metricIconTones[index]}`}><Icon size={isOwner ? 14 : 15} aria-hidden="true" /></span>
+          <span className={isOwner ? "flex w-full min-w-0 flex-1 flex-col gap-1" : "min-w-0"}>
+            <span className={`block text-[10px] font-medium leading-tight text-ink-secondary ${isOwner ? "wrap-anywhere" : "sm:text-xs"}`}>{metric.label}</span>
+            <strong className={`block font-bold leading-tight text-ink tabular-nums ${isOwner ? "mt-auto wrap-anywhere text-xl" : "text-lg"}`}>{main.loading ? "—" : metric.count}</strong>
+          </span>
         </button>;
       })}
     </section>
+  );
+
+  return <div data-slot="agenda-workspace" className="min-w-0 space-y-4 sm:space-y-5">
+    {!isOwner && <>
+      <Toaster theme={mode} richColors position="bottom-right" />
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-semibold leading-tight tracking-tight text-ink sm:text-2xl">{t.collaborator.agendaTitle}</h2>
+          <p className="mt-1 text-xs text-ink-secondary">{t.owner.commissions} <span className="font-semibold text-accent">{formatPriceFromCents(expectedCommission, locale, currency)}</span></p>
+        </div>
+        {refreshButton}
+      </header>
+      {metricCards}
+    </>}
 
     {(actionError && !canceling && !opened || catalog.error || mini.error || schedule.error || global.appointmentsError) && <p role="alert" className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] p-3 text-sm text-[var(--status-danger-ink)]">{actionError || t.errors.networkDescription}</p>}
     <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)]">
@@ -704,18 +977,18 @@ export function AgendaWorkspace({ session, renderReceipt }: {
           </div>
         </div>
 
-        <div className="space-y-3 border-t border-border-subtle pt-3 sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3">
+        <div className={`min-w-0 space-y-3 border-t border-border-subtle pt-3 ${isOwner ? "sm:col-span-2 lg:col-span-1" : "sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3"}`}>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-secondary">
-            <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-[#10B981]" />{copy.working}</span>
-            <span className="inline-flex items-center gap-1.5"><i className="size-1.5 rounded-full bg-[var(--status-danger-ink)]" />{copy.closed}</span>
+            <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 shrink-0 rounded-full bg-emerald-500" />{copy.working}</span>
+            <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 rounded-full bg-[var(--status-danger-ink)]/65" />{copy.closed}</span>
           </div>
-          {isOwner && <AgendaProfessionalFilter label={copy.professional} allLabel={copy.allProfessionals}
-            people={catalog.people} value={personId} onChange={setPersonId} />}
+          {isOwner && <AgendaProfessionalFilter people={activePeople} value={selectedPersonIds} onChange={setSelectedPersonIds} />}
           <AgendaSelect label={copy.status} placeholder={status === "CANCELED_OR_ABSENT" ? copy.canceled : undefined} value={status} onChange={(value) => changeStatus(value as Filter)} options={[
             { value: "", label: copy.allStatuses }, ...statuses.map((value) => ({ value, label: t.status[value] })),
             { value: "readyToComplete", label: copy.readyToComplete },
             ...(canManagePayments ? [{ value: "unpaidCompleted", label: copy.unpaidCompleted }] : []),
           ]} />
+          {isOwner && metricCards}
         </div>
       </aside>
 
@@ -731,6 +1004,10 @@ export function AgendaWorkspace({ session, renderReceipt }: {
             {agendaViews.map((value) => <button key={value} type="button" aria-pressed={value === view} onClick={() => setView(value)}
               className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-accent ${value === view ? "bg-surface text-accent shadow-xs" : "text-ink-secondary hover:text-ink"}`}>{copy.views[value]}</button>)}
           </div>
+          {isOwner && <div className="flex flex-wrap items-center gap-2">
+            {refreshButton}
+            <button type="button" onClick={() => setEditor("new")} className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink shadow-xs hover:bg-accent-hover sm:text-sm"><Plus size={16} />{t.owner.newAppointment}</button>
+          </div>}
         </div>
 
         {(alertItems.some(({ rows }) => rows.length > 0) || global.paymentsError) &&
@@ -763,26 +1040,31 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                 {rows.slice(0, 2).map((row) => <div key={row.id} className="h-5.5">{renderEvent(row, true, false)}</div>)}
                 {rows.length > 2 && <button type="button" aria-label={`${rows.length} ${copy.appointments}`} className="cursor-pointer px-1 text-[10px] font-semibold text-accent hover:underline" onClick={() => { navigate(date); setView("day"); }}>+{rows.length - 2}</button>}
               </div>;
-            }} /> : <AgendaTimeGrid days={range.days} company={company} selected={focus} today={today} now={now} byDay={rowsByDay}
-              appointments={main.rows} blocks={blocks} blocksReady={!schedule.loading && !schedule.error} staff={staff}
-              payments={visiblePayments} firstVisitClientIds={firstVisitClientIds}
-              isOwner={isOwner} onSelect={(date) => { navigate(date); setView("day"); }} renderBlock={renderEvent}
+            }} /> : view === "day" && !selectedPeople.length ? (
+              <p className="rounded-xl border border-border-subtle bg-surface p-5 text-sm text-ink-secondary" role="status">
+                {activePeople.length ? copy.noSelectedProfessionals : copy.noActiveProfessionals}
+              </p>
+            ) : <AgendaTimeGrid days={range.days} dayPeople={view === "day" ? selectedPeople : undefined} company={company} selected={focus} today={today} now={now} byDay={rowsByDay} slotInterval={settings.agendaInterval}
+              workSchedules={workSchedules?.people === selectedPeople ? workSchedules.slots : []}
+              appointments={main.rows} blocks={blocks} blocksReady={!schedule.loading && !schedule.error && !main.loading && !main.error} staff={staff}
+              payments={displayedPayments} firstVisitClientIds={firstVisitClientIds}
+              isOwner={isOwner} onSelect={(date) => { navigate(date); setView("day"); }} renderBlock={(row, compact) => renderEvent(row, compact)}
               onRescheduleDrop={handleRescheduleDrop} onRescheduleConflict={() => toast.warning(copy.professionalAlreadyBooked)}
-              onEmptySlotClick={handleEmptySlotClick} />}
+              collaboratorId={gridPersonId} onEmptySlotSelect={handleEmptySlotSelect} />}
       </section>
     </div>
 
-    {opened && (
+    {openedAppointment && (
       <AgendaAppointmentDetails
-        {...itemProps(opened)}
+        {...itemProps(openedAppointment)}
         error={actionError}
         onClose={closeOpenedDetails}
         {...(isOwner
           ? {
               // Verifica estritamente na base oficial de clientes (supplements), ignorando agendamentos públicos não salvos
               isRegisteredClient: hasRegisteredClient({
-                phone: opened.clientPhone,
-                name: opened.clientName,
+                phone: openedAppointment.clientPhone,
+                name: openedAppointment.clientName,
                 onlySupplements: true,
               }),
               onRegisterNewClient: (data) => {
@@ -800,6 +1082,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       focusDate={typeof editor === "object" && !("mode" in editor) ? clock(editor.startsAt).date : typeof editor === "object" && "mode" in editor && editor.date ? editor.date : focus}
       initialDate={typeof editor === "object" && "mode" in editor ? editor.date : undefined}
       initialTime={typeof editor === "object" && "mode" in editor ? editor.time : undefined}
+      initialEndTime={typeof editor === "object" && "mode" in editor ? editor.endTime : undefined}
       initialPersonId={typeof editor === "object" && "mode" in editor ? editor.personId : undefined}
       initialTab={typeof editor === "object" && "mode" in editor ? editor.initialTab : "appointment"}
       initialClientName={typeof editor === "object" && "mode" in editor ? editor.initialClientName : undefined}
@@ -819,6 +1102,45 @@ export function AgendaWorkspace({ session, renderReceipt }: {
         setRefresh((v) => v + 1);
       }}
     />}
+    {vacancy && !editor && !opened && !canceling && !waitlistDrawerOpen && !pendingReschedule && !missingPhoneConfirm && !receiptId &&
+      (offer?.vacancy === vacancy || offerError) && (
+        <AgendaDialog centered title="Encaixe Automático da Fila de Espera" closeDisabled={placingWaitlist} onClose={dismissWaitlistOffer}>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border-subtle bg-subtle/40 p-3 text-sm">
+              <p className="font-semibold text-ink">Horário liberado</p>
+              <p className="text-ink-secondary">
+                {formatDateTimeInTimezone(vacancy.startsAt, timezone, locale)}–{formatTimeInTimezone(vacancy.endsAt, timezone, locale)}
+              </p>
+              {staff.get(vacancy.collaboratorId)?.name && <p className="text-ink-secondary">{staff.get(vacancy.collaboratorId)?.name}</p>}
+            </div>
+            {offer?.vacancy === vacancy && (
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                <dt className="text-ink-secondary">Cliente</dt><dd className="font-medium text-ink">{offer.entry.clientName}</dd>
+                <dt className="text-ink-secondary">WhatsApp</dt><dd className="text-ink">{offer.entry.clientPhone}</dd>
+                <dt className="text-ink-secondary">Serviço desejado</dt><dd className="text-ink">{offer.serviceName}</dd>
+              </dl>
+            )}
+            {offerError && <p role="alert" className="text-sm text-[var(--status-danger-ink)]">{offerError}</p>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" disabled={placingWaitlist} onClick={dismissWaitlistOffer} className={control}>
+                Manter Horário Livre
+              </button>
+              {offer?.vacancy === vacancy ? (
+                <button type="button" disabled={placingWaitlist || !waitlist.entries.some((entry) => entry.id === offer.entry.id)}
+                  onClick={() => void confirmWaitlistPlacement()}
+                  className="min-h-9 cursor-pointer rounded-lg bg-accent px-3 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:opacity-50">
+                  {placingWaitlist ? "Confirmando…" : "Confirmar Encaixe Agora"}
+                </button>
+              ) : (
+                <button type="button" className={control} onClick={() => { setOfferError(""); setOfferRetry((current) => current + 1); }}>
+                  {t.common.retry}
+                </button>
+              )}
+            </div>
+          </div>
+        </AgendaDialog>
+      )}
+
     {waitlistDrawerOpen && (
       <AgendaDialog
         centered
@@ -891,6 +1213,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                       type="button"
                       onClick={() => {
                         setWaitlistDrawerOpen(false);
+                        const preferredDate = entry.preferredDate;
+                        const preferredTime = entry.preferredTime;
+                        const [hours, minutes] = preferredTime?.split(":").map(Number) ?? [];
+                        const hasPreferredSlot = preferredDate && Number.isFinite(Date.parse(preferredDate))
+                          && hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60;
                         setEditor({
                           mode: "new",
                           initialTab: "appointment",
@@ -898,8 +1225,8 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                           initialClientPhone: entry.clientPhone,
                           initialServiceId: entry.serviceId,
                           personId: entry.collaboratorId || undefined,
-                          date: entry.preferredDate || undefined,
-                          time: entry.preferredTime || undefined,
+                          date: preferredDate || undefined,
+                          time: hasPreferredSlot ? localDayMinuteToUtcIso(preferredDate, hours * 60 + minutes, timezone) : undefined,
                           fromWaitlistId: entry.id,
                         });
                       }}
@@ -939,12 +1266,18 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                 <p className="text-xs font-medium text-ink tabular-nums">
                   {formatDateTimeInTimezone(pendingReschedule.appointment.startsAt, timezone, locale)} – {formatTimeInTimezone(pendingReschedule.appointment.endsAt, timezone, locale)}
                 </p>
+                {pendingReschedule.targetPersonId !== pendingReschedule.appointment.collaboratorId && (
+                  <p className="text-xs text-ink-secondary">{staff.get(pendingReschedule.appointment.collaboratorId)?.name}</p>
+                )}
               </div>
               <div>
                 <span className="text-xs font-semibold text-accent">{copy.newSchedule}</span>
                 <p className="text-xs font-semibold text-accent tabular-nums">
                   {formatDateTimeInTimezone(pendingReschedule.targetStartsAt, timezone, locale)} – {formatTimeInTimezone(pendingReschedule.targetEndsAt, timezone, locale)}
                 </p>
+                {pendingReschedule.targetPersonId !== pendingReschedule.appointment.collaboratorId && (
+                  <p className="text-xs font-semibold text-accent">{staff.get(pendingReschedule.targetPersonId)?.name}</p>
+                )}
               </div>
             </div>
           </div>
