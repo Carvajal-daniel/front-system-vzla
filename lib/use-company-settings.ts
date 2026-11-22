@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { apiRequest } from "@/lib/api-client";
-import { defaultCompanySettings, type CompanySettings } from "@/lib/company-settings";
+import { defaultCompanySettings, selectedClientFields, type CompanySettings } from "@/lib/company-settings";
 
 const CHANGE_KEY = "cloudgo-company-settings-change";
 const snapshots = new Map<string, CompanySettings>();
@@ -17,11 +17,14 @@ export async function saveCompanySettings(companyId: string, body: Partial<Omit<
   const settings = await apiRequest<CompanySettings>("/companies/me/settings", { method: "PATCH", body });
   publish(`${companyId}:private`, settings);
   const publicKeys = ["address", "agendaInterval", "bookingInterval", "leadTime", "birthdayRadar", "surveyEnabled", "rating",
-    "googleMapsUrl", "googleRating", "googleReviewsCount"] as const;
+    "googleMapsUrl", "googleRating", "googleReviewsCount", "googlePlaceId", "clientFieldSlots"] as const;
   const publicSettings = { ...defaultCompanySettings };
   Object.assign(publicSettings, Object.fromEntries(publicKeys.map((key) => [key, settings[key]])));
-  publicSettings.clientFields = Object.fromEntries(Object.keys(defaultCompanySettings.clientFields)
-    .map((key) => [key, settings.clientFields[key]])) as CompanySettings["clientFields"];
+  const active = selectedClientFields(settings);
+  const activeIds = new Set(active.map(({ id }) => id));
+  publicSettings.clientFields = { ...defaultCompanySettings.clientFields,
+    ...Object.fromEntries(active.map(({ id, required }) => [id, required ? "required" : "optional"])) };
+  publicSettings.customClientFields = settings.customClientFields.filter(({ id }) => activeIds.has(id));
   publish(companyId, publicSettings);
   try {
     window.localStorage.setItem(CHANGE_KEY, JSON.stringify({ companyId, at: Date.now() }));

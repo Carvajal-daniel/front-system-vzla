@@ -13,8 +13,12 @@ export interface PhoneInputProps {
   onChange: (rawDigits: string) => void;
   error?: string;
   disabled?: boolean;
+  required?: boolean;
+  showFlags?: boolean;
   countries?: readonly PhoneCountryCode[];
 }
+
+const flags: Record<PhoneCountryCode, string> = { "+55": "🇧🇷", "+58": "🇻🇪", "+1": "🇺🇸", "+34": "🇪🇸", "+351": "🇵🇹" };
 
 const countryLabels: Record<PhoneCountryCode, string> = {
   "+55": "BR +55", "+58": "VE +58", "+1": "US/CA +1", "+34": "ES +34", "+351": "PT +351",
@@ -28,6 +32,8 @@ export function PhoneInput({
   onChange,
   error,
   disabled,
+  required,
+  showFlags,
   countries = ["+55", "+58"],
 }: PhoneInputProps) {
   const { t } = useLocale();
@@ -50,11 +56,12 @@ export function PhoneInput({
           }
           className="min-h-11 rounded-xl border border-border-strong bg-surface px-2.5 text-sm font-medium text-ink tabular-nums"
         >
-          {countries.map((code) => <option key={code} value={code}>{countryLabels[code]}</option>)}
+          {countries.map((code) => <option key={code} value={code}>{showFlags ? `${flags[code]} ${code}` : countryLabels[code]}</option>)}
         </select>
         <input
           id={id}
           type="tel"
+          required={required}
           inputMode="numeric"
           autoComplete="tel-national"
           disabled={disabled}

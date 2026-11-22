@@ -1,43 +1,36 @@
-"use client";
+﻿"use client";
 
-import { clientFields, clientSources, type ClientFieldValues, type CompanySettings } from "@/lib/company-settings";
-import type { Locale } from "@/lib/i18n";
+import { selectedClientFields, type ClientFieldValues, type CompanySettings } from "@/lib/company-settings";
 import { useLocale } from "@/lib/i18n/locale-context";
 
-export function clientFieldLabels(locale: Locale) {
-  return locale === "es"
-    ? { birthDate: "Fecha de nacimiento", document: "CPF / C.I.", email: "Correo electrónico", gender: "Sexo / Género", source: "Origen del cliente" }
-    : { birthDate: "Data de nascimento", document: "CPF / C.I.", email: "E-mail", gender: "Sexo / Gênero", source: "Origem do cliente" };
-}
-
-export function ClientDataFields({ modes, values, onChange, fieldClass, today }: {
-  modes: CompanySettings["clientFields"];
+export function ClientDataFields({ settings, values, onChange, fieldClass, today, include }: {
+  settings: CompanySettings;
   values: ClientFieldValues;
   onChange: (values: ClientFieldValues) => void;
   fieldClass: string;
   today?: string;
+  include?: (id: string) => boolean;
 }) {
   const { locale } = useLocale();
   const es = locale === "es";
-  const labels = clientFieldLabels(locale);
-  const genders = es ? ["Femenino", "Masculino", "Otro"] : ["Feminino", "Masculino", "Outro"];
-  const sources = es ? ["Instagram", "Recomendación", "Google", "Pasó por el local"] : ["Instagram", "Indicação", "Google", "Passou na frente"];
-  return clientFields.filter((key) => modes[key] !== "hidden").map((key) => {
-    const options = key === "gender" ? ["FEMALE", "MALE", "OTHER"] : key === "source" ? clientSources : null;
+  return selectedClientFields(settings, es).filter(({ id }) => !include || include(id)).map(({ id, label, required }) => {
     const props = {
-      className: fieldClass,
-      required: modes[key] === "required",
-      value: values[key],
-      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange({ ...values, [key]: event.target.value }),
+      className: fieldClass, required, value: values[id] ?? "",
+      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+        onChange({ ...values, [id]: event.target.value }),
     };
-    return <label key={key} className="grid min-w-0 gap-1.5 text-sm font-medium text-ink">
-      <span>{labels[key]}{props.required ? " *" : ""}</span>
-      {options ? <select {...props}>
+    const notes = ["observations", "allergyNotes", "pathologyNotes", "currentTreatments"].includes(id);
+    return <label key={id} className="grid min-w-0 gap-1.5 text-sm font-medium text-ink">
+      <span>{label}{required ? " *" : ""}</span>
+      {id === "medication" || id === "soughtDoctor" ? <select {...props}>
         <option value="">{es ? "Seleccionar" : "Selecionar"}</option>
-        {options.map((value, index) => <option key={value} value={value}>{(key === "gender" ? genders : sources)[index]}</option>)}
-      </select> : <input {...props} type={key === "birthDate" ? "date" : key === "email" ? "email" : "text"}
-        max={key === "birthDate" ? today : undefined} maxLength={key === "document" ? 32 : 254}
-        autoComplete={key === "email" ? "email" : key === "birthDate" ? "bday" : "off"} />}
+        <option value="yes">{es ? "Sí" : "Sim"}</option>
+        <option value="no">{es ? "No" : "Não"}</option>
+      </select> : notes ? <textarea {...props} className={fieldClass + " min-h-20 py-2"} rows={3} maxLength={2500} />
+        : <input {...props} type={id === "birthDate" ? "date" : id === "email" ? "email" : "text"}
+          max={id === "birthDate" ? today : undefined} maxLength={id === "document" ? 32 : id === "email" ? 254 : 400}
+          inputMode={id === "clientPostalCode" ? "numeric" : undefined}
+          autoComplete={id === "email" ? "email" : id === "birthDate" ? "bday" : "off"} />}
     </label>;
   });
 }

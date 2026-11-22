@@ -95,6 +95,7 @@ export interface ClientRecord {
   source?: string;
   notes?: string;
   isBlocked: boolean;
+  profileFields?: Record<string, string>;
   totalVisits: number;
   noShows: number;
   lastVisitAt: string | null;
@@ -107,7 +108,7 @@ export interface ClientRecord {
   updatedAt: string;
 }
 
-type BookingClientDetails = Pick<ClientRecord, "email" | "document" | "birthDate" | "gender" | "source">;
+type BookingClientDetails = Pick<ClientRecord, "email" | "document" | "birthDate" | "gender" | "source"> & Record<string, string>;
 
 type PaymentSummaryItem = Pick<AppointmentPayment, "openInCents" | "canCollect"> & { appointmentId: string };
 
@@ -421,6 +422,7 @@ export function useClients(companyId: string) {
           gender: supp?.gender ?? detail?.gender,
           source: supp?.source ?? detail?.source,
           notes: supp?.notes,
+          profileFields: detail,
           isBlocked: isBlocked(supp),
           totalVisits: 0,
           noShows: 0,
@@ -559,6 +561,13 @@ export function useClients(companyId: string) {
     },
     [saveClientDetails],
   );
+
+  const getRegistrationClientId = useCallback((data: Pick<ClientInput, "name" | "phone">) => {
+    const stored = loadStoredSupplements(companyId);
+    const phoneKey = clientPhoneKey(data.phone);
+    const match = Object.values(stored).find((entry) => phoneKey && matchesStoredPhone(entry, phoneKey));
+    return resolveClientId(stored, match?.id ?? getCanonicalClientId(data.phone, data.name));
+  }, [companyId]);
 
   // Cria um novo cliente manual
   const createClient = useCallback(
@@ -720,6 +729,7 @@ export function useClients(companyId: string) {
     toggleBlockClient,
     updateAnamnesis,
     createClient,
+    getRegistrationClientId,
     importClients,
     mergeClients,
     deleteClient,

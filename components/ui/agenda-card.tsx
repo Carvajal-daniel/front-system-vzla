@@ -27,6 +27,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, whatsAppReminder } from "@/lib/agenda";
+import type { ReminderSettings } from "@/lib/company-settings";
 import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { agendaStrings } from "@/lib/i18n/agenda";
@@ -59,6 +60,7 @@ export type AgendaItemProps = {
   appointment: Appointment; timezone: string; currency: string; person?: AgendaPerson; now: number;
   busy: boolean; actions: AppointmentActions; payment?: AgendaPayment; paymentError?: boolean;
   onPayments?: () => void; commissionLabel?: string; isFirstVisit?: boolean;
+  companyName?: string; reminders?: ReminderSettings | null; bookingAppUrl?: string;
 };
 
 export type HoverCardAnchor = {
@@ -258,10 +260,22 @@ function AgendaPaymentState({ appointment, payment, paymentError, onPayments }: 
   </div>;
 }
 
-export function WhatsAppLink({ appointment, timezone }: Pick<AgendaItemProps, "appointment" | "timezone">) {
+export function WhatsAppLink({
+  appointment,
+  timezone,
+  person,
+  companyName,
+  reminders,
+  bookingAppUrl,
+}: Pick<AgendaItemProps, "appointment" | "timezone" | "person" | "companyName" | "reminders" | "bookingAppUrl">) {
   const { locale } = useLocale();
   const copy = agendaStrings(locale);
-  const link = whatsAppReminder(appointment, locale, timezone);
+  const link = whatsAppReminder(appointment, locale, timezone, "reminder", {
+    companyName,
+    professionalName: person?.name,
+    reminders,
+    appUrl: bookingAppUrl,
+  });
   if (!link) return null;
   return (
     <a
@@ -324,7 +338,14 @@ export function AgendaCard({ onDetails, ...props }: AgendaItemProps & { onDetail
     </div>
     <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2">
       <div className="min-w-0"><p className="truncate text-sm font-medium text-ink">{appointment.clientName}</p><p className="truncate text-xs text-ink-secondary tabular-nums">{appointment.clientPhone}</p></div>
-      <WhatsAppLink appointment={appointment} timezone={timezone} />
+      <WhatsAppLink
+        appointment={appointment}
+        timezone={timezone}
+        person={person}
+        companyName={props.companyName}
+        reminders={props.reminders}
+        bookingAppUrl={props.bookingAppUrl}
+      />
     </div>
     {appointment.notes && <p className="flex items-center gap-1.5 text-xs text-ink-secondary"><ClipboardList size={13} className="shrink-0 text-accent" /><span className="truncate">{appointment.notes}</span></p>}
     {appointment.cancellationReason && <p className="truncate text-xs text-[var(--status-danger-ink)]">{appointment.cancellationReason}</p>}
@@ -531,7 +552,12 @@ export function AgendaAppointmentDetails({
   const formattedSchedule = formatScheduledDateTime(appointment.startsAt, timezone, locale);
   const blockedFinishMessage = `Disponível apenas após a data e horário agendados (${formattedSchedule})`;
 
-  const whatsAppLink = whatsAppReminder(appointment, locale, timezone);
+  const whatsAppLink = whatsAppReminder(appointment, locale, timezone, "reminder", {
+    companyName: props.companyName,
+    professionalName: person?.name,
+    reminders: props.reminders,
+    appUrl: props.bookingAppUrl,
+  });
 
   // Ação 2: Finalizar e Faturar
   const handleCompleteAndInvoice = () => {

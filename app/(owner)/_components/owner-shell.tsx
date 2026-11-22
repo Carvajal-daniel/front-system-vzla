@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/api-client";
 import { displayCompanyRating, type OwnerAppearance } from "@/lib/company-settings";
 import { CompanyRating } from "@/components/ui/company-rating";
 import { useCompanySettings } from "@/lib/use-company-settings";
+import { useGooglePlace } from "@/lib/use-google-place";
 
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -441,6 +442,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const { mode, palette, setMode, setPalette } = useTheme();
   const { session, logout } = useSession();
   const { settings } = useCompanySettings(session.company.id);
+  const { place: googlePlace } = useGooglePlace(session.company.id, settings.googlePlaceId, { summary: true });
 
   useEffect(() => {
     applyDashboardTheme(mode, palette);
@@ -775,7 +777,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               <div className="flex items-center gap-2.5 min-w-0">
                 <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
                 <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings)} /></div>
+                  <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings, googlePlace)} /></div>
                   <p className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 truncate">
                     <Globe2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                     {session.company.timezone}
@@ -963,7 +965,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
             {!collapsed && (
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings)} /></div>
+                <div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-sm font-bold">{session.company.companyName}</p><CompanyRating rating={displayCompanyRating(settings, googlePlace)} /></div>
                 <p className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 truncate mt-0.5">
                   <Globe2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                   {session.company.timezone}

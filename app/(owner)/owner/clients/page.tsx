@@ -28,7 +28,7 @@ import { AgendaDialog } from "@/components/ui/agenda-controls";
 import { Button } from "@/components/ui/button";
 import { SensitiveValue } from "@/components/ui/sensitive-value";
 import { ClientDataFields } from "@/components/ui/client-data-fields";
-import { clientFields } from "@/lib/company-settings";
+import { clientFields, selectedClientFields } from "@/lib/company-settings";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { dateValue, moneyCents, readCsv } from "@/lib/owner-spreadsheet";
@@ -135,7 +135,7 @@ export default function ClientsPage() {
   const today = getTodayIsoDateInTimezone(timezone);
   const birthdayMonth = today.slice(5, 7);
 
-  const { clients, loading, createClient, saveClientDetails, importClients, mergeClients, deleteClient, refresh } = useClients(companyId);
+  const { clients, loading, createClient, getRegistrationClientId, saveClientDetails, importClients, mergeClients, deleteClient, refresh } = useClients(companyId);
   const visitDateFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { timeZone: timezone, day: "2-digit", month: "2-digit", year: "numeric" }),
     [locale, timezone],
@@ -156,6 +156,9 @@ export default function ClientsPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [formData, setFormData] = useState(emptyForm);
+  const [profileDraft, setProfileDraft] = useState<Record<string, string>>({});
+  const [savingClient, setSavingClient] = useState(false);
+  const profileLoad = useRef<AbortController | null>(null);
   const duplicateGroups = useMemo(() => getClientDuplicateGroups(clients), [clients]);
   const duplicateCount = duplicateGroups.reduce((count, group) => count + group.length - 1, 0);
   const existingPhones = useMemo(() => new Set(clients.flatMap((client) => [
@@ -256,31 +259,53 @@ export default function ClientsPage() {
   };
 
   function openClientForm(client?: ClientRecord) {
+    profileLoad.current?.abort();
+    setProfileDraft(client?.profileFields ?? {});
     setEditingClient(client ?? null);
     setFormData(client ? {
       name: client.name, phone: client.phone, document: client.document ?? "", email: client.email ?? "",
       birthDate: client.birthDate ?? "", gender: client.gender ?? "", source: client.source ?? "", notes: client.notes ?? "", isBlocked: client.isBlocked,
     } : emptyForm);
     setNewClientModalOpen(true);
+    if (client) {
+      const request = new AbortController();
+      profileLoad.current = request;
+      void apiRequest<{ values: Record<string, string> }>(`/companies/me/client-profiles/${encodeURIComponent(client.id)}`, { signal: request.signal })
+        .then(({ values }) => {
+          if (request.signal.aborted) return;
+          setProfileDraft((current) => ({ ...current, ...values }));
+          setFormData((current) => ({
+            ...current, email: values.email ?? current.email, document: values.document ?? current.document,
+            birthDate: values.birthDate ?? current.birthDate,
+          }));
+        }).catch(() => undefined);
+    }
   }
 
   function closeClientForm() {
+    profileLoad.current?.abort();
+    setProfileDraft({});
     setNewClientModalOpen(false);
     setEditingClient(null);
     setFormData(emptyForm);
   }
 
-  function handleClientSubmit(event: React.FormEvent) {
+  async function handleClientSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (savingClient) return;
     const data = { ...formData, name: formData.name.trim(), phone: formData.phone.trim(),
       document: formData.document.trim(), email: formData.email.trim(), notes: formData.notes.trim() };
-    for (const field of clientFields) {
-      if (settings.clientFields[field] === "hidden") delete (data as Partial<typeof data>)[field];
-      if (settings.clientFields[field] === "required" && !data[field]?.trim()) {
-        toast.error(locale === "es" ? "Completa los datos obligatorios." : "Preencha os dados obrigatórios.");
-        return;
-      }
+    const selected = selectedClientFields(settings);
+    const values = { ...profileDraft, email: data.email, document: data.document, birthDate: data.birthDate };
+    const profileValues = Object.fromEntries(selected.map(({ id }) => [id, (values as Record<string, string>)[id]?.trim() ?? ""]));
+    if (selected.some(({ id, required }) => required && !profileValues[id])) {
+      toast.error(locale === "es" ? "Completa los datos obligatorios." : "Preencha os dados obrigatórios.");
+      return;
     }
+    for (const field of clientFields) {
+      if (!Object.hasOwn(profileValues, field)) delete (data as Partial<typeof data>)[field];
+    }
+    delete (data as Partial<typeof data>).notes;
     if (!data.name) {
       toast.error("Informe o nome do cliente.");
       return;
@@ -296,13 +321,20 @@ export default function ClientsPage() {
       toast.error("Já existe um cliente com esse telefone.");
       return;
     }
+    setSavingClient(true);
     try {
-      if (editingClient) saveClientDetails(editingClient.id, data);
+      const id = editingClient?.id ?? getRegistrationClientId(data);
+      if (selected.length) {
+        await apiRequest(`/companies/me/client-profiles/${encodeURIComponent(id)}`, { method: "PATCH", body: { values: profileValues } });
+      }
+      if (editingClient) saveClientDetails(id, data);
       else createClient(data);
       toast.success(editingClient ? "Cliente atualizado." : "Cliente cadastrado com sucesso!");
       closeClientForm();
     } catch {
       toast.error("Não foi possível salvar o cliente.");
+    } finally {
+      setSavingClient(false);
     }
   }
 
@@ -613,25 +645,22 @@ export default function ClientsPage() {
                 <input autoComplete="tel" type="tel" required className={fieldClass}
                   value={formData.phone} onChange={(event) => setFormData({ ...formData, phone: event.target.value })} />
               </label>
-              <ClientDataFields modes={settings.clientFields} values={formData} today={today} fieldClass={fieldClass}
-                onChange={(values) => setFormData({ ...formData, ...values, gender: values.gender as typeof formData.gender })} />
+              <ClientDataFields settings={settings} values={{ ...profileDraft, email: formData.email, document: formData.document, birthDate: formData.birthDate }}
+                today={today} fieldClass={fieldClass} onChange={({ email, document, birthDate, ...values }) => {
+                  setFormData((current) => ({ ...current, email, document, birthDate }));
+                  setProfileDraft(values);
+                }} />
             </div>
-            {editingClient ? (
+            {editingClient && (
               <label className="flex items-center gap-2 text-sm font-medium text-ink">
                 <input type="checkbox" className="size-4 accent-accent" checked={formData.isBlocked}
                   onChange={(event) => setFormData({ ...formData, isBlocked: event.target.checked })} />
                 Bloqueado para agendamentos
               </label>
-            ) : (
-              <label className="block space-y-1 text-xs font-semibold text-ink-secondary">
-                <span>Observações / Anamnese inicial</span>
-                <textarea rows={2} className={fieldClass + " h-auto py-2"} value={formData.notes}
-                  onChange={(event) => setFormData({ ...formData, notes: event.target.value })} />
-              </label>
             )}
             <div className="flex flex-wrap justify-end gap-2 border-t border-border-subtle pt-4">
               <Button type="button" variant="outline" onClick={closeClientForm}>Cancelar</Button>
-              <Button type="submit">Salvar cliente</Button>
+              <Button type="submit" disabled={savingClient}>Salvar cliente</Button>
             </div>
           </form>
         </AgendaDialog>

@@ -6,21 +6,23 @@ import Link from "next/link";
 import { Building2, CalendarClock, Users, Star, Globe2, KeyRound, Palette, Copy, QrCode, Bell, CreditCard, Package, Link2 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { companyWeekday } from "@/lib/agenda";
-import { displayCompanyRating, profileFieldLabels, addressFields, agendaIntervals, bookingIntervals, clientFields, formatCompanyAddress, leadTimes, type CompanyAddress, type CompanySettings, type CustomClientField, type OwnerAppearance, type ReminderSettings } from "@/lib/company-settings";
+import { displayCompanyRating, clientFieldOptions, selectedClientFields, addressFields, agendaIntervals, bookingIntervals, formatCompanyAddress, leadTimes, type CompanyAddress, type CompanySettings, type OwnerAppearance, type ReminderSettings } from "@/lib/company-settings";
+import { DEFAULT_CUSTOM_REMINDER_MESSAGES, REMINDER_VARIABLES, renderReminderMessage } from "@/lib/reminder-templates";
 import { formatPhoneToE164, isValidInternationalPhone, stripNonDigits } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { applyDashboardTheme, THEME_PALETTES, useTheme } from "@/lib/theme-context";
 import { IANA_TIMEZONES } from "@/lib/timezones";
 import { saveCompanySettings, useCompanySettings } from "@/lib/use-company-settings";
+import { useGooglePlace } from "@/lib/use-google-place";
 import type { PhoneCountryCode } from "@/lib/types/public-booking";
 import type { Currency } from "@/lib/types/finance";
 import { useSession } from "@/components/ui/auth-guard";
 import { AvatarPicker } from "@/components/ui/avatar-picker";
 import { Button } from "@/components/ui/button";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { clientFieldLabels } from "@/components/ui/client-data-fields";
 import { PasswordRecovery, validNewPassword } from "@/components/ui/password-recovery";
 import { CompanyRating } from "@/components/ui/company-rating";
+import { GooglePlaceSettings } from "./google-place-settings";
 import { OnlinePaymentSettingsPanel } from "./online-payment-settings";
 import { SatisfactionSettings } from "./satisfaction-settings";
 
@@ -47,13 +49,14 @@ export function SettingsPanel() {
   const es = locale === "es";
   const { session } = useSession();
   const { settings } = useCompanySettings(session.company.id);
+  const { place: googlePlace } = useGooglePlace(session.company.id, settings.googlePlaceId, { summary: true });
 
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
       <header className="lg:col-span-2">
         <h1 className="text-title-sm font-bold text-ink">{t.owner.settingsTitle}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-secondary">
-          {session.company.companyName}<CompanyRating rating={displayCompanyRating(settings)} />
+          {session.company.companyName}<CompanyRating rating={displayCompanyRating(settings, googlePlace)} />
         </div>
       </header>
       <nav aria-label={t.owner.settingsTitle} className="self-start rounded-2xl border border-border-subtle bg-surface p-2 lg:sticky lg:top-20">
@@ -270,7 +273,8 @@ function CompanyPanel() {
       }}>{es ? "Editar dirección" : "Editar endereço"}</Button>}
     </Card>
     <Card title="Google Maps">
-      <form className="space-y-4" onSubmit={(event) => {
+      <GooglePlaceSettings companyId={session.company.id} settings={settings} />
+      <form className="space-y-4 border-t border-border-subtle pt-4" onSubmit={(event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
         void googleSave.run(async () => {
@@ -284,6 +288,9 @@ function CompanyPanel() {
           setGoogleDraft({});
         });
       }}>
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+          {es ? "Alternativa manual (si no usas la búsqueda de Google Places)" : "Alternativa manual (caso não use a busca do Google Places)"}
+        </p>
         <Field label={es ? "Enlace de Google Maps" : "Link do Google Maps"}>
           <input name="googleMapsUrl" type="url" maxLength={2048} className={field}
             value={googleDraft.googleMapsUrl ?? settings.googleMapsUrl ?? ""}
@@ -378,71 +385,56 @@ function ClientsPanel() {
   const { locale } = useLocale();
   const es = locale === "es";
   const save = useSave();
-  const [draft, setDraft] = useState<Partial<CompanySettings["clientFields"]>>({});
+  const [draft, setDraft] = useState<(string | null)[]>();
   const [radar, setRadar] = useState<boolean>();
-  const [customDraft, setCustomDraft] = useState<CustomClientField[]>();
-  const customFields = customDraft ?? settings.customClientFields;
-  const [newLabel, setNewLabel] = useState("");
-  const labels = clientFieldLabels(locale);
-  const modes = es ? ["Obligatorio", "Opcional", "Oculto"] : ["Obrigatório", "Opcional", "Oculto"];
+  const previous = settings.clientFieldSlots ?? selectedClientFields(settings).map(({ id }) => id);
+  const slots = draft ?? [...previous, ...Array.from<null>({ length: Math.max(0, 4 - previous.length) }).fill(null)];
+  const options = clientFieldOptions(settings, es);
+  const groups = [
+    ["registration", es ? "Datos de registro" : "Dados Cadastrais"],
+    ["technical", es ? "Ficha técnica y salud" : "Ficha Técnica & Saúde (Salão / Barbearia)"],
+    ["custom", es ? "Campos personalizados" : "Campos personalizados"],
+  ];
 
-  return <Card title={es ? "Datos de clientes y anamnesis" : "Dados de Clientes & Anamnese"}>
+  return <Card title={es ? "Datos de clientes" : "Dados de Clientes"}>
     <form className="space-y-4" onSubmit={(event) => {
       event.preventDefault();
       void save.run(async () => {
-        await saveCompanySettings(session.company.id, { clientFields: { ...settings.clientFields, ...draft }, birthdayRadar: radar ?? settings.birthdayRadar, ...(customDraft ? { customClientFields: customDraft } : {}) });
-        setDraft({}); setRadar(undefined); setCustomDraft(undefined);
+        await saveCompanySettings(session.company.id, { clientFieldSlots: slots, birthdayRadar: radar ?? settings.birthdayRadar });
+        setDraft(undefined);
+        setRadar(undefined);
       });
     }}>
-      <p className="text-sm text-ink-secondary">{es ? "Estos campos se aplican al alta interna y a las reservas públicas." : "Estes campos se aplicam ao cadastro interno e ao agendamento público."}</p>
-      {clientFields.map((key) => <label key={key} className="grid items-center gap-2 text-sm font-medium sm:grid-cols-[1fr_12rem]">
-        {labels[key]}
-        <select className={field} value={draft[key] ?? settings.clientFields[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value as CompanySettings["clientFields"][typeof key] })}>
-          {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
-        </select>
-      </label>)}
-      <h3 className="border-t border-border-subtle pt-4 font-semibold">{es ? "Campos de la ficha del cliente" : "Campos da ficha do cliente"}</h3>
-      {Object.entries(profileFieldLabels).map(([key, names]) => <label key={key} className="grid items-center gap-2 text-sm font-medium sm:grid-cols-[1fr_12rem]">
-        {names[es ? 1 : 0]}
-        <select className={field} value={draft[key] ?? settings.clientFields[key] ?? "optional"}
-          onChange={(event) => setDraft({ ...draft, [key]: event.target.value as CustomClientField["mode"] })}>
-          {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
-        </select>
-      </label>)}
-      {customFields.map((custom) => <div key={custom.id} className="grid gap-2 sm:grid-cols-[1fr_12rem_auto]">
-        <Field label={es ? "Nombre del campo" : "Nome do campo"}>
-          <input className={field} required maxLength={80} value={custom.label} onChange={(event) =>
-            setCustomDraft(customFields.map((item) => item.id === custom.id ? { ...item, label: event.target.value } : item))} />
-        </Field>
-        <Field label={es ? "Visibilidad" : "Visibilidade"}>
-          <select className={field} value={custom.mode} onChange={(event) =>
-            setCustomDraft(customFields.map((item) => item.id === custom.id ? { ...item, mode: event.target.value as CustomClientField["mode"] } : item))}>
-            {(["required", "optional", "hidden"] as const).map((mode, index) => <option key={mode} value={mode}>{modes[index]}</option>)}
+      <fieldset className="grid gap-3 sm:grid-cols-2">
+        <legend className="mb-3 font-semibold text-ink">{es ? "Campos adicionales" : "Campos adicionais"}</legend>
+        {slots.map((selected, index) => <Field key={index} label={`Campo ${index + 1}`}>
+          <select className={field} value={selected ?? ""} onChange={(event) => {
+            const value = event.target.value || null;
+            setDraft(slots.map((slot, position) => position === index ? value : slot));
+          }}>
+            <option value="">{es ? "- Ninguno (Opcional) -" : "- Nenhum (Opcional) -"}</option>
+            {groups.map(([group, label]) => {
+              const items = options.filter((option) => option.group === group);
+              return items.length ? <optgroup key={group} label={label}>
+                {items.map(({ id, label }) => <option key={id} value={id} disabled={slots.includes(id) && selected !== id}>{label}</option>)}
+              </optgroup> : null;
+            })}
           </select>
-        </Field>
-        <Button type="button" variant="outline" className="min-h-11 self-end" onClick={() => setCustomDraft(customFields.filter((item) => item.id !== custom.id))}>
-          {es ? "Quitar campo" : "Remover campo"}
-        </Button>
-      </div>)}
-      <div className="flex flex-wrap items-end gap-2">
-        <Field label={es ? "Nuevo campo personalizado" : "Novo campo personalizado"}>
-          <input className={field} value={newLabel} maxLength={80} onChange={(event) => setNewLabel(event.target.value)} />
-        </Field>
-        <Button type="button" variant="outline" className="min-h-11" disabled={!newLabel.trim() || customFields.length >= 25} onClick={() => {
-          setCustomDraft([...customFields, { id: `custom_${crypto.randomUUID()}`, label: newLabel.trim(), mode: "optional" }]);
-          setNewLabel("");
-        }}>{es ? "Añadir campo" : "Adicionar campo"}</Button>
-      </div>
+        </Field>)}
+      </fieldset>
+      {slots.length < 32 && slots.length < Math.max(4, options.length) && <Button type="button" variant="ghost" className="min-h-10" onClick={() => setDraft([...slots, null])}>
+        {es ? "+ Añadir otro campo" : "+ Adicionar outro campo"}
+      </Button>}
       <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
         <input type="checkbox" role="switch" checked={radar ?? settings.birthdayRadar} className="size-4 accent-accent" onChange={(event) => setRadar(event.target.checked)} />
         {es ? "Activar recordatorio de cumpleaños en el CRM" : "Ativar radar de aniversariantes no CRM"}
       </label>
-      <Save state={save} disabled={!Object.keys(draft).length && radar === undefined && !customDraft} />
+      <Save state={save} disabled={!draft && radar === undefined} />
     </form>
   </Card>;
 }
 
-const reminderDefaults: ReminderSettings = { enabled: false, hours: 2, template: "buttons", message: "", externalUrl: "" };
+const reminderDefaults: ReminderSettings = { enabled: false, hours: 2, template: "buttons", message: DEFAULT_CUSTOM_REMINDER_MESSAGES["pt-BR"], externalUrl: "", servicePhone: "" };
 const reminderTemplates = ["buttons", "plain", "whatsapp", "external", "custom"] as const;
 
 function RemindersPanel() {
@@ -450,28 +442,69 @@ function RemindersPanel() {
   const { settings } = useCompanySettings(session.company.id, undefined, true, true);
   const { locale } = useLocale();
   const es = locale === "es";
+  const reminderLocale = es ? "es" : "pt-BR";
   const save = useSave();
   const [draft, setDraft] = useState<Partial<ReminderSettings>>({});
+  const [countryDraft, setCountryDraft] = useState<PhoneCountryCode>();
+  const editor = useRef<HTMLTextAreaElement>(null);
   const current = { ...(settings.reminders ?? reminderDefaults), ...draft };
   const apply = (patch: Partial<ReminderSettings>) => setDraft((previous) => ({ ...previous, ...patch }));
+  const defaultCustomMessage = DEFAULT_CUSTOM_REMINDER_MESSAGES[reminderLocale];
+  const customMessage = draft.message ?? (settings.reminders?.message || defaultCustomMessage);
+  const phone = current.servicePhone ?? "";
+  const country = countryDraft ?? ownerCountryCodes.find((code) => phone.startsWith(code)) ?? "+55";
+  const digits = phone.startsWith(country) ? phone.slice(country.length) : "";
   const names = es ? ["Estándar con botones", "Texto simple", "Atención por WhatsApp", "Enlace externo", "Personalizado"]
     : ["Padrão com Botões", "Texto Simples", "Atendimento via WhatsApp", "Link Externo", "Personalizado"];
-  const greeting = es ? `¡Hola, Ana! Tienes una cita en ${session.company.companyName} mañana a las 14:00.`
-    : `Olá, Ana! Você tem um horário em ${session.company.companyName} amanhã às 14h.`;
-  const messages: Record<ReminderSettings["template"], string> = {
-    buttons: greeting,
-    plain: es ? `${greeting} Responde a este mensaje si necesitas cambiar tu cita.` : `${greeting} Responda a esta mensagem se precisar alterar seu horário.`,
-    whatsapp: es ? `${greeting} Habla con nuestro equipo por WhatsApp.` : `${greeting} Fale com nossa equipe pelo WhatsApp.`,
-    external: `${greeting}\n${current.externalUrl}`,
-    custom: current.message.replaceAll("{cliente}", "Ana").replaceAll("{empresa}", session.company.companyName)
-      .replaceAll("{data}", es ? "mañana" : "amanhã").replaceAll("{hora}", "14:00"),
+  const appUrl = typeof window === "undefined" ? `/book/${session.company.id}` : new URL(`/book/${session.company.id}`, window.location.origin).href;
+  const preview = renderReminderMessage(
+    current.template,
+    {
+      clientName: "Ana",
+      companyName: session.company.companyName,
+      professionalName: "Rafa",
+      serviceName: es ? "Corte de cabello" : "Corte de cabelo",
+      date: "25/06",
+      time: "14:00",
+      appUrl,
+    },
+    { locale: reminderLocale, customMessage },
+  );
+  const actions: Record<ReminderSettings["template"], string[]> = {
+    buttons: [es ? "Confirmar" : "Confirmar", es ? "Cancelar" : "Cancelar"],
+    plain: [],
+    whatsapp: [es ? "Hablar con un agente…" : "Falar com atendente..."],
+    external: [es ? "Más información…" : "Saiba mais..."],
+    custom: [],
   };
+
+  function insertVariable(token: string) {
+    const input = editor.current;
+    if (!input) return;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    apply({ message: customMessage.slice(0, start) + token + customMessage.slice(end) });
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(start + token.length, start + token.length);
+    });
+  }
 
   return <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(15rem,0.72fr)]">
     <Card title={es ? "Recordatorios de citas" : "Lembretes de agendamento"}>
       <form className="space-y-4" onSubmit={(event) => {
         event.preventDefault();
-        void save.run(async () => { await saveCompanySettings(session.company.id, { reminders: current }); setDraft({}); });
+        void save.run(async () => {
+          if (current.template === "whatsapp" && !isValidInternationalPhone(country, digits)) {
+            throw new Error(es ? "Ingresa un teléfono de atención válido." : "Informe um telefone de atendimento válido.");
+          }
+          const reminders = {
+            ...current, message: current.template === "custom" ? customMessage : current.message,
+            servicePhone: current.template === "whatsapp" ? formatPhoneToE164(country, digits) : "",
+          };
+          await saveCompanySettings(session.company.id, { reminders });
+          setDraft({});
+        });
       }}>
         <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
           <input type="checkbox" role="switch" className="size-4 accent-accent" checked={current.enabled} onChange={(event) => apply({ enabled: event.target.checked })} />
@@ -484,23 +517,35 @@ function RemindersPanel() {
             {reminderTemplates.map((id, index) => <option key={id} value={id}>{names[index]}</option>)}
           </select>
         </Field>
-        {current.template === "custom" && <Field label={es ? "Mensaje personalizado" : "Mensagem personalizada"}>
-          <textarea className={field + " py-2"} rows={5} required={current.enabled} maxLength={1500} value={current.message}
-            onChange={(event) => apply({ message: event.target.value })} />
-          <span className="text-xs text-ink-secondary">{es ? "Variables" : "Variáveis"} {"{cliente}, {empresa}, {data}, {hora}"}</span>
-        </Field>}
-        {current.template === "external" && <Field label={es ? "Enlace externo" : "Link externo"}>
-          <input className={field} type="url" required={current.enabled} maxLength={2048} placeholder="https://"
+        {current.template === "whatsapp" && <PhoneInput id="reminder-phone" required showFlags
+          label={es ? "Teléfono de atención" : "Telefone de Atendimento"} countryCode={country} countries={ownerCountryCodes} value={digits}
+          onCountryCodeChange={(next) => { setCountryDraft(next); apply({ servicePhone: digits ? next + digits : "" }); }}
+          onChange={(value) => apply({ servicePhone: value ? country + value : "" })} />}
+        {current.template === "external" && <Field label="Link (URL)">
+          <input className={field} type="url" required maxLength={2048} placeholder="https://" pattern="https://.*"
             value={current.externalUrl} onChange={(event) => apply({ externalUrl: event.target.value })} />
         </Field>}
+        {current.template === "custom" && <>
+          <Field label={es ? "Mensaje personalizado" : "Mensagem personalizada"}>
+            <textarea ref={editor} className={field + " py-2"} rows={10} required maxLength={1500} value={customMessage}
+              onChange={(event) => apply({ message: event.target.value })} />
+          </Field>
+          <div className="flex flex-wrap gap-2" role="group" aria-label={es ? "Insertar variable" : "Inserir variável"}>
+            {REMINDER_VARIABLES.map((variable) => <Button key={variable} type="button" variant="outline" className="min-h-9"
+              onClick={() => insertVariable(`{${variable}}`)}>{`{${variable}}`}</Button>)}
+          </div>
+        </>}
         <Save state={save} disabled={!Object.keys(draft).length} />
       </form>
     </Card>
     <Card title={es ? "Vista previa en WhatsApp" : "Prévia no WhatsApp"}>
       <div className="rounded-xl bg-emerald-100 p-3 text-sm text-emerald-950 dark:bg-emerald-950 dark:text-emerald-50">
-        <p className="min-h-10 whitespace-pre-wrap break-words">{messages[current.template] || (es ? "Escribe el mensaje para ver la vista previa." : "Escreva a mensagem para visualizar.")}</p>
-        {current.template === "buttons" && <div className="mt-3 flex flex-wrap gap-2 border-t border-emerald-700/40 pt-2 text-xs font-semibold">
-          <span>{es ? "Confirmar" : "Confirmar"}</span><span aria-hidden="true">·</span><span>{es ? "Reprogramar" : "Reagendar"}</span>
+        <p className="min-h-10 whitespace-pre-wrap break-words">{preview.split(/(\*[^*\n]+\*)/).map((part, index) =>
+          index % 2 ? <strong key={index}>{part.slice(1, -1)}</strong> : part)}</p>
+        {actions[current.template].length > 0 && <div className="mt-3 grid gap-1 border-t border-emerald-700/40 pt-2">
+          {actions[current.template].map((label) => <span key={label}
+            title={current.template === "external" ? current.externalUrl : current.template === "whatsapp" ? phone : undefined}
+            className="rounded-lg bg-emerald-50 px-3 py-2 text-center text-xs font-semibold dark:bg-emerald-900">{label}</span>)}
         </div>}
       </div>
       <p className="text-xs text-ink-secondary">{es ? `Ejemplo de mensaje · ${current.hours} h antes` : `Exemplo de mensagem · ${current.hours}h antes`}</p>

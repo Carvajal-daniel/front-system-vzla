@@ -246,9 +246,13 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const actionParam = searchParams.get("action");
   const { company } = session;
   const timezone = company?.timezone || "America/Sao_Paulo";
-  const { settings } = useCompanySettings(company?.id ?? "", undefined, !!company);
-  const currency = company?.currency ?? "BRL";
   const isOwner = session.role === "OWNER";
+  // Carrega as configurações privadas (incluindo o modelo de lembretes) quando o usuário é OWNER sem gerar 403 para colaboradores.
+  const { settings } = useCompanySettings(company?.id ?? "", undefined, !!company, isOwner);
+  const currency = company?.currency ?? "BRL";
+  const bookingAppUrl = company?.id
+    ? (typeof window === "undefined" ? `/book/${company.id}` : new URL(`/book/${company.id}`, window.location.origin).href)
+    : undefined;
   const canManagePayments = isOwner && !!renderReceipt;
   const clock = useMemo(() => agendaClock(timezone), [timezone]);
   const [initialToday] = useState(() => getTodayIsoDateInTimezone(timezone));
@@ -703,7 +707,12 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       dismissWaitlistOffer();
       if (!row) return;
       saved(row);
-      const link = whatsAppReminder(row, locale, timezone, "placement");
+      const link = whatsAppReminder(row, locale, timezone, "placement", {
+        companyName: company?.companyName,
+        professionalName: staff.get(row.collaboratorId)?.name,
+        reminders: settings.reminders,
+        appUrl: bookingAppUrl,
+      });
       toast.success("Encaixe confirmado!", link ? {
         duration: 15_000,
         action: { label: "Enviar WhatsApp", onClick: () => window.open(link, "_blank", "noopener,noreferrer") },
@@ -836,6 +845,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   function itemProps(row: Appointment): AgendaItemProps {
     return {
       appointment: row, currency, timezone, now, person: staff.get(row.collaboratorId), busy: !!busy,
+      companyName: company?.companyName, reminders: settings.reminders, bookingAppUrl,
       isFirstVisit: firstVisitClientIds.has(getCanonicalClientId(row.clientPhone, row.clientName)),
       ...(canManagePayments ? {
       payment: displayedPayments?.get(row.id),
@@ -894,7 +904,14 @@ export function AgendaWorkspace({ session, renderReceipt }: {
         {!compact && !alertAction && row.serviceDurationMinutesSnapshot >= 45 && person && <span className="flex max-w-full shrink-0 items-center gap-1 text-[9px] leading-tight"><ProfessionalAvatar person={person} className="size-3" /><span className="truncate">{person.name}</span></span>}
       </button>
       {showAlertActions && !compact && <div className="hidden self-start pe-0.5 pt-0.5 @min-[5rem]:block [&_a]:size-5 [&_svg]:size-3">
-        <WhatsAppLink appointment={row} timezone={timezone} />
+        <WhatsAppLink
+          appointment={row}
+          timezone={timezone}
+          person={person}
+          companyName={company?.companyName}
+          reminders={settings.reminders}
+          bookingAppUrl={bookingAppUrl}
+        />
       </div>}
       </div>
       {alertAction && ActionIcon && <button type="button" data-agenda-quick-action

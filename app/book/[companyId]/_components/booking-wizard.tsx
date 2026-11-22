@@ -14,9 +14,12 @@ import {
 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { displayCompanyRating, collectedClientFields, defaultCompanySettings, emptyClientFields, formatCompanyAddress, type CompanySettings } from "@/lib/company-settings";
+import { googleDirections } from "@/lib/google-place";
 import { useCompanySettings } from "@/lib/use-company-settings";
+import { useGooglePlace } from "@/lib/use-google-place";
 import { ClientDataFields } from "@/components/ui/client-data-fields";
 import { CompanyRating } from "@/components/ui/company-rating";
+import { GooglePlaceMap, GooglePlaceReviews } from "@/components/ui/google-place-map";
 import { announcePublicBooking } from "@/lib/agenda-sync";
 import {
   formatDateInTimezone,
@@ -66,8 +69,11 @@ type Step = 1 | 2 | 3 | 4 | 5;
 export function BookingWizard({ company, services, initialSettings = defaultCompanySettings }: BookingWizardProps) {
   const { locale, t } = useLocale();
   const { settings } = useCompanySettings(company.id, initialSettings);
+  const { place: googlePlace } = useGooglePlace(company.id, settings.googlePlaceId);
   const address = formatCompanyAddress(settings.address);
-  const [clientDetails, setClientDetails] = useState(emptyClientFields);
+  const displayAddress = googlePlace?.address || address;
+  const mapsDirectionsUrl = googleDirections(googlePlace, settings.googleMapsUrl, displayAddress);
+  const [clientDetails, setClientDetails] = useState<Record<string, string>>(emptyClientFields);
 
   const [step, setStep] = useState<Step>(1);
   const [selectedService, setSelectedService] = useState<PublicService | null>(
@@ -219,7 +225,7 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
       startsAt: selectedSlot.startsAt,
       clientName: trimmedName,
       clientPhone: bookingPhone,
-      clientData: collectedClientFields(clientDetails, settings.clientFields),
+      clientData: collectedClientFields(clientDetails, settings),
     };
 
     try {
@@ -314,10 +320,10 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
               </p>
               <div className="flex min-w-0 flex-wrap items-center gap-x-2">
                 <h1 className="min-w-0 break-words text-display-md text-ink">{company.companyName}</h1>
-                <CompanyRating rating={displayCompanyRating(settings)} />
+                <CompanyRating rating={displayCompanyRating(settings, googlePlace)} />
               </div>
-              {address && <address className="mt-1 break-words text-xs not-italic text-ink-secondary">{address}</address>}
-              {settings.googleMapsUrl && <a href={settings.googleMapsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex min-h-9 items-center text-xs font-semibold text-ink underline underline-offset-4">
+              {displayAddress && <address className="mt-1 break-words text-xs not-italic text-ink-secondary">{displayAddress}</address>}
+              {mapsDirectionsUrl && <a href={mapsDirectionsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex min-h-9 items-center text-xs font-semibold text-ink underline underline-offset-4">
                 {locale === "es" ? "Cómo llegar en Google Maps" : "Como chegar no Google Maps"}
               </a>}
               <p className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-ink-muted">
@@ -676,7 +682,7 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
                     onCountryCodeChange={setCountryCode}
                     onChange={setClientPhoneDigits}
                   />
-                  <ClientDataFields modes={settings.clientFields} values={clientDetails} onChange={setClientDetails}
+                  <ClientDataFields settings={settings} values={clientDetails} onChange={setClientDetails}
                     today={getTodayIsoDateInTimezone(company.timezone)} fieldClass="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm" />
 
                   {clientStatus.isBlocked ? (
@@ -777,7 +783,34 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
       {step === 5 && cancelLink && <div className="mx-auto mt-5 max-w-2xl px-4">
         <a className="inline-flex min-h-11 items-center text-sm font-semibold text-accent underline" href={cancelLink}>{locale === "es" ? "Cancelar reserva" : "Cancelar agendamento"}</a>
       </div>}
-      {address && <footer className="mx-auto mt-6 max-w-2xl px-4 text-sm text-ink-secondary"><address className="not-italic">{address}</address></footer>}
+      {(displayAddress || googlePlace || mapsDirectionsUrl) && (
+        <footer className="mx-auto mt-8 max-w-2xl space-y-4 px-4">
+          <section className="space-y-3 rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 space-y-0.5">
+                <h2 className="text-sm font-bold text-ink">{locale === "es" ? "Ubicación" : "Localização"}</h2>
+                {displayAddress && <address className="text-xs not-italic text-ink-secondary">{displayAddress}</address>}
+              </div>
+              {mapsDirectionsUrl && (
+                <a
+                  href={mapsDirectionsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-10 items-center rounded-xl border border-border-strong bg-canvas px-3 text-xs font-semibold text-ink hover:border-accent"
+                >
+                  {locale === "es" ? "Cómo llegar en Google Maps" : "Como chegar no Google Maps"}
+                </a>
+              )}
+            </div>
+            <GooglePlaceMap
+              place={googlePlace}
+              address={displayAddress}
+              title={locale === "es" ? `Mapa de ${company.companyName}` : `Mapa de ${company.companyName}`}
+            />
+          </section>
+          {googlePlace && <GooglePlaceReviews place={googlePlace} spanish={locale === "es"} />}
+        </footer>
+      )}
 
       {/* Resumo fixo na zona do polegar (mobile) na etapa de seleção de horário */}
       {step === 3 && selectedService && selectedSlot && (

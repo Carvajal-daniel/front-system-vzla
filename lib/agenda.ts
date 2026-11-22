@@ -1,4 +1,6 @@
 import type { Appointment, ScheduleBlock } from "@/lib/types/appointment";
+import type { ReminderSettings } from "@/lib/company-settings";
+import { renderReminderMessage } from "@/lib/reminder-templates";
 import type { Company } from "@/lib/types/auth";
 
 export type AgendaView = "day" | "week" | "month" | "list";
@@ -138,19 +140,55 @@ export function isUnpaidCompleted(appointment: Pick<Appointment, "status">, paym
   return appointment.status === "COMPLETED" && (payment?.openInCents ?? 0) > 0;
 }
 
-export function whatsAppReminder(appointment: Appointment, locale: string, timezone: string, purpose: "reminder" | "placement" = "reminder") {
+export interface WhatsAppReminderOptions {
+  companyName?: string;
+  professionalName?: string;
+  reminders?: ReminderSettings | null;
+  appUrl?: string;
+}
+
+export function whatsAppReminder(
+  appointment: Appointment,
+  locale: string,
+  timezone: string,
+  purpose: "reminder" | "placement" = "reminder",
+  options?: WhatsAppReminderOptions,
+) {
   const raw = appointment.clientPhone.trim();
   const digits = raw.replace(/\D/g, "");
   let phone = raw.startsWith("+") || /^(55\d{10,11}|58\d{10})$/.test(digits) ? digits : "";
   if (!phone && (/^[1-9]\d9\d{8}$/.test(digits) || (timezone.startsWith("America/Sao_") && /^\d{10}$/.test(digits)))) phone = `55${digits}`;
   if (!phone && timezone === "America/Caracas" && /^4\d{9}$/.test(digits)) phone = `58${digits}`;
   if (!/^[1-9]\d{9,14}$/.test(phone)) return null;
-  const date = new Intl.DateTimeFormat(locale, { timeZone: timezone, dateStyle: "short", timeStyle: "short" }).format(new Date(appointment.startsAt));
-  const message = purpose === "placement"
-    ? locale === "es"
+  const startsAt = new Date(appointment.startsAt);
+  const date = new Intl.DateTimeFormat(locale, { timeZone: timezone, dateStyle: "short", timeStyle: "short" }).format(startsAt);
+  if (purpose === "placement") {
+    const message = locale === "es"
       ? `Hola, ${appointment.clientName}. Se liberó un horario y confirmamos tu cita de ${appointment.serviceNameSnapshot} el ${date}.`
-      : `Olá, ${appointment.clientName}. Surgiu uma vaga e confirmamos seu agendamento de ${appointment.serviceNameSnapshot} em ${date}.`
-    : locale === "es"
+      : `Olá, ${appointment.clientName}. Surgiu uma vaga e confirmamos seu agendamento de ${appointment.serviceNameSnapshot} em ${date}.`;
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  }
+  // Quando houver contexto da empresa ou do profissional, renderiza o modelo oficial de lembrete com todas as variáveis preenchidas.
+  if (options?.companyName || options?.professionalName || options?.reminders) {
+    const reminderLocale = locale === "es" ? "es" : "pt-BR";
+    const datePart = new Intl.DateTimeFormat(locale, { timeZone: timezone, dateStyle: "short" }).format(startsAt);
+    const timePart = new Intl.DateTimeFormat(locale, { timeZone: timezone, timeStyle: "short" }).format(startsAt);
+    const message = renderReminderMessage(
+      options.reminders?.template ?? "plain",
+      {
+        clientName: appointment.clientName,
+        companyName: options.companyName ?? (reminderLocale === "es" ? "nuestro establecimiento" : "nosso estabelecimento"),
+        professionalName: options.professionalName ?? (reminderLocale === "es" ? "nuestro equipo" : "nossa equipe"),
+        serviceName: appointment.serviceNameSnapshot,
+        date: datePart,
+        time: timePart,
+        appUrl: options.appUrl,
+      },
+      { locale: reminderLocale, customMessage: options.reminders?.message },
+    );
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  }
+  const message = locale === "es"
     ? `Hola, ${appointment.clientName}. Te recordamos tu cita de ${appointment.serviceNameSnapshot} el ${date}. ¿Puedes confirmar tu asistencia?`
     : `Olá, ${appointment.clientName}. Lembramos do seu agendamento de ${appointment.serviceNameSnapshot} em ${date}. Pode confirmar sua presença?`;
   return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;

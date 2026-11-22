@@ -33,6 +33,8 @@ import { formatDateTimeInTimezone, formatPriceFromCents } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useSession } from "@/components/ui/auth-guard";
 import { SensitiveValue } from "@/components/ui/sensitive-value";
+import { selectedClientFields } from "@/lib/company-settings";
+import { useCompanySettings } from "@/lib/use-company-settings";
 import { useClients } from "@/lib/use-clients";
 import { useLoyalty } from "@/lib/use-loyalty";
 import { AgendaStatusBadge } from "@/components/ui/agenda-status";
@@ -57,8 +59,10 @@ export default function ClientProfilePage({
   const timezone = session.company.timezone;
   const currency = session.company.currency ?? "BRL";
   const companyId = session.company.id;
+  const { settings } = useCompanySettings(companyId);
+  const visibleFields = new Set(selectedClientFields(settings).map(({ id }) => id));
 
-  const { getClient, saveClientDetails, toggleBlockClient, updateAnamnesis, loading } =
+  const { getClient, saveClientDetails, toggleBlockClient, loading } =
     useClients(companyId);
   const { program, getClientLoyalty, addPoints, redeemReward } = useLoyalty(companyId);
 
@@ -66,35 +70,21 @@ export default function ClientProfilePage({
   const loyalty = getClientLoyalty(clientId);
 
   const [activeTab, setActiveTab] = useState<"history" | "anamnesis" | "loyalty">("history");
-  const [anamnesisText, setAnamnesisText] = useState("");
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
     phone: "",
-    email: "",
-    birthDate: "",
-    document: "",
   });
 
   // Atualiza campos quando o cliente é carregado
   useEffect(() => {
     if (client) {
-      setAnamnesisText(client.notes || "");
       setEditForm({
         name: client.name,
         phone: client.phone,
-        email: client.email || "",
-        birthDate: client.birthDate || "",
-        document: client.document || "",
       });
     }
   }, [client]);
-
-  // Salvar ficha / anamnese
-  const handleSaveAnamnesis = () => {
-    updateAnamnesis(clientId, anamnesisText);
-    toast.success("Ficha de anamnese salva com sucesso!");
-  };
 
   // Salvar dados cadastrais
   const handleSaveProfile = (e: React.FormEvent) => {
@@ -102,9 +92,6 @@ export default function ClientProfilePage({
     saveClientDetails(clientId, {
       name: editForm.name.trim(),
       phone: editForm.phone.trim(),
-      email: editForm.email.trim() || undefined,
-      birthDate: editForm.birthDate || undefined,
-      document: editForm.document.trim() || undefined,
     });
     setEditModalOpen(false);
     toast.success("Dados do cliente atualizados com sucesso!");
@@ -184,9 +171,9 @@ export default function ClientProfilePage({
 
               <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
                 <span className="font-mono">{client.phone}</span>
-                {client.email && <span>· {client.email}</span>}
-                {client.birthDate && <span>· Nasc: {client.birthDate}</span>}
-                {client.document && <span>· CPF / C.I.: {client.document}</span>}
+                {visibleFields.has("email") && client.email && <span>· {client.email}</span>}
+                {visibleFields.has("birthDate") && client.birthDate && <span>· Nasc: {client.birthDate}</span>}
+                {visibleFields.has("document") && client.document && <span>· CPF / C.I.: {client.document}</span>}
               </div>
             </div>
           </div>
@@ -427,39 +414,8 @@ export default function ClientProfilePage({
           </div>
         )}
 
-        {/* Conteúdo Aba 2: Ficha Técnica / Anamnese */}
-        {activeTab === "anamnesis" && (
-          <div className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-xs space-y-4">
-            <div>
-              <h3 className="text-sm font-bold text-ink">Anotações Técnicas e Anamnese</h3>
-              <p className="text-xs text-ink-muted">
-                Registre fórmulas de coloração, histórico de químicas, sensibilidades, alergias e
-                preferências exclusivas deste cliente.
-              </p>
-            </div>
-
-            <textarea
-              rows={8}
-              value={anamnesisText}
-              onChange={(e) => setAnamnesisText(e.target.value)}
-              placeholder="Ex: Utiliza tintura 6.1 com oxidante 20 volumes. Sensibilidade no couro cabeludo ao descolorante. Prefere café sem açúcar..."
-              className="w-full rounded-xl border border-border-subtle bg-canvas/40 p-3.5 text-xs text-ink placeholder:text-ink-muted focus:outline-none focus:border-accent"
-            />
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleSaveAnamnesis}
-                className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors cursor-pointer shadow-xs"
-              >
-                <Save size={14} />
-                Salvar Anamnese
-              </button>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "anamnesis" && <ClientProfileFields key={client.id} companyId={companyId} clientId={client.id} />}
+        {activeTab === "anamnesis" && <ClientProfileFields key={client.id} companyId={companyId} client={client}
+          onSaved={(values) => saveClientDetails(client.id, values)} />}
 
         {/* Conteúdo Aba 3: Fidelidade */}
         {activeTab === "loyalty" && (
@@ -608,38 +564,6 @@ export default function ClientProfilePage({
                   required
                   value={editForm.phone}
                   onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                  className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-ink-secondary mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={editForm.email}
-                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                    className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold text-ink-secondary mb-1">Data de Nascimento</label>
-                  <input
-                    type="date"
-                    value={editForm.birthDate}
-                    onChange={(e) => setEditForm({ ...editForm, birthDate: e.target.value })}
-                    className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-ink-secondary mb-1">CPF / C.I.</label>
-                <input
-                  type="text"
-                  placeholder="000.000.000-00 ou V-12.345.678"
-                  value={editForm.document}
-                  onChange={(e) => setEditForm({ ...editForm, document: e.target.value })}
                   className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
                 />
               </div>
