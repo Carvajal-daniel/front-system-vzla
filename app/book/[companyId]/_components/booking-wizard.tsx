@@ -322,6 +322,7 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
                 <h1 className="min-w-0 break-words text-display-md text-ink">{company.companyName}</h1>
                 <CompanyRating rating={displayCompanyRating(settings, googlePlace)} />
               </div>
+              {settings.description?.trim() && <p className="mt-1 whitespace-pre-wrap break-words text-sm text-ink-secondary">{settings.description}</p>}
               {displayAddress && <address className="mt-1 break-words text-xs not-italic text-ink-secondary">{displayAddress}</address>}
               {mapsDirectionsUrl && <a href={mapsDirectionsUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex min-h-9 items-center text-xs font-semibold text-ink underline underline-offset-4">
                 {locale === "es" ? "Cómo llegar en Google Maps" : "Como chegar no Google Maps"}
@@ -780,7 +781,7 @@ export function BookingWizard({ company, services, initialSettings = defaultComp
         )}
       </div>
 
-      {step === 5 && cancelLink && <div className="mx-auto mt-5 max-w-2xl px-4">
+      {step === 5 && settings.allowClientCancel && cancelLink && <div className="mx-auto mt-5 max-w-2xl px-4">
         <a className="inline-flex min-h-11 items-center text-sm font-semibold text-accent underline" href={cancelLink}>{locale === "es" ? "Cancelar reserva" : "Cancelar agendamento"}</a>
       </div>}
       {(displayAddress || googlePlace || mapsDirectionsUrl) && (

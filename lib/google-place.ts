@@ -18,7 +18,6 @@
 
 type GooglePlaceStatus = "not_configured" | "not_linked" | "not_found" | "unavailable";
 export type LinkedGooglePlace = { status: "ready"; place: GooglePlace } | { status: GooglePlaceStatus; message?: string };
-export type GooglePlaceSearch = { status: "ready"; places: GooglePlace[] } | { status: GooglePlaceStatus; message?: string };
 
 export function googleDirections(place?: GooglePlace, fallbackUrl?: string | null, address?: string) {
   if (!place && fallbackUrl) return fallbackUrl;

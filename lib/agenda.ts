@@ -104,8 +104,10 @@ export function companyWeekday(company: Pick<Company, "operatingSchedule" | "ope
 
 export function companyDay(company: Pick<Company, "operatingSchedule" | "operatingDays">, day: string) {
   const { isOpen, hours } = companyWeekday(company, calendarDate(day).getUTCDay());
-  const closed = !isOpen || Boolean(hours && (!hours.openTime || !hours.closeTime));
-  return { closed, hours };
+  const shifts = hours?.shifts ?? (hours?.openTime && hours.closeTime
+    ? [{ start: hours.openTime, end: hours.closeTime }] : []);
+  const closed = !isOpen || Boolean(hours && shifts.length === 0);
+  return { closed, hours, shifts };
 }
 
 export function isAppointmentPaid(payment?: { collectedInCents: number; netInCents: number } | null) {

@@ -58,6 +58,25 @@ export interface RescheduleAppointmentPayload {
   collaboratorId?: string;
 }
 
+export interface AppointmentAuditLog {
+  id: string;
+  companyId: string;
+  appointmentId: string;
+  action: string;
+  previousStatus: AppointmentStatus;
+  newStatus: AppointmentStatus;
+  reason: string;
+  authorizedById: string;
+  authorizedByName: string;
+  authorizedByRole: string;
+  createdAt: string;
+}
+
+export interface RevertCompletedAppointmentPayload {
+  reason: string;
+  ownerPassword: string;
+}
+
 export interface AffectedAppointment {
   id: string;
   collaboratorId: string;

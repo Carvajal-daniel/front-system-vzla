@@ -17,6 +17,7 @@ import {
   EyeOff,
   Filter,
   Loader2,
+  Lock,
   Plus,
   Receipt,
   RefreshCw,
@@ -31,14 +32,20 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { apiRequest } from "@/lib/api-client";
+import { ApiError, apiRequest } from "@/lib/api-client";
 import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useSession } from "@/components/ui/auth-guard";
 import { SensitiveValue } from "@/components/ui/sensitive-value";
 import type { Appointment } from "@/lib/types/appointment";
-import type { FinanceDay, FinanceSummaryResponse, PaymentMethod } from "@/lib/types/finance";
+import type {
+  FinanceDay,
+  FinanceSummaryResponse,
+  PaymentMethod,
+  SavedFinanceOrder,
+} from "@/lib/types/finance";
 import type { Collaborator } from "@/lib/types/team";
+import { clientPhoneKey, getCanonicalClientId, useClients } from "@/lib/use-clients";
 import { ReceiptDialog } from "./receipt-dialog";
 import { FinanceOperationDialog, type FinanceOperation } from "./finance-operation-dialog";
 
@@ -97,14 +104,64 @@ export function FinancePanel() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN_DEBT" | "CLOSED">("ALL");
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [savedOrders, setSavedOrders] = useState<SavedFinanceOrder[]>([]);
   const [paymentsMap, setPaymentsMap] = useState<Map<string, PaymentSummaryItem>>(new Map());
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [summary, setSummary] = useState<FinanceSummaryResponse | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [receiptId, setReceiptId] = useState<string | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<SavedFinanceOrder | null>(null);
   const [operation, setOperation] = useState<FinanceOperation | null>(null);
   const [newSaleChoiceOpen, setNewSaleChoiceOpen] = useState(false);
+  const [hasOwnerPin, setHasOwnerPin] = useState<boolean | null>(null);
+  const [reopenTarget, setReopenTarget] = useState<SavedFinanceOrder | null>(null);
+  const [reopenPin, setReopenPin] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopenError, setReopenError] = useState("");
+  const [reopening, setReopening] = useState(false);
+  const { clients } = useClients(session.company.id);
+
+  // Restaura todos os filtros para o estado padrão limpo (ex.: após finalizar operação)
+  const resetFilters = useCallback(() => {
+    setFromDate(formatIsoInTimezone(new Date(Date.now() - 7 * dayInMs), timezone));
+    setToDate(formatIsoInTimezone(new Date(Date.now() + 1 * dayInMs), timezone));
+    setSearch("");
+    setStatusFilter("ALL");
+  }, [timezone]);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<{ hasPin: boolean }>("/companies/me/security/pin")
+      .then((res) => {
+        if (active) setHasOwnerPin(Boolean(res?.hasPin));
+      })
+      .catch(() => {
+        if (active) setHasOwnerPin(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Resolve o ID canônico de um cliente cadastrado na base da empresa para navegação direta ao perfil/histórico
+  const resolveClientProfileId = useCallback(
+    (name?: string | null, phone?: string | null): string | null => {
+      const trimmedName = (name ?? "").trim();
+      if (!trimmedName) return null;
+      const phoneKey = clientPhoneKey(phone ?? undefined);
+      const lowerName = trimmedName.toLowerCase();
+
+      const matched = clients.find((client) => {
+        if (phoneKey && clientPhoneKey(client.phone) === phoneKey) return true;
+        return client.name.trim().toLowerCase() === lowerName;
+      });
+
+      if (matched) return matched.id;
+      return getCanonicalClientId(phone ?? undefined, trimmedName);
+    },
+    [clients],
+  );
 
   const searchParams = useSearchParams();
   const actionParam = searchParams.get("action");
@@ -112,6 +169,7 @@ export function FinancePanel() {
   useEffect(() => {
     if (actionParam === "new-sale") {
       setNewSaleChoiceOpen(true);
+      window.history.replaceState(null, "", "/owner/finance");
     }
   }, [actionParam]);
 
@@ -127,7 +185,7 @@ export function FinancePanel() {
       const fromIso = `${fromDate}T00:00:00.000Z`;
       const toIso = `${toDate}T23:59:59.999Z`;
 
-      const [summaryRes, appsRes, collabsRes] = await Promise.all([
+      const [summaryRes, appsRes, collabsRes, ordersRes] = await Promise.all([
         apiRequest<FinanceSummaryResponse>("/finance/summary", {
           query: { from: fromDate, to: toDate },
         }).catch(() => null),
@@ -135,10 +193,14 @@ export function FinancePanel() {
           query: { from: fromIso, to: toIso },
         }),
         apiRequest<{ collaborators: Collaborator[] } | Collaborator[]>("/collaborators"),
+        apiRequest<{ items?: SavedFinanceOrder[] }>("/finance/orders", {
+          query: { from: fromDate, to: toDate },
+        }).catch(() => ({ items: [] })),
       ]);
 
       setSummary(summaryRes);
       setAppointments(appsRes);
+      setSavedOrders(Array.isArray(ordersRes?.items) ? ordersRes.items : []);
       setCollaborators(Array.isArray(collabsRes) ? collabsRes : collabsRes.collaborators ?? []);
 
       // Busca resumos de pagamento em lotes
@@ -173,11 +235,18 @@ export function FinancePanel() {
     void loadData();
   }, [loadData]);
 
-  // Lista de comandas filtradas
+  // Lista unificada de comandas (agendamentos + comandas salvas em /finance/orders)
   const comandas = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return appointments
-      .filter((app) => app.status !== "CANCELED")
+    // Evita duplicar a linha de agendamento quando já existe uma comanda persistida vinculada a ele
+    const linkedAppointmentIds = new Set(
+      savedOrders
+        .map((order) => order.appointmentId)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    const appointmentRows = appointments
+      .filter((app) => app.status !== "CANCELED" && !linkedAppointmentIds.has(app.id))
       .map((app) => {
         const payment = paymentsMap.get(app.id);
         const totalInCents = app.servicePriceInCentsSnapshot;
@@ -187,28 +256,85 @@ export function FinancePanel() {
         const hasDebt = openDebtInCents > 0;
 
         return {
-          ...app,
+          id: app.id,
+          source: "APPOINTMENT" as const,
+          codeLabel: `#${app.id.slice(0, 8)}`,
+          clientName: app.clientName,
+          clientPhone: app.clientPhone,
+          clientProfileId: resolveClientProfileId(app.clientName, app.clientPhone),
+          collaboratorId: app.collaboratorId,
+          collaboratorLabel: collaboratorMap.get(app.collaboratorId)?.name ?? "Profissional",
+          serviceNameSnapshot: app.serviceNameSnapshot,
+          startsAt: app.startsAt,
           totalInCents,
           paidInCents,
           openDebtInCents,
           isClosed,
           hasDebt,
           methods: payment?.methods ?? [],
+          order: null as SavedFinanceOrder | null,
         };
-      })
+      });
+
+    const orderRows = savedOrders.map((order) => {
+      const openDebtInCents = order.openInCents;
+      const isClosed = order.status === "CLOSED" || (openDebtInCents === 0 && order.paidCents > 0);
+      const hasDebt = openDebtInCents > 0;
+      const itemSummary =
+        order.items.map((it) => `${it.quantity}x ${it.name}`).join(", ") ||
+        (locale === "es" ? "Venta suelta" : "Venda avulsa");
+      const firstSeller =
+        order.items.find((it) => it.collaboratorName)?.collaboratorName ??
+        (order.items.some((it) => it.itemType === "PRODUCT" && !it.collaboratorId)
+          ? locale === "es"
+            ? "Venta de la Empresa"
+            : "Venda da Empresa"
+          : "—");
+      const normalizedCode = order.code.startsWith("#") ? order.code : `#${order.code}`;
+      const hasLinkedClient = Boolean(order.clientName?.trim());
+
+      return {
+        id: `order_${order.id}`,
+        source: "ORDER" as const,
+        codeLabel: normalizedCode,
+        clientName: hasLinkedClient
+          ? order.clientName!.trim()
+          : locale === "es"
+            ? "Venta Suelta"
+            : "Venda Avulsa",
+        clientPhone: order.clientPhone || "—",
+        clientProfileId: hasLinkedClient
+          ? resolveClientProfileId(order.clientName, order.clientPhone)
+          : null,
+        collaboratorId: "",
+        collaboratorLabel: firstSeller,
+        serviceNameSnapshot: itemSummary,
+        startsAt: order.createdAt,
+        totalInCents: order.totalCents,
+        paidInCents: order.paidCents,
+        openDebtInCents,
+        isClosed,
+        hasDebt,
+        methods: order.payments.map((p) => p.method),
+        order,
+      };
+    });
+
+    return [...orderRows, ...appointmentRows]
       .filter((comanda) => {
         if (statusFilter === "OPEN_DEBT" && !comanda.hasDebt) return false;
         if (statusFilter === "CLOSED" && !comanda.isClosed) return false;
         if (term) {
+          const matchCode = comanda.codeLabel.toLowerCase().includes(term);
           const matchClient = comanda.clientName.toLowerCase().includes(term);
           const matchPhone = comanda.clientPhone.toLowerCase().includes(term);
           const matchService = comanda.serviceNameSnapshot.toLowerCase().includes(term);
-          if (!matchClient && !matchPhone && !matchService) return false;
+          if (!matchCode && !matchClient && !matchPhone && !matchService) return false;
         }
         return true;
       })
       .sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime());
-  }, [appointments, paymentsMap, search, statusFilter]);
+  }, [appointments, collaboratorMap, locale, paymentsMap, resolveClientProfileId, savedOrders, search, statusFilter]);
 
   // Totais das comandas filtradas
   const comandasTotals = useMemo(() => {
@@ -526,6 +652,7 @@ export function FinancePanel() {
             <span className="font-semibold text-ink-secondary">Período:</span>
             <input
               type="date"
+              autoComplete="off"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
               className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
@@ -533,6 +660,7 @@ export function FinancePanel() {
             <span className="text-ink-muted">até</span>
             <input
               type="date"
+              autoComplete="off"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
               className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
@@ -576,7 +704,7 @@ export function FinancePanel() {
                 setFromDate(todayIso);
                 setToDate(todayIso);
               }}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
               Hoje
             </button>
@@ -586,7 +714,7 @@ export function FinancePanel() {
                 setFromDate(formatIsoInTimezone(new Date(Date.now() - 7 * dayInMs), timezone));
                 setToDate(todayIso);
               }}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
               7 dias
             </button>
@@ -599,7 +727,7 @@ export function FinancePanel() {
                 setFromDate(formatIsoInTimezone(first, timezone));
                 setToDate(formatIsoInTimezone(last, timezone));
               }}
-              className="rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
               Este mês
             </button>
@@ -610,6 +738,7 @@ export function FinancePanel() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-muted" />
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="Buscar comanda por cliente, telefone ou serviço..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -618,9 +747,10 @@ export function FinancePanel() {
             </div>
 
             <select
+              autoComplete="off"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as "ALL" | "OPEN_DEBT" | "CLOSED")}
-              className="rounded-xl border border-border-subtle bg-canvas/40 px-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
+              className="cursor-pointer rounded-xl border border-border-subtle bg-canvas/40 px-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
             >
               <option value="ALL">Todas as Comandas</option>
               <option value="OPEN_DEBT">Em aberto / Fiado (Com débito)</option>
@@ -661,32 +791,46 @@ export function FinancePanel() {
               </thead>
               <tbody className="divide-y divide-border-subtle/50">
                 {comandas.map((cmd) => {
-                  const collab = collaboratorMap.get(cmd.collaboratorId);
                   const dateStr = formatDateTimeInTimezone(cmd.startsAt, timezone, locale);
+                  const isAppointment = cmd.source === "APPOINTMENT";
 
                   return (
                     <tr
                       key={cmd.id}
-                      onClick={() => setReceiptId(cmd.id)}
-                      className="hover:bg-canvas/40 transition-colors cursor-pointer group"
+                      onClick={() => {
+                        // Bloqueia clique na linha/serviço quando a comanda já está fechada/paga
+                        if (cmd.isClosed) return;
+                        if (isAppointment) setReceiptId(cmd.id);
+                        else if (cmd.order) router.push(`/owner/finance/orders/new?orderId=${encodeURIComponent(cmd.order.id)}`);
+                      }}
+                      className={`${cmd.isClosed ? "cursor-default" : "cursor-pointer hover:bg-canvas/40"} transition-colors group`}
                     >
                       <td className="py-3 px-4 font-mono font-medium text-ink whitespace-nowrap">
-                        <span className="block font-semibold">#{cmd.id.slice(0, 8)}</span>
+                        <span className="block font-semibold">{cmd.codeLabel}</span>
                         <span className="text-[11px] text-ink-muted">{dateStr}</span>
                       </td>
 
                       <td className="py-3 px-4 min-w-[130px]">
-                        <p className="font-semibold text-ink group-hover:text-accent transition-colors">
-                          {cmd.clientName}
-                        </p>
+                        {cmd.clientProfileId ? (
+                          <Link
+                            href={`/owner/clients/${encodeURIComponent(cmd.clientProfileId)}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex cursor-pointer items-center gap-1 font-semibold text-ink hover:text-accent hover:underline transition-colors"
+                          >
+                            <span>{cmd.clientName}</span>
+                            <ExternalLink size={11} className="opacity-60" aria-hidden="true" />
+                          </Link>
+                        ) : (
+                          <p className="font-semibold text-ink">{cmd.clientName}</p>
+                        )}
                         <p className="text-[11px] text-ink-muted font-mono">{cmd.clientPhone}</p>
                       </td>
 
                       <td className="py-3 px-4 whitespace-nowrap text-ink-secondary">
-                        {collab?.name ?? "Profissional"}
+                        {cmd.collaboratorLabel}
                       </td>
 
-                      <td className="py-3 px-4 max-w-[180px] truncate text-ink font-medium">
+                      <td className="py-3 px-4 max-w-[180px] truncate text-ink font-medium" title={cmd.serviceNameSnapshot}>
                         {cmd.serviceNameSnapshot}
                       </td>
 
@@ -710,7 +854,9 @@ export function FinancePanel() {
                             </SensitiveValue>
                           </span>
                         ) : (
-                          <span className="text-ink-muted text-[11px]">R$ 0,00</span>
+                          <span className="text-ink-muted text-[11px]">
+                            {formatPriceFromCents(0, locale, currency)}
+                          </span>
                         )}
                       </td>
 
@@ -727,16 +873,68 @@ export function FinancePanel() {
                       </td>
 
                       <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setReceiptId(cmd.id);
-                          }}
-                          className="rounded-lg bg-surface border border-border-subtle px-2.5 py-1 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors shadow-2xs"
-                        >
-                          {cmd.hasDebt ? "Cobrar" : "Ver Recibo"}
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {isAppointment ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setReceiptId(cmd.id);
+                              }}
+                              className="cursor-pointer rounded-lg bg-surface border border-border-subtle px-2.5 py-1 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors shadow-2xs"
+                            >
+                              {cmd.hasDebt
+                                ? "Cobrar"
+                                : "Ver Recibo"}
+                            </button>
+                          ) : (
+                            <>
+                              {!cmd.isClosed && cmd.order && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    router.push(`/owner/finance/orders/new?orderId=${encodeURIComponent(cmd.order!.id)}`);
+                                  }}
+                                  className="cursor-pointer rounded-lg bg-accent px-2.5 py-1 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors shadow-2xs"
+                                >
+                                  {locale === "es" ? "Editar / Cobrar" : "Editar / Cobrar"}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (cmd.order) setReceiptOrder(cmd.order);
+                                }}
+                                className="cursor-pointer rounded-lg bg-surface border border-border-subtle px-2.5 py-1 text-xs font-semibold text-ink hover:border-accent hover:text-accent transition-colors shadow-2xs"
+                              >
+                                Ver Recibo
+                              </button>
+                              {cmd.isClosed && cmd.order && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setReopenPin("");
+                                    setReopenReason("");
+                                    setReopenError("");
+                                    setReopenTarget(cmd.order);
+                                  }}
+                                  title={
+                                    locale === "es"
+                                      ? "Reabrir / Editar con PIN del Dueño"
+                                      : "Reabrir / Editar com PIN do Dono"
+                                  }
+                                  className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-border-subtle bg-canvas/50 px-2 py-1 text-[11px] font-medium text-ink-secondary hover:border-amber-500/50 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                                >
+                                  <Lock size={11} aria-hidden="true" />
+                                  <span>{locale === "es" ? "Reabrir (PIN)" : "Reabrir (PIN)"}</span>
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -748,15 +946,233 @@ export function FinancePanel() {
       </div>
 
       {/* Modal de Recebimento / Comanda */}
-      {receiptId && (
+      {(receiptId || receiptOrder) && (
         <ReceiptDialog
-          appointmentId={receiptId}
+          appointmentId={receiptId ?? undefined}
+          order={receiptOrder ?? undefined}
           timezone={timezone}
+          onChanged={() => {
+            resetFilters();
+            void loadData();
+          }}
           onClose={() => {
             setReceiptId(null);
+            setReceiptOrder(null);
             void loadData();
           }}
         />
+      )}
+
+      {/* Modal de Reabertura Controlada com PIN do Dono */}
+      {reopenTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div
+            className="fixed inset-0"
+            onClick={() => {
+              if (!reopening) setReopenTarget(null);
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reopen-order-pin-title"
+            className="relative z-10 w-full max-w-md rounded-2xl border border-border-strong bg-surface p-5 shadow-2xl space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="reopen-order-pin-title"
+                  className="text-base font-bold text-ink flex items-center gap-2"
+                >
+                  <Lock size={16} className="text-amber-500" aria-hidden="true" />
+                  {locale === "es"
+                    ? `Reabrir Comanda ${reopenTarget.code}`
+                    : `Reabrir Comanda ${reopenTarget.code}`}
+                </h3>
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  {locale === "es"
+                    ? "Requiere el PIN de autorización del Dueño y un motivo para auditoría."
+                    : "Exige o PIN de autorização do Dono e um motivo para registro em auditoria."}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={reopening}
+                onClick={() => setReopenTarget(null)}
+                aria-label="Fechar"
+                className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-surface-hover hover:text-ink cursor-pointer disabled:opacity-50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {hasOwnerPin === false ? (
+              <div className="space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-ink">
+                <p className="font-semibold text-amber-700 dark:text-amber-300">
+                  {locale === "es"
+                    ? "PIN del Dueño aún no configurado"
+                    : "PIN do Dono ainda não configurado"}
+                </p>
+                <p className="text-ink-secondary">
+                  {locale === "es"
+                    ? "Define un PIN numérico de 4 a 6 dígitos en Configuraciones > Seguridad y Contraseña antes de reabrir comandas cerradas."
+                    : "Defina um PIN numérico de 4 a 6 dígitos em Configurações > Segurança & Senha antes de permitir reaberturas."}
+                </p>
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setReopenTarget(null)}
+                    className="cursor-pointer rounded-lg border border-border-subtle px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink"
+                  >
+                    {locale === "es" ? "Cerrar" : "Fechar"}
+                  </button>
+                  <Link
+                    href="/owner/settings"
+                    onClick={() => setReopenTarget(null)}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-accent-ink hover:bg-accent-hover"
+                  >
+                    {locale === "es" ? "Ir a Seguridad y Contraseña" : "Ir para Segurança & Senha"}
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <form
+                autoComplete="off"
+                className="space-y-3"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const trimmedPin = reopenPin.trim();
+                  const trimmedReason = reopenReason.trim();
+                  if (!/^\d{4,6}$/.test(trimmedPin)) {
+                    setReopenError(
+                      locale === "es"
+                        ? "Ingresa un PIN numérico de 4 a 6 dígitos."
+                        : "Informe um PIN numérico de 4 a 6 dígitos.",
+                    );
+                    return;
+                  }
+                  if (trimmedReason.length < 3) {
+                    setReopenError(
+                      locale === "es"
+                        ? "Informa el motivo de la reapertura (mínimo 3 caracteres)."
+                        : "Informe o motivo da reabertura (mínimo 3 caracteres).",
+                    );
+                    return;
+                  }
+
+                  setReopening(true);
+                  setReopenError("");
+                  try {
+                    await apiRequest(`/finance/orders/${encodeURIComponent(reopenTarget.id)}/reopen`, {
+                      method: "POST",
+                      body: { pin: trimmedPin, reason: trimmedReason },
+                    });
+                    const targetId = reopenTarget.id;
+                    setReopenTarget(null);
+                    setReopenPin("");
+                    setReopenReason("");
+                    toast.success(
+                      locale === "es"
+                        ? "Comanda reabierta con éxito. Liberada para edición."
+                        : "Comanda reaberta com sucesso! Liberada para edição.",
+                    );
+                    router.push(`/owner/finance/orders/new?orderId=${encodeURIComponent(targetId)}`);
+                  } catch (err) {
+                    if (err instanceof ApiError) {
+                      if (err.message === "OWNER_PIN_NOT_CONFIGURED") {
+                        setHasOwnerPin(false);
+                      } else if (err.message === "OWNER_PIN_INVALID") {
+                        setReopenError(
+                          locale === "es"
+                            ? "PIN del Dueño incorrecto. Inténtalo nuevamente."
+                            : "PIN do Dono incorreto. Tente novamente.",
+                        );
+                      } else {
+                        setReopenError(err.message);
+                      }
+                    } else {
+                      setReopenError(
+                        locale === "es"
+                          ? "No fue posible reabrir la comanda."
+                          : "Não foi possível reabrir a comanda.",
+                      );
+                    }
+                  } finally {
+                    setReopening(false);
+                  }
+                }}
+              >
+                <div className="space-y-1">
+                  <label htmlFor="reopen-pin-input" className="block text-xs font-semibold text-ink-secondary">
+                    {locale === "es" ? "PIN del Dueño (4 a 6 dígitos)" : "PIN do Dono (4 a 6 dígitos)"}
+                  </label>
+                  <input
+                    id="reopen-pin-input"
+                    type="password"
+                    inputMode="numeric"
+                    pattern="\d{4,6}"
+                    minLength={4}
+                    maxLength={6}
+                    autoComplete="off"
+                    required
+                    disabled={reopening}
+                    value={reopenPin}
+                    onChange={(e) => setReopenPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="••••"
+                    className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-sm tracking-widest text-ink outline-none focus-visible:border-accent"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="reopen-reason-input" className="block text-xs font-semibold text-ink-secondary">
+                    {locale === "es" ? "Motivo de la reapertura *" : "Motivo da reabertura *"}
+                  </label>
+                  <textarea
+                    id="reopen-reason-input"
+                    rows={3}
+                    required
+                    minLength={3}
+                    maxLength={500}
+                    disabled={reopening}
+                    value={reopenReason}
+                    onChange={(e) => setReopenReason(e.target.value)}
+                    placeholder={
+                      locale === "es"
+                        ? "Ej.: Cliente agregó un producto después del cierre..."
+                        : "Ex.: Cliente adicionou produto após o fechamento..."
+                    }
+                    className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink outline-none focus-visible:border-accent"
+                  />
+                </div>
+
+                {reopenError && (
+                  <p role="alert" className="text-xs font-medium text-rose-500">
+                    {reopenError}
+                  </p>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={reopening}
+                    onClick={() => setReopenTarget(null)}
+                    className="cursor-pointer rounded-xl border border-border-subtle px-3 py-2 text-xs font-semibold text-ink-secondary hover:text-ink disabled:opacity-50"
+                  >
+                    {locale === "es" ? "Cancelar" : "Cancelar"}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={reopening}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl bg-amber-500 px-3.5 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-50 transition-colors"
+                  >
+                    {reopening && <Loader2 size={13} className="animate-spin" />}
+                    {locale === "es" ? "Autorizar y Reabrir" : "Autorizar e Reabrir"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Modal compacto de escolha do tipo de venda */}
@@ -791,7 +1207,7 @@ export function FinancePanel() {
                 type="button"
                 onClick={() => {
                   setNewSaleChoiceOpen(false);
-                  setOperation({ kind: "create" });
+                  router.push("/owner/finance/orders/new");
                 }}
                 className="flex min-h-11 items-center justify-center rounded-xl bg-[#00A8C6] hover:bg-[#0092AD] px-4 py-2.5 text-xs font-bold text-white transition-colors shadow-xs cursor-pointer"
               >
@@ -822,6 +1238,7 @@ export function FinancePanel() {
           onClose={() => setOperation(null)}
           onSaved={() => {
             setOperation(null);
+            resetFilters();
             void loadData();
           }}
         />

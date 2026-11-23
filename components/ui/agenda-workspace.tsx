@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, Users, Wallet, XCircle } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, SlidersHorizontal, Users, Wallet, XCircle } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { agendaBoundary, agendaClock, agendaMonth, agendaRange, agendaViews, findAppointmentConflict, formatAgendaDay, isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, localDayMinuteToUtcIso, overlapsScheduleBlock, shiftAgendaDay, shiftAgendaMonth, whatsAppReminder } from "@/lib/agenda";
 import type { AgendaView } from "@/lib/agenda";
@@ -25,7 +25,7 @@ import { AgendaAppointmentDetails, AgendaCard, WhatsAppLink } from "./agenda-car
 import type { AgendaItemProps, AgendaPayment } from "./agenda-card";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import { AgendaMonthGrid, agendaRangeLabel, AgendaTimeGrid } from "./agenda-calendar";
-import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect, ProfessionalAvatar } from "./agenda-controls";
+import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect } from "./agenda-controls";
 import type { AgendaPerson } from "./agenda-controls";
 import { AgendaEditor, type AgendaEditorTab } from "./agenda-editor";
 import { PaidBadge } from "./agenda-status";
@@ -62,9 +62,9 @@ const metricIconTones = [
 ];
 const control = "inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-border-subtle bg-surface px-2.5 text-xs font-semibold text-ink-secondary hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-accent";
 const alertColors: Record<AlertType, string> = {
-  PENDING: "border-amber-500/40 bg-amber-500/12 text-amber-400",
-  readyToComplete: "border-sky-500/40 bg-sky-500/12 text-sky-400",
-  unpaidCompleted: "border-orange-500/40 bg-orange-500/12 text-orange-400",
+  PENDING: "border-amber-500/40 bg-amber-500/12 text-amber-800 dark:text-amber-300",
+  readyToComplete: "border-sky-500/40 bg-sky-500/12 text-sky-800 dark:text-sky-300",
+  unpaidCompleted: "border-orange-500/40 bg-orange-500/12 text-orange-800 dark:text-orange-300",
 };
 
 function useAgendaRange<T extends { id: string }>(
@@ -258,10 +258,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const [initialToday] = useState(() => getTodayIsoDateInTimezone(timezone));
   const [focus, setFocus] = useState(initialToday);
   const [miniMonth, setMiniMonth] = useState(initialToday);
-  const [view, setView] = useState<AgendaView>("week");
+  const [view, setView] = useState<AgendaView>("day");
   const [selectedPersonIds, setSelectedPersonIds] = useState<ReadonlySet<string> | null>(null);
   const [status, setStatus] = useState<Filter>("");
   const [highlightedId, setHighlightedId] = useState("");
+  const [agendaFiltersOpen, setAgendaFiltersOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [changedPayment, setChangedPayment] = useState(0);
   const [opened, setOpened] = useState<Appointment | null>(null);
@@ -566,7 +567,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
 
   const metrics: { filter: StatusFilter; label: string; count: number }[] = [
     { filter: "", label: isOwner ? "Total" : copy.total, count: metricRows.length },
-    ...([ ["COMPLETED", copy.completed], ["PENDING", isOwner ? "Pendientes" : copy.pending], ["CANCELED_OR_ABSENT", copy.canceled] ] as const)
+    ...([ ["COMPLETED", copy.completed], ["PENDING", copy.pending], ["CANCELED_OR_ABSENT", copy.canceled] ] as const)
       .map(([filter, label]) => ({ filter, label, count: metricRows.filter((row) => filterStatus(row, filter)).length })),
   ];
   const expectedCommission = isOwner ? 0 : metricRows
@@ -845,6 +846,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   function itemProps(row: Appointment): AgendaItemProps {
     return {
       appointment: row, currency, timezone, now, person: staff.get(row.collaboratorId), busy: !!busy,
+      isOwner,
       companyName: company?.companyName, reminders: settings.reminders, bookingAppUrl,
       isFirstVisit: firstVisitClientIds.has(getCanonicalClientId(row.clientPhone, row.clientName)),
       ...(canManagePayments ? {
@@ -861,6 +863,37 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     };
   }
 
+  async function revertCompletedAppointment(
+    row: Appointment,
+    reason: string,
+    ownerPassword: string,
+  ): Promise<{ ok: true } | { ok: false; code: string }> {
+    setBusy(row.id);
+    setActionError("");
+    try {
+      const result = await apiRequest<{ appointment: Appointment }>(
+        `/appointments/${encodeURIComponent(row.id)}/revert-completion`,
+        {
+          method: "POST",
+          body: { reason, ownerPassword },
+        },
+      );
+      setOpened(result.appointment);
+      setRefresh((value) => value + 1);
+      toast.success(
+        locale === "es"
+          ? "Atención revertida a Confirmado y registrada en auditoría."
+          : "Atendimento revertido para Confirmado e registrado na auditoria.",
+      );
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "UNKNOWN_ERROR";
+      return { ok: false, code: message };
+    } finally {
+      setBusy("");
+    }
+  }
+
   function renderEvent(row: Appointment, compact: boolean, showAlertActions = true) {
     const person = staff.get(row.collaboratorId);
     const start = formatTimeInTimezone(row.startsAt, timezone, locale);
@@ -873,55 +906,49 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       unpaidCompleted ? copy.unpaidCompleted : paid ? copy.paid : null].filter(Boolean).join(" · ");
     const alertAction = readyToComplete ? {
       label: copy.endedComplete,
-      shortLabel: t.common.actionComplete,
       icon: Clock3,
       run: () => void update(row, "COMPLETED"),
     } : unpaidCompleted ? {
       label: t.finance.registerReceipt,
-      shortLabel: copy.registerPaymentShort,
       icon: Wallet,
       run: () => openPayments(row.id),
+    } : showAlertActions && row.status === "PENDING" ? {
+      label: t.common.actionConfirm,
+      icon: CheckCircle2,
+      run: () => void update(row, "CONFIRMED"),
     } : null;
     const ActionIcon = alertAction?.icon;
     return <div data-agenda-status={row.status} data-agenda-event data-agenda-highlighted={row.id === highlightedId || undefined}
-      className={`relative flex size-full min-w-0 justify-center overflow-hidden rounded-md border-s-2 shadow-xs ${compact ? "items-stretch" : "flex-col"} ${row.id === highlightedId ? "ring-2 ring-inset ring-[var(--appointment-accent)]" : ""}`}>
-      <div className="flex min-h-0 min-w-0 flex-1">
+      className={`relative flex size-full min-w-0 overflow-hidden rounded-md border-s-2 shadow-xs ${row.id === highlightedId ? "ring-2 ring-inset ring-[var(--appointment-accent)]" : ""}`}>
       <button type="button" onClick={() => { setActionError(""); setOpened(row); }}
         aria-label={`${copy.openDetails} · ${description}`}
-        className={`flex min-h-0 min-w-0 flex-1 cursor-pointer flex-col items-start gap-px overflow-hidden px-1.5 text-left hover:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent group-active/agenda-drag:cursor-grabbing ${compact ? "justify-center-safe" : "justify-start py-0.5"}`}>
-        <span className="flex w-full min-w-0 shrink-0 items-center justify-between gap-1">
-          <span className="min-w-0 truncate text-[11px] font-bold leading-tight">{row.serviceNameSnapshot}</span>
-          {unpaidCompleted ? <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[var(--status-warning-bg)] px-0.5 text-[9px] font-semibold text-[var(--status-warning-ink)]">
-            <Wallet size={11} aria-hidden="true" />
-            <span className="hidden @min-[5rem]:inline @min-[10rem]:hidden">{copy.unpaidCompletedShort}</span>
-            <span className="hidden @min-[10rem]:inline">{copy.unpaidCompleted}</span>
-          </span> : paid && <PaidBadge compact label={copy.paid} />}
-        </span>
-        {!compact && <span className="flex w-full min-w-0 shrink-0 items-baseline gap-1 text-[10px] leading-tight">
-          <span className="max-w-full shrink-0 truncate font-semibold tabular-nums">{start} – {end}</span>
-          <span className="min-w-0 truncate">{row.clientName}</span>
-        </span>}
-        {!compact && !alertAction && row.serviceDurationMinutesSnapshot >= 45 && person && <span className="flex max-w-full shrink-0 items-center gap-1 text-[9px] leading-tight"><ProfessionalAvatar person={person} className="size-3" /><span className="truncate">{person.name}</span></span>}
+        className={`flex min-w-0 flex-1 cursor-pointer flex-col items-start overflow-hidden px-2 text-left hover:bg-ink/5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent group-active/agenda-drag:cursor-grabbing ${compact ? "justify-center" : "justify-start gap-px py-1"}`}>
+        <span className="w-full shrink-0 truncate text-xs font-bold leading-4">{compact ? row.serviceNameSnapshot : row.clientName}</span>
+        {!compact && <>
+          <span className="w-full shrink-0 truncate text-[11px] leading-3.5">{row.serviceNameSnapshot}</span>
+          <span className="flex w-full shrink-0 flex-wrap items-center gap-x-2 text-[10px] font-semibold leading-3.5">
+            <span className="tabular-nums">{start}–{end}</span><span>{t.status[row.status]}</span>
+            {paid && <PaidBadge compact label={copy.paid} />}
+            {unpaidCompleted && <span className="text-[var(--status-warning-ink)]">{copy.unpaidCompletedShort}</span>}
+          </span>
+        </>}
       </button>
-      {showAlertActions && !compact && <div className="hidden self-start pe-0.5 pt-0.5 @min-[5rem]:block [&_a]:size-5 [&_svg]:size-3">
-        <WhatsAppLink
+      {showAlertActions && (!compact || alertAction) && <div className="hidden shrink-0 flex-col items-center gap-0.5 border-s border-border-subtle px-0.5 py-0.5 @min-[5rem]:flex [&_a]:size-6 [&_svg]:size-3.5 [&:empty]:hidden">
+        {!compact && <WhatsAppLink
           appointment={row}
           timezone={timezone}
           person={person}
           companyName={company?.companyName}
           reminders={settings.reminders}
           bookingAppUrl={bookingAppUrl}
-        />
+        />}
+        {alertAction && ActionIcon && <button type="button" data-agenda-quick-action
+          disabled={!!busy} onClick={(event) => { event.stopPropagation(); alertAction.run(); }}
+          title={alertAction.label} aria-label={`${alertAction.label} · ${row.clientName}`}
+          className={`grid shrink-0 cursor-pointer place-items-center rounded-md border hover:brightness-95 focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55 ${compact ? "size-5" : "size-6"} ${unpaidCompleted ? "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-ink)]" : "border-border-subtle bg-surface text-ink"}`}>
+          <ActionIcon aria-hidden="true" />
+        </button>}
       </div>}
-      </div>
-      {alertAction && ActionIcon && <button type="button" data-agenda-quick-action
-        disabled={readyToComplete && !!busy} onClick={alertAction.run}
-        aria-label={`${alertAction.label} · ${row.clientName}`}
-        className={`flex min-w-0 cursor-pointer items-center gap-1 px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55 ${compact ? "max-w-3/4 border-s" : "border-t"} ${unpaidCompleted ? "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-ink)]" : "border-border-subtle bg-accent-soft text-ink"}`}>
-        <ActionIcon size={11} className="shrink-0" aria-hidden="true" />
-        <span className="truncate @min-[10rem]:hidden">{alertAction.shortLabel}</span>
-        <span className="hidden truncate @min-[10rem]:inline">{alertAction.label}</span>
-      </button>}
     </div>;
   }
 
@@ -933,8 +960,8 @@ export function AgendaWorkspace({ session, renderReceipt }: {
         const active = status === metric.filter;
         const Icon = metricIcons[index];
         return <button key={metric.filter} type="button" aria-pressed={active} onClick={() => changeStatus(active ? "" : metric.filter)}
-          className={`flex min-w-0 cursor-pointer border bg-surface text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-accent ${isOwner ? "flex-col items-start gap-1 rounded-2xl p-3" : "items-center gap-2 rounded-xl px-2.5 py-1.5 sm:gap-2.5 sm:px-3 sm:py-2"} ${active ? "border-accent/65" : "border-border-subtle"}`}>
-          <span className={`grid shrink-0 place-items-center rounded-lg ${isOwner ? "size-6" : "size-7"} ${metricIconTones[index]}`}><Icon size={isOwner ? 14 : 15} aria-hidden="true" /></span>
+          className={`flex min-w-0 cursor-pointer border bg-surface text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-accent ${isOwner ? "items-center gap-1.5 rounded-xl p-2" : "items-center gap-2 rounded-xl px-2.5 py-1.5 sm:gap-2.5 sm:px-3 sm:py-2"} ${active ? "border-accent/65" : "border-border-subtle"}`}>
+          {!isOwner && <span className={`grid size-7 shrink-0 place-items-center rounded-lg ${metricIconTones[index]}`}><Icon size={15} aria-hidden="true" /></span>}
           <span className={isOwner ? "flex w-full min-w-0 flex-1 flex-col gap-1" : "min-w-0"}>
             <span className={`block text-[10px] font-medium leading-tight text-ink-secondary ${isOwner ? "wrap-anywhere" : "sm:text-xs"}`}>{metric.label}</span>
             <strong className={`block font-bold leading-tight text-ink tabular-nums ${isOwner ? "mt-auto wrap-anywhere text-xl" : "text-lg"}`}>{main.loading ? "—" : metric.count}</strong>
@@ -944,7 +971,56 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     </section>
   );
 
-  return <div data-slot="agenda-workspace" className="min-w-0 space-y-4 sm:space-y-5">
+  const sidebar = <>
+    <div className="mx-auto w-full max-w-57 lg:max-w-none">
+      <AgendaMonthGrid company={company} month={miniMonth} selected={focus} today={today} counts={miniCounts}
+        onMonth={setMiniMonth} onSelect={(date) => { navigate(date); setAgendaFiltersOpen(false); if (view === "month") setView("day"); }} />
+    </div>
+
+    {/* 2. Widget de Fila de Espera na Sidebar Auxiliar */}
+    <div className="space-y-1.5 rounded-xl border border-border-subtle bg-canvas/60 p-2.5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <Users className="size-4 text-accent" />
+          <span className="text-xs font-semibold text-ink">{locale === "es" ? "Lista de espera" : "Fila de Espera"}</span>
+        </div>
+        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-bold text-accent tabular-nums">
+          {waitlist.count}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+        <button
+          type="button"
+          onClick={() => { setAgendaFiltersOpen(false); setWaitlistDrawerOpen(true); }}
+          className="cursor-pointer rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-[11px] font-medium text-ink hover:border-accent transition-colors truncate"
+        >
+          {locale === "es" ? "Ver lista" : "Ver fila"} ({waitlist.count})
+        </button>
+        <button
+          type="button"
+          onClick={() => { setAgendaFiltersOpen(false); setEditor({ mode: "new", initialTab: "waitlist" }); }}
+          className="cursor-pointer rounded-lg bg-accent px-2 py-1.5 text-[11px] font-semibold text-accent-ink hover:bg-accent-hover transition-colors truncate"
+        >
+          {locale === "es" ? "+ Agregar" : "+ Adicionar"}
+        </button>
+      </div>
+    </div>
+
+    <div className={`min-w-0 space-y-2 border-t border-border-subtle pt-2 ${isOwner ? "sm:col-span-2 lg:col-span-1" : "sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3"}`}>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-secondary">
+        <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 shrink-0 rounded-full bg-emerald-500" />{copy.working}</span>
+        <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 rounded-full bg-[var(--status-danger-ink)]/65" />{copy.closed}</span>
+      </div>
+      {isOwner && <AgendaProfessionalFilter people={activePeople} value={selectedPersonIds} onChange={setSelectedPersonIds} />}
+      <AgendaSelect label={copy.status} placeholder={status === "CANCELED_OR_ABSENT" ? copy.canceled : undefined} value={status} onChange={(value) => changeStatus(value as Filter)} options={[
+        { value: "", label: copy.allStatuses }, ...statuses.map((value) => ({ value, label: t.status[value] })),
+        { value: "readyToComplete", label: copy.readyToComplete },
+        ...(canManagePayments ? [{ value: "unpaidCompleted", label: copy.unpaidCompleted }] : []),
+      ]} />
+      {isOwner && metricCards}
+    </div>
+  </>;
+  return <div data-slot="agenda-workspace" className={`min-w-0 [&_button:not(:disabled)]:cursor-pointer ${isOwner ? "flex h-full min-h-0 flex-col gap-3 overflow-hidden" : "space-y-4 sm:space-y-5"}`}>
     {!isOwner && <>
       <Toaster theme={mode} richColors position="bottom-right" />
       <header className="flex flex-wrap items-center justify-between gap-3">
@@ -958,59 +1034,16 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     </>}
 
     {(actionError && !canceling && !opened || catalog.error || mini.error || schedule.error || global.appointmentsError) && <p role="alert" className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] p-3 text-sm text-[var(--status-danger-ink)]">{actionError || t.errors.networkDescription}</p>}
-    <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)]">
-      <aside className="grid min-w-0 gap-3 rounded-2xl border border-border-subtle bg-surface p-3 sm:grid-cols-[minmax(11rem,14rem)_1fr] sm:p-3.5 lg:grid-cols-1 lg:gap-4" aria-label={copy.calendar}>
-        <div className="mx-auto w-full max-w-57 lg:max-w-none">
-          <AgendaMonthGrid company={company} month={miniMonth} selected={focus} today={today} counts={miniCounts}
-            onMonth={setMiniMonth} onSelect={(date) => { navigate(date); if (view === "month") setView("day"); }} />
-        </div>
-
-        {/* 2. Widget de Fila de Espera na Sidebar Auxiliar */}
-        <div className="rounded-xl border border-border-subtle bg-canvas/60 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Users className="size-4 text-accent" />
-              <span className="text-xs font-semibold text-ink">Fila de Espera</span>
-            </div>
-            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-bold text-accent tabular-nums">
-              {waitlist.count}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
-            <button
-              type="button"
-              onClick={() => setWaitlistDrawerOpen(true)}
-              className="rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-[11px] font-medium text-ink hover:border-accent transition-colors truncate"
-            >
-              Ver fila ({waitlist.count})
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditor({ mode: "new", initialTab: "waitlist" })}
-              className="rounded-lg bg-accent px-2 py-1.5 text-[11px] font-semibold text-accent-ink hover:bg-accent-hover transition-colors truncate"
-            >
-              + Adicionar
-            </button>
-          </div>
-        </div>
-
-        <div className={`min-w-0 space-y-3 border-t border-border-subtle pt-3 ${isOwner ? "sm:col-span-2 lg:col-span-1" : "sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3"}`}>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-secondary">
-            <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 shrink-0 rounded-full bg-emerald-500" />{copy.working}</span>
-            <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="size-1 rounded-full bg-[var(--status-danger-ink)]/65" />{copy.closed}</span>
-          </div>
-          {isOwner && <AgendaProfessionalFilter people={activePeople} value={selectedPersonIds} onChange={setSelectedPersonIds} />}
-          <AgendaSelect label={copy.status} placeholder={status === "CANCELED_OR_ABSENT" ? copy.canceled : undefined} value={status} onChange={(value) => changeStatus(value as Filter)} options={[
-            { value: "", label: copy.allStatuses }, ...statuses.map((value) => ({ value, label: t.status[value] })),
-            { value: "readyToComplete", label: copy.readyToComplete },
-            ...(canManagePayments ? [{ value: "unpaidCompleted", label: copy.unpaidCompleted }] : []),
-          ]} />
-          {isOwner && metricCards}
-        </div>
+    <div className={`grid min-w-0 gap-3 ${isOwner
+      ? "min-h-0 flex-1 grid-rows-[minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)]"
+      : "items-start lg:grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)]"}`}>
+      {/* Mantém a coluna lateral esquerda sempre visível em desktop com rolagem interna discreta para não gerar scroll na página inteira */}
+      <aside className={`min-w-0 gap-3 self-start rounded-2xl border border-border-subtle bg-surface p-3 sm:grid-cols-[minmax(11rem,14rem)_1fr] lg:grid-cols-1 ${isOwner ? "hidden max-h-full overflow-y-auto overscroll-contain [scrollbar-width:thin] lg:grid" : "grid"}`} aria-label={copy.calendar}>
+        {sidebar}
       </aside>
 
-      <section className="min-w-0 space-y-3" aria-label={copy.appointments} aria-busy={main.loading || (status === "unpaidCompleted" && paymentLoading)}>
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border-subtle bg-surface p-2.5 sm:p-3">
+      <section className={`min-w-0 ${isOwner ? "flex min-h-0 flex-col gap-3" : "space-y-3"}`} aria-label={copy.appointments} aria-busy={main.loading || (status === "unpaidCompleted" && paymentLoading)}>
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-border-subtle bg-surface p-2.5 sm:p-3">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <button type="button" onClick={() => navigate(today)} className={control}>{copy.today}</button>
             <button type="button" onClick={() => changePeriod(-1)} aria-label={copy.previous} className={`${control} size-8 min-h-8 p-0`}><ChevronLeft size={16} /></button>
@@ -1023,12 +1056,15 @@ export function AgendaWorkspace({ session, renderReceipt }: {
           </div>
           {isOwner && <div className="flex flex-wrap items-center gap-2">
             {refreshButton}
+            <button type="button" onClick={() => setAgendaFiltersOpen(true)} className={`${control} lg:hidden`}>
+              <SlidersHorizontal size={15} aria-hidden="true" />Filtros
+            </button>
             <button type="button" onClick={() => setEditor("new")} className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink shadow-xs hover:bg-accent-hover sm:text-sm"><Plus size={16} />{t.owner.newAppointment}</button>
           </div>}
         </div>
 
         {(alertItems.some(({ rows }) => rows.length > 0) || global.paymentsError) &&
-          <section aria-label={copy.alerts} className="flex flex-wrap gap-2 rounded-xl border border-border-subtle bg-surface p-2">
+          <section aria-label={copy.alerts} className="flex shrink-0 flex-wrap gap-2 rounded-xl border border-border-subtle bg-surface p-2">
             {alertItems.map(({ filter, rows, countLabel, icon: Icon }) => {
               if (!rows.length) return null;
               const next = rows.reduce((oldest, row) => Date.parse(row.startsAt) < Date.parse(oldest.startsAt) ? row : oldest);
@@ -1042,7 +1078,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
             {global.paymentsError && <p role="alert" className="px-2 py-1 text-xs text-ink-secondary">{copy.failedPaymentStatus}</p>}
           </section>}
         {main.error ? <div className="rounded-xl border border-border-subtle bg-surface p-5 text-sm text-ink-secondary" role="alert">{t.errors.networkDescription}</div>
-          : view === "list" ? <div className="space-y-4">
+          : view === "list" ? <div className="min-h-0 space-y-4 overflow-auto overscroll-contain">
             {main.loading || (status === "unpaidCompleted" && paymentLoading) ? <p className="rounded-xl bg-surface p-4 text-sm text-ink-secondary" role="status">{t.common.loading}</p>
               : status === "unpaidCompleted" && paymentError ? null
               : !shown.length && <p className="rounded-xl border border-border-subtle bg-surface p-5 text-sm text-ink-secondary">{copy.empty}</p>}
@@ -1050,14 +1086,14 @@ export function AgendaWorkspace({ session, renderReceipt }: {
               <h4 className="text-sm font-semibold text-ink first-letter:uppercase">{formatAgendaDay(day, locale, { weekday: "long", day: "numeric", month: "long" })}</h4>
               <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{rows.map((row) => <AgendaCard key={row.id} {...itemProps(row)} onDetails={() => { setActionError(""); setOpened(row); }} />)}</div>
             </section>)}
-          </div> : view === "month" ? <AgendaMonthGrid company={company} month={focus} selected={focus} today={today} counts={monthCounts}
+          </div> : view === "month" ? <div className="min-h-0 overflow-auto overscroll-contain"><AgendaMonthGrid company={company} month={focus} selected={focus} today={today} counts={monthCounts}
             onSelect={(date) => { navigate(date); setView("day"); }} renderDay={(date) => {
               const rows = rowsByDay.get(date) ?? [];
               return <div className="mt-1 space-y-0.5">
                 {rows.slice(0, 2).map((row) => <div key={row.id} className="h-5.5">{renderEvent(row, true, false)}</div>)}
                 {rows.length > 2 && <button type="button" aria-label={`${rows.length} ${copy.appointments}`} className="cursor-pointer px-1 text-[10px] font-semibold text-accent hover:underline" onClick={() => { navigate(date); setView("day"); }}>+{rows.length - 2}</button>}
               </div>;
-            }} /> : view === "day" && !selectedPeople.length ? (
+            }} /></div> : view === "day" && !selectedPeople.length ? (
               <p className="rounded-xl border border-border-subtle bg-surface p-5 text-sm text-ink-secondary" role="status">
                 {activePeople.length ? copy.noSelectedProfessionals : copy.noActiveProfessionals}
               </p>
@@ -1071,6 +1107,9 @@ export function AgendaWorkspace({ session, renderReceipt }: {
       </section>
     </div>
 
+    {agendaFiltersOpen && <AgendaDialog title={locale === "es" ? "Calendario y filtros" : "Calendário e filtros"} onClose={() => setAgendaFiltersOpen(false)}>
+      <div className="grid gap-3">{sidebar}</div>
+    </AgendaDialog>}
     {openedAppointment && (
       <AgendaAppointmentDetails
         {...itemProps(openedAppointment)}
@@ -1088,6 +1127,8 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                 createClient(data);
                 toast.success("Cliente cadastrado com sucesso!");
               },
+              onRevertCompleted: (reason, ownerPassword) =>
+                revertCompletedAppointment(openedAppointment, reason, ownerPassword),
             }
           : {})}
       />

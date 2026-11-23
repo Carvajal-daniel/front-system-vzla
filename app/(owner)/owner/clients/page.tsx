@@ -175,6 +175,7 @@ export default function ClientsPage() {
   useEffect(() => {
     if (actionParam === "new-client") {
       setNewClientModalOpen(true);
+      window.history.replaceState(null, "", "/owner/clients");
     }
   }, [actionParam]);
 
@@ -430,6 +431,7 @@ export default function ClientsPage() {
             <input
               ref={searchInputRef}
               type="search"
+              autoComplete="off"
               aria-label={locale === "es" ? "Buscar por nombre o teléfono" : "Buscar por nome ou telefone"}
               placeholder={locale === "es" ? "Buscar por nombre o teléfono..." : "Buscar por nome ou telefone..."}
               value={search}

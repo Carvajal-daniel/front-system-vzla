@@ -1,3 +1,5 @@
+import type { PhoneCountryCode } from "@/lib/types/public-booking";
+import type { Currency } from "@/lib/types/finance";
 import type { Locale } from "@/lib/i18n";
 import type { ThemeMode, ThemePalette } from "@/lib/theme-context";
 
@@ -47,13 +49,33 @@ export type OnlinePaymentSettings = {
   pixKey: string; autoRefundHours: number; noShowPolicy: string;
 };
 export type ClientFieldValues = Record<string, string>;
-export type CompanyAddress = Record<typeof addressFields[number], string>;
+export type BrazilianAddress = Record<typeof addressFields[number], string>;
+export type VenezuelanAddress = Record<"state" | "city" | "sector" | "addressLine" | "referencePoint", string>;
+export type CompanyAddress = BrazilianAddress | VenezuelanAddress;
+export type CompanyCountry = "BR" | "VE";
+export type CompanyDocuments = { countryCode?: CompanyCountry; personalDoc?: string; businessDoc?: string };
+
+export const countryDefaults = {
+  BR: { ddi: "+55", timezone: "America/Sao_Paulo", currency: "BRL", locale: "pt-BR" },
+  VE: { ddi: "+58", timezone: "America/Caracas", currency: "USD", locale: "es" },
+} as const satisfies Record<CompanyCountry, { ddi: PhoneCountryCode; timezone: string; currency: Currency; locale: Locale }>;
 
 export interface CompanySettings {
+  countryCode: CompanyCountry;
+  countryCodeConfigured?: boolean;
+  documents?: CompanyDocuments;
+  description?: string;
   address: CompanyAddress | null;
   agendaInterval: typeof agendaIntervals[number];
   bookingInterval: typeof bookingIntervals[number];
   leadTime: typeof leadTimes[number];
+  maxAdvanceBookingDays: number | null;
+  allowClientCancel: boolean;
+  cancelLeadTime?: number;
+  allowClientConfirm: boolean;
+  allowClientReschedule: boolean;
+  maxActiveBookingsPerClient: number | null;
+  newBookingCancelsPrevious: boolean;
   clientFields: Record<ClientField, ClientFieldMode> & Partial<Record<string, ClientFieldMode>>;
   birthdayRadar: boolean;
   surveyEnabled: boolean;
@@ -70,10 +92,17 @@ export interface CompanySettings {
 }
 
 export const defaultCompanySettings: CompanySettings = {
+  countryCode: "BR",
   address: null,
   agendaInterval: 30,
   bookingInterval: 0,
   leadTime: 0,
+  maxAdvanceBookingDays: null,
+  allowClientCancel: true,
+  allowClientConfirm: true,
+  allowClientReschedule: true,
+  maxActiveBookingsPerClient: null,
+  newBookingCancelsPrevious: false,
   clientFields: {
     birthDate: "optional",
     document: "optional",
@@ -110,6 +139,10 @@ export function displayCompanyRating(
 
 export function formatCompanyAddress(address: CompanyAddress | null) {
   if (!address) return "";
+  if ("addressLine" in address) {
+    return [address.addressLine, address.sector, [address.city, address.state].filter(Boolean).join(" - "), address.referencePoint]
+      .filter(Boolean).join(" · ");
+  }
   return [
     [address.street, address.number].filter(Boolean).join(", "),
     address.district,

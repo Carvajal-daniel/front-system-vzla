@@ -1,13 +1,17 @@
 ﻿"use client";
 
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { Star } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { Button } from "@/components/ui/button";
 
 export default function ReviewPage() {
+  return <Suspense fallback={null}><ReviewForm /></Suspense>;
+}
+
+function ReviewForm() {
   const { token } = useParams<{ token: string }>();
   const { locale } = useLocale();
   const es = locale === "es";

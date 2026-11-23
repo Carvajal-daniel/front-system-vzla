@@ -16,6 +16,7 @@ export interface CompanyOperatingDaySchedule {
   isOpen: boolean;
   openTime: string | null;
   closeTime: string | null;
+  shifts?: { start: string; end: string }[];
 }
 
 export interface Company {

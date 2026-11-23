@@ -33,7 +33,14 @@ export function SatisfactionSettings() {
   const es = locale === "es";
   const [enabled, setEnabled] = useState<boolean>();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [reviews, setReviews] = useState<Review[]>([]);
+  const [invitationReviews, setInvitationReviews] = useState<Review[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [stars, setStars] = useState<number>();
+  const [limit, setLimit] = useState(5);
+  const [revision, setRevision] = useState(0);
+  const [reviewsError, setReviewsError] = useState("");
+  const [result, setResult] = useState<{ stars?: number; revision: number; limit: number; reviews: Review[] }>();
+  const reviews = result?.stars === stars && result?.revision === revision ? result.reviews : undefined;
   const [selected, setSelected] = useState("");
   const [invite, setInvite] = useState<{ url: string; whatsapp: string | null }>();
   const [analysis, setAnalysis] = useState<Analysis>();
@@ -50,12 +57,25 @@ export function SatisfactionSettings() {
     ]).then(([completed, received]) => {
       if (signal.aborted) return;
       setAppointments(completed);
-      setReviews(received);
+      setInvitationReviews(received);
     }).catch(() => {
       if (!signal.aborted) setError(t.errors.networkDescription);
     });
     return () => request.abort();
   }, [t.errors.networkDescription]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const request = new AbortController();
+    const { signal } = request;
+    void apiRequest<Review[]>("/companies/me/reviews", { query: { stars, limit: limit + 1 }, signal })
+      .then((received) => {
+        if (!signal.aborted) setResult({ stars, revision, limit, reviews: received });
+      }).catch(() => {
+        if (!signal.aborted) setReviewsError(t.errors.networkDescription);
+      });
+    return () => request.abort();
+  }, [expanded, stars, limit, revision, t.errors.networkDescription]);
 
   async function run(action: string, fn: () => Promise<void>) {
     setPending(action);
@@ -66,7 +86,7 @@ export function SatisfactionSettings() {
     finally { setPending(""); }
   }
 
-  const reviewed = new Set(reviews.map((review) => review.appointmentId));
+  const reviewed = new Set(invitationReviews.map((review) => review.appointmentId));
   const available = appointments.filter((appointment) => !reviewed.has(appointment.id));
   const card = "space-y-4 rounded-2xl border border-border-subtle bg-surface p-4 sm:p-6";
   return <>
@@ -82,23 +102,23 @@ export function SatisfactionSettings() {
         });
       }}>
         <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
-          <input type="checkbox" role="switch" className="size-4 accent-accent" checked={enabled ?? settings.surveyEnabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <input type="checkbox" role="switch" className="size-4 cursor-pointer accent-accent" checked={enabled ?? settings.surveyEnabled} onChange={(event) => setEnabled(event.target.checked)} />
           {es ? "Activar encuesta después de la atención" : "Ativar pesquisa pós-atendimento"}
         </label>
-        <Button type="submit" disabled={!!pending || enabled === undefined}>{t.common.save}</Button>
+        <Button className="cursor-pointer" type="submit" disabled={!!pending || enabled === undefined}>{t.common.save}</Button>
       </form>
       {settings.surveyEnabled && <div className="space-y-3 border-t border-border-subtle pt-4">
         <label className="grid gap-2 text-sm font-medium">
           {es ? "Atención completada" : "Atendimento concluído"}
           <select value={selected} onChange={(event) => { setSelected(event.target.value); setInvite(undefined); }}
-            className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm">
+            className="min-h-11 w-full cursor-pointer rounded-xl border border-border-strong bg-surface px-3 text-sm">
             <option value="">{es ? "Selecciona una atención" : "Selecione um atendimento"}</option>
             {available.map((appointment) => <option key={appointment.id} value={appointment.id}>
               {appointment.serviceNameSnapshot} · {appointment.clientName} · {formatDateTimeInTimezone(appointment.startsAt, session.company.timezone, locale)}
             </option>)}
           </select>
         </label>
-        <Button variant="outline" disabled={!selected || !!pending} onClick={() => void run("invite", async () => {
+        <Button className="cursor-pointer" variant="outline" disabled={!selected || !!pending} onClick={() => void run("invite", async () => {
           const appointment = available.find((row) => row.id === selected);
           if (!appointment) return;
           const { token } = await apiRequest<{ token: string }>(`/companies/me/reviews/${appointment.id}`, { method: "POST" });
@@ -116,23 +136,59 @@ export function SatisfactionSettings() {
     <section className={card}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-title-sm font-bold text-ink">{es ? "Evaluaciones recibidas" : "Avaliações recebidas"}</h2>
-        {settings.rating && <span className="inline-flex items-center gap-1 text-sm font-semibold"><Star className="size-4 fill-amber-500 text-amber-500" />{settings.rating.average.toLocaleString(locale, { maximumFractionDigits: 1 })} · {settings.rating.count}</span>}
-        <Button variant="outline" disabled={!!pending} onClick={() => void run("refresh", async () => {
-          const [received] = await Promise.all([apiRequest<Review[]>("/companies/me/reviews"), refresh()]);
-          setReviews(received);
-        })}>{es ? "Actualizar" : "Atualizar"}</Button>
+        <span className="inline-flex items-center gap-1 text-sm font-semibold">
+          <Star aria-hidden="true" className="size-4 fill-amber-500 text-amber-500" />
+          {settings.rating?.average.toLocaleString(locale, { maximumFractionDigits: 1 }) ?? "—"} · {settings.rating?.count ?? 0}
+        </span>
+        <div className="flex flex-wrap gap-2">
+          <Button className="cursor-pointer" variant="outline" disabled={!!pending} onClick={() => void run("refresh", async () => {
+            const [received] = await Promise.all([apiRequest<Review[]>("/companies/me/reviews"), refresh()]);
+            setInvitationReviews(received);
+            setReviewsError("");
+            setRevision((value) => value + 1);
+          })}>{es ? "Actualizar" : "Atualizar"}</Button>
+          <Button className="cursor-pointer" variant="outline" aria-expanded={expanded} aria-controls="received-reviews"
+            onClick={() => { setReviewsError(""); setExpanded((value) => !value); }}>
+            {expanded ? (es ? "Ocultar evaluaciones" : "Ocultar avaliações") : (es ? "Ver evaluaciones" : "Ver avaliações")}
+          </Button>
+        </div>
       </div>
-      {reviews.length === 0 ? <p className="text-sm text-ink-secondary">{es ? "Aún no hay evaluaciones." : "Nenhuma avaliação recebida."}</p> : <ul className="divide-y divide-border-subtle">
-        {reviews.map((review) => <li key={review.id} className="space-y-1 py-3 text-sm">
-          <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{review.service || (es ? "Servicio sin identificar" : "Serviço sem identificação")}</span><span className="text-ink-secondary">★ {review.stars}/5</span></div>
-          <p className="text-xs text-ink-muted">{formatDateTimeInTimezone(review.submittedAt, session.company.timezone, locale)}</p>
-          {review.comment && <p className="whitespace-pre-wrap break-words text-ink-secondary">{review.comment}</p>}
-        </li>)}
-      </ul>}
+      <div id="received-reviews" hidden={!expanded} className="space-y-3">
+        {expanded && <>
+          <div className="flex flex-wrap gap-2" role="group" aria-label={es ? "Filtrar por estrellas" : "Filtrar por estrelas"}>
+            {[undefined, 5, 4, 3, 2, 1].map((value) => <Button key={value ?? "all"} className="min-h-9 cursor-pointer rounded-full"
+              variant={stars === value ? "default" : "outline"} aria-pressed={stars === value}
+              onClick={() => {
+                if (stars !== value || reviewsError) setRevision((current) => current + 1);
+                setReviewsError("");
+                setStars(value);
+                setLimit(5);
+              }}>
+              {value === undefined ? "Todas" : `${value} ★`}
+            </Button>)}
+          </div>
+          {!reviews ? (!reviewsError && <p role="status" className="text-sm text-ink-secondary">{es ? "Cargando evaluaciones…" : "Carregando avaliações…"}</p>)
+            : reviews.length === 0 ? <p className="text-sm text-ink-secondary">{es ? "No hay evaluaciones para mostrar." : "Nenhuma avaliação para exibir."}</p>
+            : <ul className="divide-y divide-border-subtle">
+              {reviews.slice(0, limit).map((review) => <li key={review.id} className="space-y-1 py-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{review.service || (es ? "Servicio sin identificar" : "Serviço sem identificação")}</span><span className="text-ink-secondary">★ {review.stars}/5</span></div>
+                <p className="text-xs text-ink-muted">{formatDateTimeInTimezone(review.submittedAt, session.company.timezone, locale)}</p>
+                {review.comment && <p className="whitespace-pre-wrap break-words text-ink-secondary">{review.comment}</p>}
+              </li>)}
+            </ul>}
+          {reviews && (reviews.length > limit || (result && result.limit < limit)) && <Button className="cursor-pointer" variant="outline"
+            disabled={result?.limit !== limit && !reviewsError} onClick={() => {
+              if (result?.limit === limit) setLimit((value) => value + 5);
+              else setRevision((value) => value + 1);
+              setReviewsError("");
+            }}>{es ? "Cargar más" : "Carregar mais"}</Button>}
+          {reviewsError && <p role="alert" className="text-sm text-[var(--status-danger-ink)]">{reviewsError}</p>}
+        </>}
+      </div>
     </section>
     <section className={card}>
       <h2 className="text-title-sm font-bold text-ink">Diagnóstico local</h2>
-      <Button disabled={!!pending || !settings.rating} onClick={() => void run("analysis", async () => {
+      <Button className="cursor-pointer" disabled={!!pending || !settings.rating} onClick={() => void run("analysis", async () => {
         setAnalysis(await apiRequest<Analysis>("/companies/me/reviews/analysis", { method: "POST", body: { locale } }));
       })}><Sparkles className="size-4" />{pending === "analysis" ? (es ? "Analizando…" : "Analisando…") : es ? "Analizar evaluaciones" : "Analisar avaliações"}</Button>
       {analysis && ([

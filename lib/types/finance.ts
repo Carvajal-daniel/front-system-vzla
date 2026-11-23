@@ -213,6 +213,47 @@ export interface FinanceAppointment {
   payment: AppointmentPayment & { netInCents: number };
 }
 
+export interface SavedFinanceOrderItem {
+  id: string;
+  itemType: "SERVICE" | "PRODUCT" | "TIP";
+  referenceId?: string | null;
+  name: string;
+  collaboratorId: string | null;
+  collaboratorName: string | null;
+  quantity: number;
+  unitPriceCents: number;
+  subtotalCents: number;
+  commissionPercentage?: number;
+  commissionCents?: number;
+}
+
+export interface SavedFinanceOrderPayment {
+  id: string;
+  method: PaymentMethod;
+  amountCents: number;
+  paidAt?: string;
+}
+
+export interface SavedFinanceOrder {
+  id: string;
+  code: string;
+  appointmentId: string | null;
+  clientName: string | null;
+  clientPhone: string | null;
+  clientDocument?: string | null;
+  orderDate: string;
+  status: "OPEN" | "CLOSED";
+  subtotalCents: number;
+  discountCents: number;
+  totalCents: number;
+  paidCents: number;
+  openInCents: number;
+  notes?: string | null;
+  createdAt: string;
+  items: SavedFinanceOrderItem[];
+  payments: SavedFinanceOrderPayment[];
+}
+
 export interface FinanceSummaryResponse {
   period: { from: string; to: string; timezone: string; collaboratorId: string | null };
   currency: Currency;

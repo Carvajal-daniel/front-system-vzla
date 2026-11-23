@@ -29,6 +29,7 @@ import type {
   PaymentMethod,
 } from "@/lib/types/finance";
 import type { Collaborator } from "@/lib/types/team";
+import { CommissionDetailDrawer } from "./_components/commission-detail-drawer";
 
 const dayInMs = 86_400_000;
 
@@ -66,9 +67,10 @@ export default function CommissionsPage() {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Modais de Vale e Liquidação
+  // Modais de Vale, Liquidação e Drawer de Relatório Detalhado
   const [deductionModalOpen, setDeductionModalOpen] = useState(false);
   const [settlementModalOpen, setSettlementModalOpen] = useState(false);
+  const [detailCollaboratorId, setDetailCollaboratorId] = useState<string | null>(null);
 
   // Form de Vale / Dedução
   const [deductCollabId, setDeductCollabId] = useState("");
@@ -390,10 +392,19 @@ export default function CommissionsPage() {
                 {report.professionals.map((prof) => (
                   <tr key={prof.collaboratorId} className="hover:bg-canvas/30 transition-colors">
                     <td className="py-3 px-4 min-w-[140px]">
-                      <span className="font-semibold text-ink text-sm block">{prof.name}</span>
-                      <span className="text-[11px] text-ink-muted">
-                        {prof.deductions?.length ?? 0} vale(s) ativos
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setDetailCollaboratorId(prof.collaboratorId)}
+                        className="cursor-pointer text-left group"
+                      >
+                        <span className="font-semibold text-ink text-sm block group-hover:text-accent group-hover:underline">
+                          {prof.name}
+                        </span>
+                        <span className="text-[11px] text-ink-muted">
+                          {prof.deductions?.length ?? 0}{" "}
+                          {locale === "es" ? "vale(s) activo(s)" : "vale(s) ativos"}
+                        </span>
+                      </button>
                     </td>
 
                     <td className="py-3 px-4 whitespace-nowrap font-medium text-ink">
@@ -411,7 +422,7 @@ export default function CommissionsPage() {
                           </SensitiveValue>
                         </>
                       ) : (
-                        "R$ 0,00"
+                        formatPriceFromCents(0, locale, currency)
                       )}
                     </td>
 
@@ -424,13 +435,10 @@ export default function CommissionsPage() {
                     <td className="py-3 px-4 text-right whitespace-nowrap">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSettleCollabId(prof.collaboratorId);
-                          setSettlementModalOpen(true);
-                        }}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors shadow-2xs"
+                        onClick={() => setDetailCollaboratorId(prof.collaboratorId)}
+                        className="cursor-pointer rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors shadow-2xs"
                       >
-                        Liquidar
+                        {locale === "es" ? "Ver Reporte / Liquidar" : "Ver Relatório / Liquidar"}
                       </button>
                     </td>
                   </tr>
@@ -610,6 +618,19 @@ export default function CommissionsPage() {
             </form>
           </div>
         </div>
+      )}
+      {/* Drawer de Relatório Detalhado e Liquidação por Profissional */}
+      {detailCollaboratorId && (
+        <CommissionDetailDrawer
+          collaboratorId={detailCollaboratorId}
+          fromDate={fromDate}
+          toDate={toDate}
+          todayIso={todayIso}
+          timezone={timezone}
+          currency={currency}
+          onClose={() => setDetailCollaboratorId(null)}
+          onSettled={() => void loadData()}
+        />
       )}
     </div>
   );

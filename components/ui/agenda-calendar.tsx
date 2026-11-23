@@ -62,14 +62,14 @@ export function AgendaMonthGrid({ month, selected, today, company, counts, avail
 
   return <section aria-label={`${copy.calendar} · ${monthLabel}`} className={spacious ? "overflow-hidden rounded-2xl border border-border-subtle bg-surface" : "min-w-0"}>
     {onMonth && <div className="mb-2 flex items-center justify-between gap-1">
-      <h3 className="min-w-0 text-sm font-semibold text-ink first-letter:uppercase">{monthLabel}</h3>
+      <h3 className={`min-w-0 font-semibold text-ink first-letter:uppercase ${sidebar ? "text-xs" : "text-sm"}`}>{monthLabel}</h3>
       <div className="flex shrink-0">
         <button type="button" className={arrow} aria-label={copy.previous} onClick={() => onMonth(shiftAgendaMonth(month, -1))}><ChevronLeft size={16} /></button>
         <button type="button" className={arrow} aria-label={copy.next} onClick={() => onMonth(shiftAgendaMonth(month, 1))}><ChevronRight size={16} /></button>
       </div>
     </div>}
     <div className={`grid grid-cols-7 ${spacious ? "border-b border-border-subtle bg-subtle/45" : "gap-px"}`}>
-      {days.slice(0, 7).map((date) => <div key={date} className="py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-ink-muted sm:text-[11px]">
+      {days.slice(0, 7).map((date) => <div key={date} className={`text-center text-[10px] font-semibold uppercase tracking-wide text-ink-muted sm:text-[11px] ${sidebar ? "py-1" : "py-2"}`}>
         {formatAgendaDay(date, locale, { weekday: "short" }).replace(/\.$/, "")}
       </div>)}
     </div>
@@ -221,19 +221,6 @@ export function AgendaTimeGrid({
   const copy = agendaStrings(locale);
   const viewportRef = useRef<HTMLDivElement>(null);
   const clock = useMemo(() => agendaClock(company.timezone), [company.timezone]);
-  const hasProfessionalHeader = !!dayPeople;
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const shellHeader = document.querySelector("[data-shell-header]");
-    if (!hasProfessionalHeader || !viewport || !shellHeader) return;
-    const updateOffset = () => {
-      viewport.style.setProperty("--agenda-header-offset", `${shellHeader.getBoundingClientRect().height}px`);
-    };
-    updateOffset();
-    const observer = new ResizeObserver(updateOffset);
-    observer.observe(shellHeader);
-    return () => observer.disconnect();
-  }, [hasProfessionalHeader]);
 
   // Estados e referências de arraste (Drag & Drop) com tolerância de > 6px
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -295,9 +282,9 @@ export function AgendaTimeGrid({
     return { key, day, person, personId: person?.id ?? collaboratorId, ...companyDay(company, day), events: layoutDay(rows, day, clock) };
   });
   const defaultHours = { start: 8 * 60, end: 19 * 60 };
-  const intervals = columns.flatMap(({ closed, hours, events }) => [
+  const intervals = columns.flatMap(({ closed, shifts, events }) => [
     ...events,
-    ...(!closed ? [hours ? { start: parseGridMinute(hours.openTime), end: parseGridMinute(hours.closeTime) } : defaultHours] : []),
+    ...(!closed ? shifts.length ? shifts.map(({ start, end }) => ({ start: parseGridMinute(start), end: parseGridMinute(end) })) : [defaultHours] : []),
   ]);
   for (const schedule of workSchedules) {
     const companyHours = company.operatingSchedule?.find((day) => day.dayOfWeek === schedule.dayOfWeek);
@@ -316,7 +303,7 @@ export function AgendaTimeGrid({
   if (starts >= ends) {
     ({ start: starts, end: ends } = defaultHours);
   }
-  const pixelsPerMinute = 1.15;
+  const pixelsPerMinute = 2;
   const height = (ends - starts) * pixelsPerMinute;
   const gridLines: number[] = [];
   for (let minute = Math.floor(starts / slotInterval) * slotInterval + slotInterval; minute < ends; minute += slotInterval) {
@@ -325,15 +312,19 @@ export function AgendaTimeGrid({
   const hourLabels = [starts, ...Array.from({ length: 24 }, (_, hour) => hour * 60)
     .filter((minute) => minute - starts >= 15 && ends - minute >= 20)];
   const current = now ? clock(now) : null;
-  const gridStyle = { gridTemplateColumns: `3.25rem repeat(${columns.length}, minmax(0, 1fr))` };
+  const columnWidth = dayPeople ? "13.125rem" : "12rem";
+  const gridStyle = { gridTemplateColumns: `3.25rem repeat(${columns.length}, minmax(${columnWidth}, 1fr))` };
 
-  function dayBounds(day: string) {
-    const { closed, hours } = companyDay(company, day);
-    return {
-      closed,
-      opens: hours?.openTime ? parseGridMinute(hours.openTime) : starts,
-      closes: hours?.closeTime ? parseGridMinute(hours.closeTime) : ends,
-    };
+  function dayRanges(day: string) {
+    const { closed, shifts } = companyDay(company, day);
+    if (closed) return [];
+    return shifts.length ? shifts.map(({ start, end }) => ({
+      start: parseGridMinute(start), end: parseGridMinute(end),
+    })) : [{ start: starts, end: ends }];
+  }
+
+  function shiftAt(day: string, minute: number) {
+    return dayRanges(day).find(({ start, end }) => minute >= start && minute < end);
   }
 
   // Handlers globais de ponteiro para cálculo de arrasto e soltura
@@ -397,10 +388,11 @@ export function AgendaTimeGrid({
 
       let snappedMinute = Math.round(rawMinute / slotInterval) * slotInterval;
       const duration = dragPendingRef.current.duration;
-      const { closed, opens, closes } = dayBounds(targetDay);
-      const firstSlot = Math.ceil(opens / slotInterval) * slotInterval;
-      const lastSlot = Math.floor((closes - duration) / slotInterval) * slotInterval;
+      const ranges = dayRanges(targetDay);
+      const firstSlot = Math.ceil((ranges[0]?.start ?? starts) / slotInterval) * slotInterval;
+      const lastSlot = Math.floor(((ranges.at(-1)?.end ?? ends) - duration) / slotInterval) * slotInterval;
       snappedMinute = Math.max(firstSlot, Math.min(lastSlot, snappedMinute));
+      const fitsShift = ranges.some(({ start, end }) => snappedMinute >= start && snappedMinute + duration <= end);
       const targetIso = localDayMinuteToUtcIso(targetDay, snappedMinute, company.timezone);
       const targetStart = Date.parse(targetIso);
       const targetEnd = targetStart + duration * 60_000;
@@ -408,7 +400,7 @@ export function AgendaTimeGrid({
       const isBlocked = overlapsScheduleBlock(blocks, targetStart, targetEnd, targetPersonId);
       const conflict = findAppointmentConflict(appointments, { id: appointment.id, collaboratorId: targetPersonId }, targetStart, targetEnd);
       const invalidReason = conflict ? copy.appointmentConflict(conflict.clientName)
-        : closed ? copy.closedDay : isBlocked || firstSlot > lastSlot ? copy.blockedTime : isPast ? copy.pastTime : null;
+        : !ranges.length ? copy.closedDay : isBlocked || !fitsShift ? copy.blockedTime : isPast ? copy.pastTime : null;
 
       const target = {
         appointment: dragPendingRef.current.appointment,
@@ -457,8 +449,8 @@ export function AgendaTimeGrid({
   }
 
   function availableSlot(day: string, minute: number, personId?: string, minimumStart = now) {
-    const { closed, opens, closes } = dayBounds(day);
-    if (closed || minute < opens || minute >= closes) return false;
+    const closes = shiftAt(day, minute)?.end;
+    if (closes === undefined) return false;
     const start = Date.parse(localDayMinuteToUtcIso(day, minute, company.timezone));
     const end = Date.parse(localDayMinuteToUtcIso(day, Math.min(minute + slotInterval, closes), company.timezone));
     return start > minimumStart
@@ -478,9 +470,10 @@ export function AgendaTimeGrid({
   function freeBounds(day: string, anchor: number, personId: string | undefined, minimumStart: number) {
     let first = anchor;
     let last = anchor;
-    while (availableSlot(day, first - slotInterval, personId, minimumStart)) first -= slotInterval;
-    while (availableSlot(day, last + slotInterval, personId, minimumStart)) last += slotInterval;
-    return { first, last, closes: dayBounds(day).closes };
+    const { start, end } = shiftAt(day, anchor) ?? { start: anchor, end: anchor };
+    while (first - slotInterval >= start && availableSlot(day, first - slotInterval, personId, minimumStart)) first -= slotInterval;
+    while (last + slotInterval < end && availableSlot(day, last + slotInterval, personId, minimumStart)) last += slotInterval;
+    return { first, last, closes: end };
   }
 
   function selectionRange(anchor: number, minute: number, { first, last, closes }: { first: number; last: number; closes: number }) {
@@ -493,9 +486,10 @@ export function AgendaTimeGrid({
     setSelection(null);
   }
 
-  return <div ref={viewportRef} onScroll={() => { if (hoveredEvent) setHoveredEvent(null); }} onPointerLeave={() => { if (hoveredEvent) setHoveredEvent(null); }} className={`relative rounded-2xl border border-border-subtle bg-surface ${dayPeople ? "min-w-0" : "overflow-x-auto"}`} tabIndex={0} aria-label={copy.calendar}>
-    <div className={!dayPeople && days.length > 1 ? "min-w-198" : "min-w-0"}>
-      <div className={`grid border-b border-border-subtle ${dayPeople ? "sticky top-0 z-20 rounded-t-2xl bg-surface" : ""}`} style={dayPeople ? { ...gridStyle, top: "var(--agenda-header-offset, 0px)" } : gridStyle}>
+  return <div ref={viewportRef} onScroll={() => { if (hoveredEvent) setHoveredEvent(null); }} onPointerLeave={() => { if (hoveredEvent) setHoveredEvent(null); }}
+    className={`relative min-h-0 min-w-0 overflow-x-auto overflow-y-auto overscroll-contain rounded-2xl border border-border-subtle bg-surface ${isOwner ? "flex-1" : "max-h-[72dvh]"}`} tabIndex={0} aria-label={copy.calendar}>
+    <div style={{ minWidth: `calc(3.25rem + ${columns.length} * ${columnWidth})` }}>
+      <div className="sticky top-0 z-20 grid border-b border-border-subtle bg-surface" style={gridStyle}>
         <div data-agenda-gutter aria-hidden="true" className="sticky left-0 z-30 bg-surface" />
         {columns.map(({ key, day, closed, person }) => person ? (
           <div key={key} className="flex min-w-0 items-center gap-1.5 overflow-hidden border-l border-border-subtle px-2 py-1.5">
@@ -510,7 +504,7 @@ export function AgendaTimeGrid({
       </div>
 
       <div className="isolate grid" style={gridStyle}>
-        <div className="sticky left-0 z-30 select-none bg-surface" aria-hidden="true" style={{ height }}>
+        <div className="sticky left-0 z-10 select-none border-r border-border-subtle bg-surface" aria-hidden="true" style={{ height }}>
           {hourLabels.map((minute) => <div key={minute} className="absolute inset-x-0 pr-2 pt-1 text-right text-[10px] tabular-nums text-ink-muted" style={{ top: (minute - starts) * pixelsPerMinute }}>
             {formatMinute(minute)}
           </div>)}
@@ -519,13 +513,13 @@ export function AgendaTimeGrid({
           </div>
         </div>
 
-        {columns.map(({ key, day, person, personId, closed, hours, events: dayEvents }) => (
+        {columns.map(({ key, day, person, personId, closed, shifts, events: dayEvents }) => (
           <div
             key={key}
             data-agenda-column-day={day}
             data-agenda-column-key={key}
             data-agenda-column-person={person?.id}
-            className={`relative border-l border-border-subtle ${isOwner ? "select-none" : ""} ${closed ? closedSurface : ""} ${
+            className={`relative isolate border-l border-border-subtle ${isOwner ? "select-none" : ""} ${closed ? closedSurface : ""} ${
               isOwner && !dragState ? hoveredSlot?.column === key ? "cursor-pointer" : "cursor-not-allowed" : ""
             }`}
             role={person ? "group" : undefined}
@@ -601,7 +595,7 @@ export function AgendaTimeGrid({
                 className="pointer-events-none absolute inset-x-1 z-5 flex items-center gap-1.5 rounded-lg border border-dashed border-accent/45 bg-accent/8 px-2 text-[11px] font-semibold text-accent transition-opacity animate-in fade-in-0 duration-150"
                 style={{
                   top: (hoveredSlot.minute - starts) * pixelsPerMinute,
-                  height: Math.min(slotInterval, dayBounds(day).closes - hoveredSlot.minute) * pixelsPerMinute,
+                  height: Math.min(slotInterval, (shiftAt(day, hoveredSlot.minute)?.end ?? hoveredSlot.minute) - hoveredSlot.minute) * pixelsPerMinute,
                 }}
               >
                 <Plus size={13} className="shrink-0" />
@@ -609,10 +603,15 @@ export function AgendaTimeGrid({
               </div>
             )}
 
-            {!closed && hours?.openTime && hours.closeTime && <>
-              <div aria-hidden="true" className="absolute inset-x-0 top-0 bg-subtle/65" style={{ height: Math.max(0, (parseGridMinute(hours.openTime) - starts) * pixelsPerMinute) }} />
-              <div aria-hidden="true" className="absolute inset-x-0 bottom-0 bg-subtle/65" style={{ height: Math.max(0, (ends - parseGridMinute(hours.closeTime)) * pixelsPerMinute) }} />
-            </>}
+            {!closed && shifts.length > 0 && [...shifts, { start: "" }].map(({ start }, index) => {
+              const from = index === 0 ? starts : parseGridMinute(shifts[index - 1].end);
+              const to = index === shifts.length ? ends : parseGridMinute(start);
+              if (to <= from) return null;
+              const isBreak = index > 0 && index < shifts.length;
+              return <div key={index} aria-hidden={!isBreak} aria-label={isBreak ? copy.blockedTime : undefined}
+                className={`pointer-events-none absolute inset-x-0 bg-subtle/65 ${isBreak ? "border-y border-border-strong" : ""}`}
+                style={{ top: (from - starts) * pixelsPerMinute, height: (to - from) * pixelsPerMinute }} />;
+            })}
             {gridLines.map((minute) => <div key={minute} aria-hidden="true" className={`pointer-events-none absolute inset-x-0 border-t ${minute % 60 === 0 ? "border-border-subtle" : "border-dashed border-border-subtle/75"}`} style={{ top: (minute - starts) * pixelsPerMinute }} />)}
 
             {/* Pré-visualização do slot de destino durante o arrasto */}
@@ -688,7 +687,7 @@ export function AgendaTimeGrid({
                   } ${isDraggable ? "group/agenda-drag cursor-pointer active:cursor-grabbing" : ""} ${isDraggable && dayPeople ? "touch-none" : ""}`}
                   style={position}
                 >
-                  {renderBlock(row, end - start < 22)}
+                  {renderBlock(row, end - start < 27)}
                 </div>
               );
             })}

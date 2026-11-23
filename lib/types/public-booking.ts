@@ -1,4 +1,5 @@
 import type { ClientFieldValues } from "@/lib/company-settings";
+import type { CompanyOperatingDaySchedule } from "./auth";
 import type { Currency } from "./finance";
 
 export type PhoneCountryCode = "+55" | "+58" | "+1" | "+34" | "+351";
@@ -10,12 +11,7 @@ export interface PublicCompany {
   currency?: Currency;
   avatarUrl?: string | null;
   operatingDays?: string | null;
-  operatingSchedule?: Array<{
-    dayOfWeek: number;
-    isOpen: boolean;
-    openTime: string | null;
-    closeTime: string | null;
-  }> | null;
+  operatingSchedule?: CompanyOperatingDaySchedule[] | null;
 }
 
 export interface PublicServiceCollaborator {

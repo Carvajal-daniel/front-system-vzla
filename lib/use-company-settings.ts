@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import type { Currency } from "@/lib/types/finance";
 import { apiRequest } from "@/lib/api-client";
-import { defaultCompanySettings, selectedClientFields, type CompanySettings } from "@/lib/company-settings";
+import { defaultCompanySettings, selectedClientFields, type CompanySettings, type OwnerAppearance } from "@/lib/company-settings";
 
 const CHANGE_KEY = "cloudgo-company-settings-change";
 const snapshots = new Map<string, CompanySettings>();
@@ -13,13 +14,20 @@ function publish(companyId: string, settings: CompanySettings) {
   listeners.get(companyId)?.forEach((listener) => listener());
 }
 
-export async function saveCompanySettings(companyId: string, body: Partial<Omit<CompanySettings, "rating">>) {
+type SettingsPatch = Partial<Omit<CompanySettings, "rating" | "countryCodeConfigured">> & {
+  region?: { timezone: string; currency: Currency };
+  appearance?: Partial<OwnerAppearance>;
+};
+
+export async function saveCompanySettings(companyId: string, body: SettingsPatch) {
   const settings = await apiRequest<CompanySettings>("/companies/me/settings", { method: "PATCH", body });
   publish(`${companyId}:private`, settings);
-  const publicKeys = ["address", "agendaInterval", "bookingInterval", "leadTime", "birthdayRadar", "surveyEnabled", "rating",
+  const publicKeys = ["address", "countryCode", "description", "agendaInterval", "bookingInterval", "leadTime", "maxAdvanceBookingDays", "allowClientCancel",
+    "cancelLeadTime", "allowClientConfirm", "allowClientReschedule", "maxActiveBookingsPerClient", "newBookingCancelsPrevious", "birthdayRadar", "surveyEnabled", "rating",
     "googleMapsUrl", "googleRating", "googleReviewsCount", "googlePlaceId", "clientFieldSlots"] as const;
   const publicSettings = { ...defaultCompanySettings };
   Object.assign(publicSettings, Object.fromEntries(publicKeys.map((key) => [key, settings[key]])));
+  publicSettings.cancelLeadTime = settings.cancelLeadTime ?? settings.leadTime;
   const active = selectedClientFields(settings);
   const activeIds = new Set(active.map(({ id }) => id));
   publicSettings.clientFields = { ...defaultCompanySettings.clientFields,

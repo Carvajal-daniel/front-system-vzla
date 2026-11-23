@@ -286,6 +286,7 @@ export default function AppointmentsListPage() {
             <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-secondary" />
             <input
               type="text"
+              autoComplete="off"
               aria-label="Buscar por cliente, telefone ou serviço"
               placeholder="Buscar por cliente, telefone ou serviço..."
               value={search}
@@ -296,6 +297,7 @@ export default function AppointmentsListPage() {
 
           <select
             aria-label="Status do agendamento"
+            autoComplete="off"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className={`${filterControl} w-full`}
