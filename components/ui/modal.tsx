@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { Dialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 import { useLocale } from "@/lib/i18n/locale-context";
+import { useTheme } from "@/lib/theme-context";
 
 export interface ModalProps {
   open: boolean;
@@ -14,6 +14,10 @@ export interface ModalProps {
   children: ReactNode;
 }
 
+/**
+ * Modal centrado apoiado no Base UI Dialog para garantir focus trap,
+ * fechamento por Escape, restauração de foco e herança das 11 paletas + Claro/Escuro.
+ */
 export function Modal({
   open,
   title,
@@ -22,60 +26,43 @@ export function Modal({
   children,
 }: ModalProps) {
   const { t } = useLocale();
-
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open, onClose]);
+  const { mode, palette } = useTheme();
 
   return (
-    <AnimatePresence>
-      {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title"
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-xs p-0 sm:p-4 overflow-y-auto"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              onClose();
-            }
-          }}
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
+        <Dialog.Popup
+          data-palette={palette}
+          data-theme={mode}
+          className={[
+            mode === "dark" ? "dark" : "",
+            "fixed inset-x-0 bottom-0 z-50 max-h-[90dvh] w-full overflow-y-auto rounded-t-3xl border border-border-subtle bg-surface p-5 text-ink shadow-2xl outline-none duration-150 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:w-[calc(100%-2rem)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+            maxWidth,
+          ]
+            .filter(Boolean)
+            .join(" ")}
         >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className={`max-h-[90dvh] w-full ${maxWidth} overflow-y-auto rounded-t-3xl sm:rounded-2xl border border-border-subtle bg-surface p-5 sm:p-6 shadow-2xl my-auto`}
-          >
-            <div className="mb-4 flex items-center justify-between gap-3 sticky top-0 bg-surface/90 backdrop-blur-xs pb-2 z-10 border-b border-border-subtle/50">
-              <h2 id="modal-title" className="text-title-sm font-bold text-ink">
-                {title}
-              </h2>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label={t.common.close}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-secondary hover:bg-subtle hover:text-ink transition-colors cursor-pointer"
-              >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-            {children}
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+          <div className="mb-4 flex items-center justify-between gap-3 sticky top-0 bg-surface/95 backdrop-blur-xs pb-2.5 z-10 border-b border-border-subtle/60">
+            <Dialog.Title className="text-title-sm font-semibold text-ink">
+              {title}
+            </Dialog.Title>
+            <Dialog.Close
+              type="button"
+              aria-label={t.common.close}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-secondary hover:bg-subtle hover:text-ink transition-colors cursor-pointer"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </Dialog.Close>
+          </div>
+          {children}
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

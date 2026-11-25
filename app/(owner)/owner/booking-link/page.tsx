@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { displayCompanyRating, formatCompanyAddress } from "@/lib/company-settings";
+import { useLocale } from "@/lib/i18n/locale-context";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import { CompanyRating } from "@/components/ui/company-rating";
 import { useSession } from "@/components/ui/auth-guard";
@@ -26,6 +27,7 @@ import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
 
 export default function BookingLinkPage() {
+  const { t } = useLocale();
   const { session } = useSession();
   const company = session.company;
   const companyId = company.id;
@@ -466,19 +468,19 @@ export default function BookingLinkPage() {
               </div>
 
               {/* Banner de Fidelidade no Mockup */}
-              <div className="mt-5 mx-5 rounded-2xl border border-white/10 bg-gradient-to-br from-white/10 to-white/5 p-3 text-center space-y-1">
+              <div className="mt-5 mx-5 rounded-2xl border border-white/10 bg-white/8 p-3 text-center space-y-1">
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400">
-                  <Sparkles size={11} />
+                  <Sparkles size={11} aria-hidden="true" />
                   Programa de Pontos
                 </span>
                 <p className="text-[11px] text-slate-300">
-                  Acumule 1 ponto a cada R$ 1 gasto e troque por serviços grátis!
+                  Acumule pontos a cada atendimento e troque por benefícios!
                 </p>
               </div>
 
               {/* Footer do Mockup */}
-              <div className="mt-6 text-center text-[10px] text-slate-500">
-                <span>Agendamento online seguro · Powered by Antigravity</span>
+              <div className="mt-6 text-center text-[10px] text-slate-400">
+                <span>Agendamento online seguro · {t.common.appName}</span>
               </div>
             </div>
           </div>

@@ -24,50 +24,83 @@ import { CompanyRating } from "@/components/ui/company-rating";
 import { OnlinePaymentSettingsPanel } from "./online-payment-settings";
 import { SatisfactionSettings } from "./satisfaction-settings";
 
-const sections = [
-  ["company", "Empresa", "Empresa", Building2],
-  ["agenda", "Horários e Intervalos", "Horarios e intervalos", CalendarClock],
-  ["reminders", "Lembretes", "Recordatorios", Bell],
-  ["clients", "Dados de Clientes & Anamnese", "Datos de clientes y anamnesis", Users],
-  ["payment", "Pagto. Online", "Pago en línea", CreditCard],
-  ["packages", "Venda de Pacotes", "Venta de paquetes", Package],
-  ["booking", "Link de Agendamento", "Enlace de reservas", Link2],
-  ["survey", "Pesquisa de Satisfação", "Encuesta de satisfacción", Star],
-  ["region", "Fuso Horário & Moeda", "Zona horaria y moneda", Globe2],
-  ["security", "Segurança & Senha", "Seguridad y contraseña", KeyRound],
-  ["appearance", "Tema & Aparência", "Tema y apariencia", Palette],
+const sectionGroups = [
+  {
+    pt: "Operação",
+    es: "Operación",
+    items: [
+      ["company", "Empresa", "Empresa", Building2],
+      ["agenda", "Horários e Intervalos", "Horarios e intervalos", CalendarClock],
+      ["reminders", "Lembretes", "Recordatorios", Bell],
+    ],
+  },
+  {
+    pt: "Clientes e Reservas",
+    es: "Clientes y Reservas",
+    items: [
+      ["clients", "Dados de Clientes & Anamnese", "Datos de clientes y anamnesis", Users],
+      ["booking", "Link de Agendamento", "Enlace de reservas", Link2],
+      ["survey", "Pesquisa de Satisfação", "Encuesta de satisfacción", Star],
+    ],
+  },
+  {
+    pt: "Finanças e Vendas",
+    es: "Finanzas y Ventas",
+    items: [
+      ["payment", "Pagto. Online", "Pago en línea", CreditCard],
+      ["packages", "Venda de Pacotes", "Venta de paquetes", Package],
+    ],
+  },
+  {
+    pt: "Conta e Aparência",
+    es: "Cuenta y Apariencia",
+    items: [
+      ["region", "Fuso Horário & Moeda", "Zona horaria y moneda", Globe2],
+      ["security", "Segurança & Senha", "Seguridad y contraseña", KeyRound],
+      ["appearance", "Tema & Aparência", "Tema y apariencia", Palette],
+    ],
+  },
 ] as const;
+
+type SettingsSectionId = (typeof sectionGroups)[number]["items"][number][0];
 
 const ownerCountryCodes = ["+55", "+58", "+1", "+34", "+351"] as const;
 const field = "min-h-11 w-full min-w-0 rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink";
 
 export function SettingsPanel() {
-  const [active, setActive] = useState<typeof sections[number][0]>("company");
+  const [active, setActive] = useState<SettingsSectionId>("company");
   const { locale, t } = useLocale();
   const es = locale === "es";
   const { session } = useSession();
   const { settings } = useCompanySettings(session.company.id, undefined, true, true);
 
   return (
-    <div className="grid min-w-0 gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
+    <div className="grid min-w-0 gap-5 lg:grid-cols-[15.5rem_minmax(0,1fr)]">
       <header className="lg:col-span-2">
         <h1 className="text-title-sm font-bold text-ink">{t.owner.settingsTitle}</h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-secondary">
           {session.company.companyName}<CompanyRating rating={settings.rating} />
         </div>
       </header>
-      <nav aria-label={t.owner.settingsTitle} className="self-start rounded-2xl border border-border-subtle bg-surface p-2 lg:sticky lg:top-20">
-        <ul className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1">
-          {sections.map(([id, pt, spanish, Icon]) => (
-            <li key={id}>
-              <button type="button" aria-current={active === id ? "page" : undefined} aria-controls="settings-content"
-                onClick={() => setActive(id)}
-                className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-ink-secondary hover:bg-subtle aria-[current=page]:bg-accent-soft aria-[current=page]:text-ink">
-                <Icon className="size-4 shrink-0" aria-hidden="true" />{es ? spanish : pt}
-              </button>
-            </li>
-          ))}
-        </ul>
+      <nav aria-label={t.owner.settingsTitle} className="self-start rounded-2xl border border-border-subtle bg-surface p-2.5 lg:sticky lg:top-20 space-y-3">
+        {sectionGroups.map((group) => (
+          <div key={group.pt} className="space-y-1">
+            <p className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              {es ? group.es : group.pt}
+            </p>
+            <ul className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1">
+              {group.items.map(([id, pt, spanish, Icon]) => (
+                <li key={id}>
+                  <button type="button" aria-current={active === id ? "page" : undefined} aria-controls="settings-content"
+                    onClick={() => setActive(id)}
+                    className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-ink-secondary hover:bg-subtle aria-[current=page]:bg-accent-soft aria-[current=page]:text-ink">
+                    <Icon className="size-4 shrink-0" aria-hidden="true" />{es ? spanish : pt}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </nav>
       <div id="settings-content" className="min-w-0 space-y-4 [&_a]:cursor-pointer [&_button:not(:disabled)]:cursor-pointer [&_input:not(:disabled)]:cursor-pointer [&_select:not(:disabled)]:cursor-pointer [&_textarea:not(:disabled)]:cursor-pointer">
         {active === "company" && <CompanyPanel settings={settings} />}
@@ -561,7 +594,7 @@ function AgendaPanel({ publicLink = false }: { publicLink?: boolean }) {
       {qr && <div className="space-y-2">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={qr} alt={es ? "Código QR del enlace de reservas" : "QR Code do link de agendamento"} width={200} height={200} className="rounded-xl" />
-        <a className="text-sm font-semibold text-accent underline" download="cloudgo-agendamento.png" href={qr}>{es ? "Descargar PNG" : "Baixar PNG"}</a>
+        <a className="text-sm font-semibold text-accent underline" download="atelier-agenda-agendamento.png" href={qr}>{es ? "Descargar PNG" : "Baixar PNG"}</a>
       </div>}
     </section>}
   </form>

@@ -98,14 +98,17 @@
   --accent-ink: #ffffff;
 
   /* Cores semânticas (sempre acompanhadas de ícone ou texto) */
+  --status-success: #16a34a;
   --status-success-bg: #ecfdf5;
   --status-success-ink: #065f46;
   --status-success-border: #a7f3d0;
 
+  --status-warning: #b45309;
   --status-warning-bg: #fffbeb;
   --status-warning-ink: #92400e;
   --status-warning-border: #fde68a;
 
+  --status-danger: #dc2626;
   --status-danger-bg: #fef2f2;
   --status-danger-ink: #991b1b;
   --status-danger-border: #fecaca;
@@ -160,14 +163,17 @@
   --ink-secondary: #a1a1aa;
   --ink-muted: #71717a;
 
+  --status-success: #4ade80;
   --status-success-bg: #052e16;
   --status-success-ink: #6ee7b7;
   --status-success-border: #065f46;
 
+  --status-warning: #fbbf24;
   --status-warning-bg: #451a03;
   --status-warning-ink: #fcd34d;
   --status-warning-border: #92400e;
 
+  --status-danger: #f87171;
   --status-danger-bg: #450a0a;
   --status-danger-ink: #fca5a5;
   --status-danger-border: #991b1b;

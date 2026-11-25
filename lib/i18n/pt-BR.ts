@@ -13,7 +13,11 @@ export const ptBR: Dictionary = {
     team: "Equipe", professionalsList: "Profissionais", schedules: "Expedientes",
     reports: "Relatórios", mainReport: "Painel Principal", agendaReport: "Painel Agenda", financeReport: "Painel Financeiro", advancedReports: "Relatórios Avançados", settings: "Configurações",
     quickCreate: "+ Criar", calendarShortcut: "Calendário", cnpjOrRif: "CNPJ / RIF",
-    subscribeNow: "Assine Agora", aiCopilot: "Copiloto IA", globalSearch: "Buscar no Sistema", bookingLink: "Link de Agendamento",
+    subscribeNow: "Assine Agora", seePlans: "Conheça os Planos", aiCopilot: "Copiloto IA", globalSearch: "Buscar no Sistema", bookingLink: "Link de Agendamento",
+    onlineLinkShort: "Link Online", usageShort: "Consumo",
+    newAppointment: "Novo Agendamento", blockAgenda: "Bloquear Agenda", newOrder: "Nova Comanda / Venda", newClient: "Novo Cliente", newPayable: "Nova Conta a Pagar",
+    searchPlaceholder: "Buscar páginas, módulos e relatórios…", noSearchResults: "Nenhum resultado encontrado para",
+    openMenu: "Abrir menu lateral", closeMenu: "Fechar menu",
   },
   common: {
     appName: "Atelier Agenda",

@@ -562,7 +562,7 @@ export function AgendaEditor({
                 {/* Opção de Múltiplos Serviços Adicionais */}
                 {serviceId && services.filter((s) => s.active && s.id !== serviceId).length > 0 && (
                   <div className="rounded-xl border border-border-subtle/80 bg-canvas/30 p-2.5">
-                    <p className="text-[11px] font-semibold text-ink-secondary mb-1.5">
+                    <p className="text-xs font-semibold text-ink-secondary mb-1.5">
                       + Adicionar serviços complementares:
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -761,7 +761,7 @@ export function AgendaEditor({
                           className="flex w-full cursor-pointer items-center justify-between px-3 py-2 text-left hover:bg-surface-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent">
                             <div className="min-w-0 pr-2">
                               <p className="font-semibold text-ink truncate">{c.name}</p>
-                              <p className="text-[11px] text-ink-muted">{c.phone}</p>
+                              <p className="text-xs text-ink-muted">{c.phone}</p>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
                               {c.isBlocked && (
@@ -786,7 +786,7 @@ export function AgendaEditor({
                     <button
                       type="button"
                       onClick={handleQuickCreateClient}
-                      className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-accent hover:underline cursor-pointer"
+                      className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-accent hover:underline cursor-pointer"
                     >
                       <UserPlus size={13} className="shrink-0" />
                       + Cadastrar novo cliente: &quot;{name.trim()}&quot;
@@ -839,7 +839,7 @@ export function AgendaEditor({
                     />
                   </div>
                   {phoneValidationError && (
-                    <p role="alert" className="mt-1 text-[11px] font-semibold text-rose-500">
+                    <p role="alert" className="mt-1 text-xs font-semibold text-rose-500">
                       {phoneValidationError}
                     </p>
                   )}
@@ -906,7 +906,7 @@ export function AgendaEditor({
                     Enviar lembrete via WhatsApp
                   </label>
                   {isLessThanSixHours && (
-                    <p className="text-[11px] font-medium text-amber-500 pl-6 flex items-center gap-1">
+                    <p className="text-xs font-medium text-amber-500 pl-6 flex items-center gap-1">
                       <Info className="size-3 shrink-0" />
                       Apenas com 6 horas de antecedência!
                     </p>

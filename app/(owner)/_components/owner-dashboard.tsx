@@ -4,14 +4,18 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronRight, Clock3, Crosshair, Loader2, Users, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Check, ChevronRight, Clock3, Crosshair, Loader2, Users } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { formatTimeInTimezone, getCurrencyFormatter, getTodayIsoDateInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { useTheme } from "@/lib/theme-context";
 import { useSession } from "@/components/ui/auth-guard";
 import { usePrivacy } from "@/lib/privacy-context";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { maskCurrency } from "@/components/ui/sensitive-value";
+import { appointmentStatusTone, StatusBadge } from "@/components/ui/status-badge";
 import type { Appointment } from "@/lib/types/appointment";
 import type { Collaborator } from "@/lib/types/team";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
@@ -30,9 +34,9 @@ const rankingBorders = [
 const dayInMs = 86_400_000;
 
 const kpiTrends = {
-  growth: { color: "#10B981", lightInk: "#047857", darkInk: "#6EE7B7", icon: ArrowUp },
-  decline: { color: "#EF4444", lightInk: "#B91C1C", darkInk: "#FCA5A5", icon: ArrowDown },
-  stable: { color: "#64748B", lightInk: "#475569", darkInk: "#CBD5E1", icon: null },
+  growth: { color: "var(--status-success)", bg: "var(--status-success-bg)", ink: "var(--status-success-ink)", icon: ArrowUp },
+  decline: { color: "var(--status-danger)", bg: "var(--status-danger-bg)", ink: "var(--status-danger-ink)", icon: ArrowDown },
+  stable: { color: "var(--ink-muted)", bg: "var(--status-neutral-bg)", ink: "var(--status-neutral-ink)", icon: null },
 };
 
 type RevenuePoint = { date: string; previousDate: string; dailyRevenue: number; current: number; previous: number };
@@ -191,9 +195,18 @@ export function OwnerDashboard() {
     } finally { setSavingGoal(false); }
   };
 
+  useEffect(() => {
+    if (!goalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setGoalOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goalOpen]);
+
   if (searchParams.has("appointmentId")) return null;
   if (loading) return <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"><div className="space-y-4">{[1,2,3,4].map((x) => <div key={x} className="h-36 animate-pulse rounded-2xl border border-border-subtle bg-surface" />)}</div><div className="h-[35rem] animate-pulse rounded-2xl border border-border-subtle bg-surface" /></div>;
-  if (error || !data) return <section className="rounded-2xl border border-border-subtle bg-surface p-8 text-center"><p className="text-sm text-ink-secondary">{t.dashboard.loadError}</p><button onClick={() => void load()} className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink">{t.common.retry}</button></section>;
+  if (error || !data) return <section className="rounded-2xl border border-border-subtle bg-surface p-8 text-center"><p className="text-sm text-ink-secondary">{t.dashboard.loadError}</p><button type="button" onClick={() => void load()} className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-ink">{t.common.retry}</button></section>;
 
   const summary = data.current.summary;
   const previousSummary = data.previous.summary;
@@ -263,18 +276,18 @@ export function OwnerDashboard() {
         const changeFormat = Math.abs(kpi.delta) < 0.1 ? smallDeltaFormat : deltaFormat;
 
         return (
-          <article key={kpi.label} className="flex min-w-0 flex-col rounded-2xl border border-border-subtle bg-surface shadow-sm">
+          <article key={kpi.label} className="flex min-w-0 flex-col rounded-2xl border border-border-subtle bg-surface shadow-[0_1px_3px_0_rgb(15_23_42/0.06),0_1px_2px_-1px_rgb(15_23_42/0.04)]">
             <div className="flex flex-1 flex-col px-4 pt-4 sm:px-3 xl:px-5">
               <div className="flex items-start justify-between gap-2">
-                <h3 className="text-xs leading-5 font-medium text-ink-secondary sm:text-[11px] xl:text-sm">{kpi.label}</h3>
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] leading-4 font-semibold tabular-nums" title={periodLabels.change}
-                  style={{ backgroundColor: `${trend.color}1A`, color: mode === "dark" ? trend.darkInk : trend.lightInk }}>
+                <h3 className="text-xs leading-5 font-medium text-ink-secondary sm:text-xs xl:text-sm">{kpi.label}</h3>
+                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[11px] leading-4 font-semibold tabular-nums" title={periodLabels.change}
+                  style={{ backgroundColor: trend.bg, color: trend.ink }}>
                   {TrendIcon && <TrendIcon aria-hidden="true" className="size-3" />}
                   {changeFormat.format(kpi.delta / 100)}
                   <span className="sr-only"> {periodLabels.change}</span>
                 </span>
               </div>
-              <strong className="mt-1 mb-2 text-2xl leading-tight font-bold tracking-tight break-words text-ink tabular-nums xl:text-3xl">{kpi.value}</strong>
+              <strong className="mt-1 mb-2 font-mono text-2xl leading-tight font-bold tracking-tight break-words text-ink tabular-nums xl:text-3xl">{kpi.value}</strong>
               <div className="mt-auto"><Sparkline values={kpi.spark} color={trend.color} /></div>
             </div>
             <div className="border-t border-border-subtle px-4 py-3 sm:px-3 xl:px-5">
@@ -303,8 +316,8 @@ export function OwnerDashboard() {
                 <option value="month">{t.dashboard.thisMonth}</option>
                 <option value="30days">{t.dashboard.last30Days}</option>
               </select>
-              <button onClick={() => { setGoalInput(String(target / 100)); setGoalOpen(true); }}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-ink">
+              <button type="button" onClick={() => { setGoalInput(String(target / 100)); setGoalOpen(true); }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-ink cursor-pointer">
                 <Crosshair aria-hidden="true" className="size-3.5" />{t.dashboard.setGoal}
               </button>
             </div>
@@ -315,7 +328,7 @@ export function OwnerDashboard() {
                 <span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: comparisonColors[key] }} />{comparisonLabels[key]}
               </span>
             ))}
-            <strong className="ml-auto text-ink tabular-nums">{fmt(comparisonTotal.current)}</strong>
+            <strong className="ml-auto font-mono text-ink tabular-nums">{fmt(comparisonTotal.current)}</strong>
           </div>
           <RevenueComparisonChart key={period} points={comparison} locale={locale} currency={displayCurrency} labels={comparisonLabels} period={period} colors={comparisonColors} today={nowRange.today} />
         </section>
@@ -338,11 +351,11 @@ export function OwnerDashboard() {
             <dl className="grid grid-cols-2 gap-3 border-t border-border-subtle pt-3 text-xs">
               <div>
                 <dt className="text-ink-secondary">{t.dashboard.reached}</dt>
-                <dd className="mt-1 font-semibold break-words text-ink tabular-nums">{fmt(monthlyRevenue)}</dd>
+                <dd className="mt-1 font-mono font-semibold break-words text-ink tabular-nums">{fmt(monthlyRevenue)}</dd>
               </div>
               <div className="text-right">
                 <dt className="text-ink-secondary">{t.dashboard.target}</dt>
-                <dd className="mt-1 font-semibold break-words text-ink tabular-nums">{target ? fmt(target) : t.dashboard.goalNotSet}</dd>
+                <dd className="mt-1 font-mono font-semibold break-words text-ink tabular-nums">{target ? fmt(target) : t.dashboard.goalNotSet}</dd>
               </div>
             </dl>
           </section>
@@ -383,18 +396,78 @@ export function OwnerDashboard() {
                     <p className="truncate text-xs font-semibold text-ink">{person.name}</p>
                     <p className="truncate text-[10px] text-ink-secondary">{data.collaborators.find((collaborator) => collaborator.id === person.collaboratorId)?.specialty ?? t.common.specialty}</p>
                   </div>
-                  <div className="text-right tabular-nums">
+                  <div className="text-right font-mono tabular-nums">
                     <p className="text-xs font-bold text-ink">{fmt(person.realizedRevenueInCents)}</p>
-                    <p className="text-[10px] text-ink-secondary">{person.completedCount} {t.dashboard.attendances} · {fmt(person.commissionToPayInCents)}</p>
+                    <p className="text-[11px] text-ink-secondary">{person.completedCount} {t.dashboard.attendances} · {fmt(person.commissionToPayInCents)}</p>
                   </div>
                 </li>
               ))}
             </ol>
           )}
         </section>
-        <section className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-sm"><div className="flex items-start justify-between"><div><h3 className="font-bold text-ink">{t.dashboard.upcomingAppointments}</h3><p className="mt-1 text-xs text-ink-muted">{t.dashboard.nextAppointments}</p></div><span className="rounded-lg bg-accent-soft p-2 text-accent"><Clock3 className="h-4 w-4"/></span></div><div className="mt-3 space-y-2">{upcoming.map((appointment)=><div key={appointment.id} className="rounded-xl border border-border-subtle bg-subtle/50 p-3"><div className="flex items-center justify-between gap-2"><span className="text-[11px] font-semibold text-ink">{new Intl.DateTimeFormat(locale,{day:"2-digit",month:"short",timeZone:timezone}).format(new Date(appointment.startsAt))} · {formatTimeInTimezone(appointment.startsAt,timezone,locale)}</span><span className="rounded-full bg-accent-soft px-2 py-0.5 text-[9px] font-semibold text-accent">{t.status[appointment.status]}</span></div><p className="mt-1 truncate text-xs font-bold text-ink">{appointment.clientName}</p><div className="mt-1 flex items-center justify-between gap-2"><span className="max-w-[65%] truncate rounded-md border border-border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary">{appointment.serviceNameSnapshot}</span><span className="truncate text-[10px] text-ink-muted">{data.collaborators.find((c)=>c.id===appointment.collaboratorId)?.name ?? ""}</span></div></div>)}{upcoming.length===0&&<p className="py-5 text-center text-xs text-ink-muted">{t.dashboard.noUpcoming}</p>}</div><Link href="/owner/appointments" className="mt-3 flex items-center justify-between rounded-lg border border-border-subtle px-3 py-2 text-xs font-semibold text-ink-secondary hover:bg-subtle"><span>{t.dashboard.openAgenda}</span><ArrowRight className="h-3.5 w-3.5"/></Link></section>
+        <section className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="font-bold text-ink">{t.dashboard.upcomingAppointments}</h3>
+              <p className="mt-1 text-xs text-ink-muted">{t.dashboard.nextAppointments}</p>
+            </div>
+            <span className="rounded-lg bg-accent-soft p-2 text-accent">
+              <Clock3 className="h-4 w-4" aria-hidden="true" />
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {upcoming.map((appointment) => (
+              <div key={appointment.id} className="rounded-xl border border-border-subtle bg-subtle/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs font-semibold text-ink tabular-nums">
+                    {new Intl.DateTimeFormat(locale, { day: "2-digit", month: "short", timeZone: timezone }).format(new Date(appointment.startsAt))} · {formatTimeInTimezone(appointment.startsAt, timezone, locale)}
+                  </span>
+                  <StatusBadge tone={appointmentStatusTone(appointment.status)} label={t.status[appointment.status]} />
+                </div>
+                <p className="mt-1 truncate text-xs font-bold text-ink">{appointment.clientName}</p>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="max-w-[65%] truncate rounded-md border border-border-subtle bg-surface px-1.5 py-0.5 text-xs text-ink-secondary">{appointment.serviceNameSnapshot}</span>
+                  <span className="truncate text-xs text-ink-muted">{data.collaborators.find((c) => c.id === appointment.collaboratorId)?.name ?? ""}</span>
+                </div>
+              </div>
+            ))}
+            {upcoming.length === 0 && <p className="py-5 text-center text-xs text-ink-muted">{t.dashboard.noUpcoming}</p>}
+          </div>
+          <Link href="/owner/appointments" className="mt-3 flex items-center justify-between rounded-lg border border-border-subtle px-3 py-2 text-xs font-semibold text-ink-secondary hover:bg-subtle">
+            <span>{t.dashboard.openAgenda}</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Link>
+        </section>
       </aside>
     </div>
-    {goalOpen&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onMouseDown={(e)=>{if(e.target===e.currentTarget)setGoalOpen(false)}}><section role="dialog" aria-modal="true" aria-labelledby="goal-title" className="w-full max-w-sm rounded-2xl border border-border-subtle bg-surface p-5 shadow-xl"><div className="flex items-center justify-between"><div><h3 id="goal-title" className="font-bold text-ink">{t.dashboard.goalModalTitle}</h3><p className="mt-1 text-xs text-ink-muted">{t.dashboard.goalModalHint}</p></div><button onClick={()=>setGoalOpen(false)} aria-label={t.common.close} className="rounded-lg p-2 text-ink-muted hover:bg-subtle"><X className="h-4 w-4"/></button></div><label htmlFor="monthly-goal" className="mt-4 block text-xs font-semibold text-ink">{t.dashboard.goalAmount}</label><div className="mt-1 flex gap-2"><input id="monthly-goal" type="number" min="1" step="0.01" value={goalInput} onChange={(e)=>setGoalInput(e.target.value)} className="h-10 min-w-0 flex-1 rounded-lg border border-border-strong bg-surface px-3 text-sm text-ink"/><span className="inline-flex h-10 items-center rounded-lg border border-border-strong px-2 text-sm text-ink">{currency}</span></div><div className="mt-5 flex justify-end gap-2"><button onClick={()=>setGoalOpen(false)} className="rounded-lg border border-border-strong px-3 py-2 text-xs font-semibold text-ink-secondary">{t.common.cancel}</button><button disabled={savingGoal} onClick={()=>void saveGoal()} className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-accent-ink disabled:opacity-60">{savingGoal?<Loader2 className="h-3.5 w-3.5 animate-spin"/>:<Check className="h-3.5 w-3.5"/>}{t.common.save}</button></div></section></div>}
+    <Modal open={goalOpen} title={t.dashboard.goalModalTitle} maxWidth="max-w-md" onClose={() => setGoalOpen(false)}>
+      <div className="space-y-4">
+        <p className="text-xs text-ink-muted">{t.dashboard.goalModalHint}</p>
+        <div className="space-y-1.5">
+          <label htmlFor="monthly-goal" className="block text-xs font-semibold text-ink">{t.dashboard.goalAmount}</label>
+          <div className="flex gap-2">
+            <Input
+              id="monthly-goal"
+              type="number"
+              min="1"
+              step="0.01"
+              value={goalInput}
+              onChange={(e) => setGoalInput(e.target.value)}
+              className="h-10 min-w-0 flex-1 rounded-lg border-border-strong bg-surface px-3 font-mono text-sm text-ink tabular-nums"
+            />
+            <span className="inline-flex h-10 items-center rounded-lg border border-border-strong px-3 font-mono text-xs font-semibold text-ink">{currency}</span>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" onClick={() => setGoalOpen(false)}>
+            {t.common.cancel}
+          </Button>
+          <Button type="button" disabled={savingGoal} onClick={() => void saveGoal()}>
+            {savingGoal ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+            {t.common.save}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   </div>;
 }

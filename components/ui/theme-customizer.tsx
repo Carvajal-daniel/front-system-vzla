@@ -8,7 +8,7 @@ import type { ThemePalette } from "@/lib/theme-context";
 
 /**
  * Controle compacto de tema: alternância Claro/Escuro + popover visual com
- * as 7 paletas em círculos de cor (alvos >= 44px, acessível por teclado).
+ * as 11 paletas em círculos de cor (alvos táteis confortáveis, acessível por teclado).
  */
 export function ThemeCustomizer({ className = "" }: { className?: string }) {
   const { mode, palette, toggleMode, setPalette } = useTheme();
@@ -84,17 +84,19 @@ export function ThemeCustomizer({ className = "" }: { className?: string }) {
         <div
           role="menu"
           aria-label={t.theme.paletteLabel}
-          className="absolute right-0 top-13 z-50 w-60 rounded-2xl border border-border-subtle bg-surface p-3 shadow-lg"
+          className="absolute right-0 top-13 z-50 w-56 rounded-2xl border border-border-subtle bg-surface p-3 shadow-lg"
         >
           <p className="mb-2.5 px-1 text-xs font-semibold text-ink-secondary">
             {t.theme.paletteLabel}
           </p>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             {THEME_PALETTES.map((item) => {
               const selected = palette === item.id;
               const swatch =
                 mode === "dark" ? item.swatchDark : item.swatchLight;
               const label = t.theme.palettes[item.id];
+              const useDarkCheck =
+                mode === "dark" || item.id === "cyan" || item.id === "gold";
               return (
                 <button
                   key={item.id}
@@ -105,17 +107,16 @@ export function ThemeCustomizer({ className = "" }: { className?: string }) {
                   title={label}
                   onClick={() => handleSelectPalette(item.id)}
                   className={[
-                    "flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110 cursor-pointer",
+                    "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-transform hover:scale-105 cursor-pointer",
                     selected ? "border-ink scale-105" : "border-transparent",
                   ].join(" ")}
                   style={{ backgroundColor: swatch }}
                 >
                   {selected && (
                     <Check
-                      className="h-3.5 w-3.5"
+                      className="h-4 w-4"
                       style={{
-                        color:
-                          mode === "dark" ? "#09090B" : "#FFFFFF",
+                        color: useDarkCheck ? "#09090B" : "#FFFFFF",
                       }}
                       aria-hidden="true"
                     />

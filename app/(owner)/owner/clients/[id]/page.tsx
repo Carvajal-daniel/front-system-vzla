@@ -62,7 +62,7 @@ export default function ClientProfilePage({
   const { settings } = useCompanySettings(companyId);
   const visibleFields = new Set(selectedClientFields(settings).map(({ id }) => id));
 
-  const { getClient, saveClientDetails, toggleBlockClient, loading } =
+  const { getClient, fetchClientById, saveClientDetails, toggleBlockClient, loading } =
     useClients(companyId);
   const { program, getClientLoyalty, addPoints, redeemReward } = useLoyalty(companyId);
 
@@ -71,10 +71,15 @@ export default function ClientProfilePage({
 
   const [activeTab, setActiveTab] = useState<"history" | "anamnesis" | "loyalty">("history");
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [editForm, setEditForm] = useState({
     name: "",
     phone: "",
   });
+
+  useEffect(() => {
+    void fetchClientById(clientId).catch(() => undefined);
+  }, [clientId, fetchClientById]);
 
   // Atualiza campos quando o cliente é carregado
   useEffect(() => {
@@ -86,15 +91,23 @@ export default function ClientProfilePage({
     }
   }, [client]);
 
-  // Salvar dados cadastrais
-  const handleSaveProfile = (e: React.FormEvent) => {
+  // Salvar dados cadastrais na API (/v1/clients/:id)
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveClientDetails(clientId, {
-      name: editForm.name.trim(),
-      phone: editForm.phone.trim(),
-    });
-    setEditModalOpen(false);
-    toast.success("Dados do cliente atualizados com sucesso!");
+    if (savingEdit) return;
+    setSavingEdit(true);
+    try {
+      await saveClientDetails(clientId, {
+        name: editForm.name.trim(),
+        phone: editForm.phone.trim(),
+      });
+      setEditModalOpen(false);
+      toast.success("Dados do cliente atualizados com sucesso!");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível atualizar os dados do cliente.");
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   if (loading) {
@@ -203,12 +216,17 @@ export default function ClientProfilePage({
             <button
               type="button"
               onClick={() => {
-                toggleBlockClient(clientId);
-                toast.info(
-                  client.isBlocked
-                    ? "Cliente desbloqueado com sucesso!"
-                    : "Cliente bloqueado para agendamentos online.",
-                );
+                void toggleBlockClient(clientId)
+                  .then(() => {
+                    toast.info(
+                      client.isBlocked
+                        ? "Cliente desbloqueado com sucesso!"
+                        : "Cliente bloqueado para agendamentos online.",
+                    );
+                  })
+                  .catch(() => {
+                    toast.error("Não foi possível atualizar o bloqueio do cliente.");
+                  });
               }}
               className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
                 client.isBlocked
@@ -415,7 +433,7 @@ export default function ClientProfilePage({
         )}
 
         {activeTab === "anamnesis" && <ClientProfileFields key={client.id} companyId={companyId} client={client}
-          onSaved={(values) => saveClientDetails(client.id, values)} />}
+          onSaved={(values) => { void saveClientDetails(client.id, values); }} />}
 
         {/* Conteúdo Aba 3: Fidelidade */}
         {activeTab === "loyalty" && (

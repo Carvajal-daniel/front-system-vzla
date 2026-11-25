@@ -115,7 +115,8 @@ export function InventoryPanel() {
   const movements = useOwnerInventory<InventoryList<InventoryMovement>>(view === "movements" ? "/inventory/movements?" + historyQuery : null, revision);
   const today = summary?.today ?? getTodayIsoDateInTimezone(session.company.timezone);
   const number = new Intl.NumberFormat(locale);
-  const formatter = getCurrencyFormatter(locale, summary?.currency ?? session.company.currency ?? "BRL");
+  const currency = summary?.currency ?? session.company.currency ?? "BRL";
+  const formatter = getCurrencyFormatter(locale, currency);
   const money = (cents: number) => formatter.format(cents / 100);
   const formatDate = new Intl.DateTimeFormat(locale, { dateStyle: "short", timeZone: "UTC" });
   const refresh = () => setRevision((n) => n + 1);
@@ -157,11 +158,14 @@ export function InventoryPanel() {
   }
 
   const handleExportCsv = () => {
+    const es = locale === "es";
     if (!products || products.items.length === 0) {
-      toast.warning("Não há itens no estoque para exportar.");
+      toast.warning(es ? "No hay artículos en el inventario para exportar." : "Não há itens no estoque para exportar.");
       return;
     }
-    const headers = ["Nome", "Categoria", "Estoque Atual", "Estoque Mínimo", "Custo (R$)", "Preço Venda (R$)"];
+    const headers = es
+      ? ["Nombre", "Categoría", "Stock Actual", "Stock Mínimo", `Costo (${currency})`, `Precio Venta (${currency})`]
+      : ["Nome", "Categoria", "Estoque Atual", "Estoque Mínimo", `Custo (${currency})`, `Preço Venda (${currency})`];
     const rows = products.items.map((it) => [
       `"${it.name.replace(/"/g, '""')}"`,
       `"${it.category}"`,
@@ -180,14 +184,14 @@ export function InventoryPanel() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    toast.success("Estoque exportado em CSV com sucesso!");
+    toast.success(es ? "¡Inventario exportado en CSV con éxito!" : "Estoque exportado em CSV com sucesso!");
   };
 
   return <div className="space-y-5">
     {operation && <InventoryOperationDialog operation={operation} today={today} onClose={() => setOperation(null)} onSaved={afterSave} />}
     {importing && <SpreadsheetImport kind="inventory" today={today} onClose={() => setImporting(false)} onImported={afterSave} />}
     <header className={ownerSection + " flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5"}>
-      <h1 className="text-xl font-semibold text-ink sm:text-2xl">{x.stock}</h1>
+      <h1 className="text-xl font-semibold text-ink sm:text-2xl text-balance">{x.stock}</h1>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" onClick={() => setOperation({ kind: "item" })}><Plus aria-hidden="true" />{x.newItem}</Button>
         <Button type="button" size="sm" variant="outline" onClick={() => setOperation({ kind: "movement", mode: "in" })}>
@@ -197,7 +201,7 @@ export function InventoryPanel() {
           <ArrowUpFromLine aria-hidden="true" />{x.registerOut}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={handleExportCsv}>
-          <Download aria-hidden="true" />Salvar em CSV
+          <Download aria-hidden="true" />{locale === "es" ? "Exportar CSV" : "Salvar em CSV"}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={() => setImporting(true)}>
           <FileSpreadsheet aria-hidden="true" />{x.importSheet}

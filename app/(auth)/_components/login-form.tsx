@@ -4,7 +4,7 @@ import { PasswordRecovery } from "@/components/ui/password-recovery";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   CalendarCheck2,
   Clock4,
@@ -34,6 +34,7 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useLocale();
+  const reducedMotion = useReducedMotion();
 
   const expired = searchParams.get("reason") === "expired";
 
@@ -113,34 +114,22 @@ export function LoginForm() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 14 }}
+      initial={reducedMotion ? false : { opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="grid overflow-hidden rounded-3xl border border-[#E2E8F0] bg-[#FFFFFF] shadow-xl lg:grid-cols-12"
+      transition={{ duration: reducedMotion ? 0 : 0.35, ease: [0.23, 1, 0.32, 1] }}
+      className="grid overflow-hidden rounded-3xl border border-[#E2E8F0] bg-[#FFFFFF] shadow-lg lg:grid-cols-12"
     >
-      {/* Coluna esquerda: Formulário limpo inspirado em loginPage.png */}
+      {/* Coluna esquerda: Formulário limpo editorial monocromático */}
       <div className="flex flex-col justify-center px-6 py-10 sm:px-10 lg:col-span-6 lg:px-12 lg:py-12">
         <div className="mx-auto w-full max-w-sm space-y-6">
-          {/* Cabeçalho com grade geométrica sutil atrás do ícone */}
-          <div className="relative flex flex-col items-center text-center">
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute -top-6 h-24 w-48 opacity-40"
-              style={{
-                backgroundImage:
-                  "linear-gradient(to right, #E2E8F0 1px, transparent 1px), linear-gradient(to bottom, #E2E8F0 1px, transparent 1px)",
-                backgroundSize: "18px 18px",
-                maskImage:
-                  "radial-gradient(ellipse at center, black 35%, transparent 80%)",
-              }}
-            />
-            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2563EB] text-white shadow-lg shadow-[#2563EB]/25">
+          <div className="flex flex-col items-center text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-accent-ink shadow-xs">
               <LogIn className="h-5 w-5" aria-hidden="true" />
             </div>
-            <h1 className="mt-5 text-2xl font-bold tracking-tight text-[#0D0D0F]">
+            <h1 className="mt-5 text-2xl font-bold tracking-tight text-ink text-balance">
               {t.auth.loginTitle}
             </h1>
-            <p className="mt-1.5 text-sm text-[#475569]">
+            <p className="mt-1.5 text-sm text-ink-secondary">
               {t.auth.loginSubtitle}
             </p>
           </div>
@@ -172,7 +161,7 @@ export function LoginForm() {
                   required
                   autoComplete="email"
                   placeholder="nome@barbearia.com"
-                  className="min-h-11 rounded-xl border-[#CBD5E1] bg-[#FFFFFF] pl-10 pr-3.5 text-[#0D0D0F] placeholder:text-[#94A3B8] focus-visible:border-[#2563EB]"
+                  className="min-h-11 rounded-xl border-[#CBD5E1] bg-[#FFFFFF] pl-10 pr-3.5 text-[#0D0D0F] placeholder:text-[#64748B] focus-visible:border-[#0D0D0F]"
                 />
               </div>
             </div>
@@ -183,7 +172,7 @@ export function LoginForm() {
               </Label>
               <div className="relative">
                 <Lock
-                  className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#94A3B8]"
+                  className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]"
                   aria-hidden="true"
                 />
                 <Input
@@ -195,7 +184,7 @@ export function LoginForm() {
                   minLength={1}
                   autoComplete="current-password"
                   placeholder="••••••••"
-                  className="min-h-11 rounded-xl border-[#CBD5E1] bg-[#FFFFFF] pl-10 pr-11 text-[#0D0D0F] placeholder:text-[#94A3B8] focus-visible:border-[#2563EB]"
+                  className="min-h-11 rounded-xl border-[#CBD5E1] bg-[#FFFFFF] pl-10 pr-11 text-[#0D0D0F] placeholder:text-[#64748B] focus-visible:border-[#0D0D0F]"
                 />
                 <button
                   type="button"
@@ -226,7 +215,7 @@ export function LoginForm() {
             <Button
               type="submit"
               disabled={submitting}
-              className="min-h-11 w-full rounded-xl bg-[#2563EB] text-sm font-semibold text-white shadow-md shadow-[#2563EB]/20 hover:bg-[#1D4ED8] cursor-pointer"
+              className="min-h-11 w-full rounded-full bg-accent text-sm font-semibold text-accent-ink hover:bg-accent-hover cursor-pointer"
             >
               {submitting && (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -236,11 +225,11 @@ export function LoginForm() {
           </form>
           <PasswordRecovery />
 
-          <p className="text-center text-sm text-[#475569]">
+          <p className="text-center text-sm text-ink-secondary">
             {t.auth.noAccount}{" "}
             <Link
               href="/register"
-              className="font-semibold text-[#2563EB] hover:underline"
+              className="font-semibold text-ink underline underline-offset-4 hover:text-ink-secondary"
             >
               {t.auth.goToRegister}
             </Link>
@@ -248,81 +237,81 @@ export function LoginForm() {
         </div>
       </div>
 
-      {/* Coluna direita: Painel visual de destaque inspirado em loginPage.png */}
-      <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#EFF6FF] via-[#E0ECFF] to-[#DBEAFE] p-8 lg:col-span-6 lg:flex lg:m-3 lg:rounded-2xl">
+      {/* Coluna direita: Painel editorial monocromático de alto contraste */}
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-canvas border-l border-border-subtle p-8 lg:col-span-6 lg:flex">
         <div className="text-center">
-          <h2 className="text-xl font-bold tracking-tight text-[#0F172A]">
+          <h2 className="text-xl font-bold tracking-tight text-ink text-balance">
             {t.auth.loginHeroPrefix}{" "}
-            <span className="text-[#2563EB]">{t.auth.loginHeroHighlight}</span>
+            <span className="italic font-semibold">{t.auth.loginHeroHighlight}</span>
           </h2>
-          <p className="mt-2 text-xs leading-relaxed text-[#475569] max-w-sm mx-auto">
+          <p className="mt-2 text-xs leading-relaxed text-ink-secondary max-w-sm mx-auto">
             {t.auth.loginHeroCaption}
           </p>
         </div>
 
-        {/* Composição orbital central com ícones do SaaS */}
+        {/* Composição orbital central contida e respeitando prefers-reduced-motion */}
         <div className="relative mx-auto my-6 flex h-56 w-56 items-center justify-center">
           <span
             aria-hidden="true"
-            className="absolute inset-0 rounded-full border border-[#2563EB]/15"
+            className="absolute inset-0 rounded-full border border-border-subtle"
           />
           <span
             aria-hidden="true"
-            className="absolute inset-6 rounded-full border border-[#2563EB]/20"
+            className="absolute inset-6 rounded-full border border-border-subtle"
           />
           <span
             aria-hidden="true"
-            className="absolute inset-12 rounded-full border border-[#2563EB]/25 bg-[#2563EB]/5"
+            className="absolute inset-12 rounded-full border border-border-strong/60 bg-surface"
           />
 
           <motion.div
-            animate={{ scale: [1, 1.05, 1] }}
+            animate={reducedMotion ? undefined : { scale: [1, 1.04, 1] }}
             transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-            className="relative z-10 flex h-16 w-16 items-center justify-center rounded-full bg-[#2563EB] text-white shadow-xl shadow-[#2563EB]/35"
+            className="relative z-10 flex h-16 w-16 items-center justify-center rounded-full bg-accent text-accent-ink shadow-md"
           >
             <Scissors className="h-7 w-7" aria-hidden="true" />
           </motion.div>
 
           <motion.span
-            animate={{ y: [0, -6, 0] }}
+            animate={reducedMotion ? undefined : { y: [0, -5, 0] }}
             transition={{ duration: 3.4, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute -top-1 left-1/2 -translate-x-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#2563EB] shadow-md"
+            className="absolute -top-1 left-1/2 -translate-x-1/2 flex h-10 w-10 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#0D0D0F] shadow-xs"
           >
             <CalendarCheck2 className="h-4 w-4" aria-hidden="true" />
           </motion.span>
           <motion.span
-            animate={{ y: [0, 6, 0] }}
+            animate={reducedMotion ? undefined : { y: [0, 5, 0] }}
             transition={{
               duration: 3.8,
               repeat: Infinity,
               ease: "easeInOut",
               delay: 0.4,
             }}
-            className="absolute bottom-2 left-6 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0D9488] shadow-md"
+            className="absolute bottom-2 left-6 flex h-10 w-10 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#0D0D0F] shadow-xs"
           >
             <Users className="h-4 w-4" aria-hidden="true" />
           </motion.span>
           <motion.span
-            animate={{ y: [0, -5, 0] }}
+            animate={reducedMotion ? undefined : { y: [0, -4, 0] }}
             transition={{
               duration: 3.6,
               repeat: Infinity,
               ease: "easeInOut",
               delay: 0.8,
             }}
-            className="absolute top-12 right-1 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#7C3AED] shadow-md"
+            className="absolute top-12 right-1 flex h-10 w-10 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#0D0D0F] shadow-xs"
           >
             <Clock4 className="h-4 w-4" aria-hidden="true" />
           </motion.span>
           <motion.span
-            animate={{ y: [0, 5, 0] }}
+            animate={reducedMotion ? undefined : { y: [0, 4, 0] }}
             transition={{
               duration: 4.1,
               repeat: Infinity,
               ease: "easeInOut",
               delay: 1.1,
             }}
-            className="absolute bottom-6 right-5 flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#E11D48] shadow-md"
+            className="absolute bottom-6 right-5 flex h-10 w-10 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#0D0D0F] shadow-xs"
           >
             <Globe2 className="h-4 w-4" aria-hidden="true" />
           </motion.span>
@@ -335,21 +324,21 @@ export function LoginForm() {
             return (
               <motion.div
                 key={feat.title}
-                initial={{ opacity: 0, y: 10 }}
+                initial={reducedMotion ? false : { opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 + idx * 0.08, duration: 0.35 }}
-                className="rounded-xl border border-white/80 bg-white/80 p-3 backdrop-blur-sm shadow-xs"
+                transition={{ delay: reducedMotion ? 0 : 0.08 + idx * 0.06, duration: reducedMotion ? 0 : 0.3 }}
+                className="rounded-xl border border-[#E2E8F0] bg-white p-3 shadow-xs"
               >
                 <div className="flex items-center gap-2">
                   <Icon
-                    className="h-4 w-4 shrink-0 text-[#2563EB]"
+                    className="h-4 w-4 shrink-0 text-[#0D0D0F]"
                     aria-hidden="true"
                   />
-                  <p className="text-xs font-bold text-[#0F172A] truncate">
+                  <p className="text-xs font-semibold text-[#0D0D0F] truncate">
                     {feat.title}
                   </p>
                 </div>
-                <p className="mt-1 text-[11px] leading-snug text-[#475569]">
+                <p className="mt-1 text-xs leading-snug text-[#475569]">
                   {feat.desc}
                 </p>
               </motion.div>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Ban, Loader2, Plus, Trash2 } from "lucide-react";
+import { localDayMinuteToUtcIso } from "@/lib/agenda";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import {
   formatDateTimeInTimezone,
@@ -44,6 +45,7 @@ export function MyBlocksPanel() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteBlock, setConfirmDeleteBlock] = useState<ScheduleBlock | null>(null);
 
   const loadBlocks = useCallback(async () => {
     setLoading(true);
@@ -92,9 +94,11 @@ export function MyBlocksPanel() {
     event.preventDefault();
     setFormError(null);
 
-    const startsAt = new Date(`${startDate}T${startTime}:00`).toISOString();
-    const endsAt = new Date(`${endDate}T${endTime}:00`).toISOString();
-    if (new Date(startsAt) >= new Date(endsAt)) {
+    // Converte data/hora no fuso horário IANA da empresa, independente do fuso local do navegador
+    const toMinute = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+    const startsAt = localDayMinuteToUtcIso(startDate, toMinute(startTime), timezone);
+    const endsAt = localDayMinuteToUtcIso(endDate, toMinute(endTime), timezone);
+    if (startsAt >= endsAt) {
       setFormError(t.errors.invalidTimeRange);
       return;
     }
@@ -164,7 +168,7 @@ export function MyBlocksPanel() {
             setFormError(null);
             setDrawerOpen(true);
           }}
-          className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
+          className="min-h-11 rounded-xl bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           {t.owner.newBlock}
@@ -189,7 +193,7 @@ export function MyBlocksPanel() {
             <Button
               type="button"
               onClick={() => setDrawerOpen(true)}
-              className="min-h-11 rounded-full bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
+              className="min-h-11 rounded-xl bg-accent px-5 text-accent-ink hover:bg-accent-hover cursor-pointer"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               {t.owner.newBlock}
@@ -217,7 +221,7 @@ export function MyBlocksPanel() {
                 type="button"
                 variant="outline"
                 disabled={deletingId === block.id}
-                onClick={() => void handleDelete(block.id)}
+                onClick={() => setConfirmDeleteBlock(block)}
                 className="min-h-11 rounded-xl border-[var(--status-danger-border)] text-[var(--status-danger-ink)] hover:bg-[var(--status-danger-bg)] cursor-pointer"
               >
                 {deletingId === block.id ? (
@@ -312,7 +316,7 @@ export function MyBlocksPanel() {
           <Button
             type="submit"
             disabled={submitting}
-            className="min-h-11 w-full rounded-full bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
+            className="min-h-11 w-full rounded-xl bg-accent text-accent-ink hover:bg-accent-hover cursor-pointer"
           >
             {submitting && (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -320,6 +324,53 @@ export function MyBlocksPanel() {
             {t.common.save}
           </Button>
         </form>
+      </Modal>
+
+      <Modal
+        open={confirmDeleteBlock !== null}
+        title={t.common.delete}
+        maxWidth="max-w-md"
+        onClose={() => setConfirmDeleteBlock(null)}
+      >
+        {confirmDeleteBlock && (
+          <div className="space-y-4">
+            <p className="text-sm text-ink-secondary">
+              {locale === "es"
+                ? "¿Confirmas la eliminación de este bloqueo de agenda?"
+                : "Confirma a exclusão deste bloqueio de agenda?"}
+            </p>
+            <p className="rounded-xl border border-border-subtle bg-subtle/60 px-3 py-2 font-mono text-xs font-semibold text-ink tabular-nums">
+              {formatDateTimeInTimezone(confirmDeleteBlock.startsAt, timezone, locale)} →{" "}
+              {formatDateTimeInTimezone(confirmDeleteBlock.endsAt, timezone, locale)}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmDeleteBlock(null)}
+                className="min-h-10 rounded-xl cursor-pointer"
+              >
+                {t.common.cancel}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deletingId === confirmDeleteBlock.id}
+                onClick={async () => {
+                  const id = confirmDeleteBlock.id;
+                  await handleDelete(id);
+                  setConfirmDeleteBlock(null);
+                }}
+                className="min-h-10 rounded-xl cursor-pointer"
+              >
+                {deletingId === confirmDeleteBlock.id && (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                )}
+                {t.common.delete}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

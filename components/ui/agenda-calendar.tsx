@@ -104,7 +104,7 @@ export function AgendaMonthGrid({ month, selected, today, company, counts, avail
           ) : count > 0 ? (
             <span
               aria-hidden="true"
-              className={`absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-[#10B981] shadow-xs ${
+              className={`absolute bottom-0.5 h-1.5 w-1.5 rounded-full bg-[var(--status-success)] shadow-xs ${
                 active && !closed ? "ring-1 ring-white dark:ring-neutral-950" : ""
               }`}
             />

@@ -127,8 +127,8 @@ export function AgendaDialog({ title, children, onClose, centered = false, close
         ? "top-1/2 left-1/2 max-h-[90dvh] w-[90vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl"
         : "inset-x-0 bottom-0 max-h-[94dvh] w-full rounded-t-2xl sm:top-1/2 sm:bottom-auto sm:left-1/2 sm:w-[calc(100%-2rem)] sm:max-w-2xl sm:-translate-1/2 sm:rounded-2xl"}`}>
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-subtle px-5 py-4">
-          <Dialog.Title className="text-base font-semibold sm:text-lg">{title}</Dialog.Title>
-          <Dialog.Close aria-label={t.common.close} disabled={closeDisabled} className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-muted hover:bg-subtle hover:text-ink disabled:cursor-not-allowed data-disabled:cursor-not-allowed"><X size={18} /></Dialog.Close>
+          <Dialog.Title className="text-title-sm font-semibold text-ink">{title}</Dialog.Title>
+          <Dialog.Close aria-label={t.common.close} disabled={closeDisabled} className="grid size-9 shrink-0 cursor-pointer place-items-center rounded-xl text-ink-secondary hover:bg-subtle hover:text-ink disabled:cursor-not-allowed data-disabled:cursor-not-allowed"><X size={18} aria-hidden="true" /></Dialog.Close>
         </div>
         <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
       </Dialog.Popup>

@@ -17,7 +17,11 @@ export interface Dictionary {
     team: string; professionalsList: string; schedules: string;
     reports: string; mainReport: string; agendaReport: string; financeReport: string; advancedReports: string;
     settings: string; quickCreate: string; calendarShortcut: string; cnpjOrRif: string;
-    subscribeNow: string; aiCopilot: string; globalSearch: string; bookingLink: string;
+    subscribeNow: string; seePlans: string; aiCopilot: string; globalSearch: string; bookingLink: string;
+    onlineLinkShort: string; usageShort: string;
+    newAppointment: string; blockAgenda: string; newOrder: string; newClient: string; newPayable: string;
+    searchPlaceholder: string; noSearchResults: string;
+    openMenu: string; closeMenu: string;
   };
   common: {
     appName: string;

@@ -1236,14 +1236,14 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="text-xs font-bold text-ink">{entry.clientName}</p>
-                      <p className="font-mono text-[11px] text-ink-muted">{entry.clientPhone}</p>
+                      <p className="font-mono text-xs text-ink-muted">{entry.clientPhone}</p>
                     </div>
                     <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[10px] font-semibold text-accent">
                       {entry.serviceName || "Serviço"}
                     </span>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-secondary">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary">
                     <span>Profissional: {entry.collaboratorName || "Qualquer"}</span>
                     <span>·</span>
                     <span>
@@ -1254,7 +1254,7 @@ export function AgendaWorkspace({ session, renderReceipt }: {
                   </div>
 
                   {entry.notes && (
-                    <p className="rounded-lg bg-subtle p-2 text-[11px] text-ink-secondary">
+                    <p className="rounded-lg bg-subtle p-2 text-xs text-ink-secondary">
                       {entry.notes}
                     </p>
                   )}

@@ -25,7 +25,6 @@ import {
   ShoppingCart,
   TrendingDown,
   TrendingUp,
-  Upload,
   User,
   Wallet,
   X,
@@ -380,11 +379,14 @@ export function FinancePanel() {
   }, [summary]);
 
   function handleExportCsv() {
+    const es = locale === "es";
     if (comandas.length === 0) {
-      toast.error("Nenhuma comanda para exportar.");
+      toast.error(es ? "No hay comandas para exportar." : "Nenhuma comanda para exportar.");
       return;
     }
-    const headers = ["Cliente", "Telefone", "Serviço", "Data/Hora", "Valor Total (R$)", "Valor Pago (R$)", "Saldo Devedor (R$)", "Status"];
+    const headers = es
+      ? ["Cliente", "Teléfono", "Servicio", "Fecha/Hora", `Valor Total (${currency})`, `Valor Pagado (${currency})`, `Saldo Pendiente (${currency})`, "Estado"]
+      : ["Cliente", "Telefone", "Serviço", "Data/Hora", `Valor Total (${currency})`, `Valor Pago (${currency})`, `Saldo Devedor (${currency})`, "Status"];
     const rows = comandas.map((c) => [
       `"${c.clientName.replace(/"/g, '""')}"`,
       `"${c.clientPhone}"`,
@@ -393,7 +395,7 @@ export function FinancePanel() {
       (c.totalInCents / 100).toFixed(2),
       (c.paidInCents / 100).toFixed(2),
       (c.openDebtInCents / 100).toFixed(2),
-      c.hasDebt ? "Em aberto (Fiado)" : c.isClosed ? "Fechada" : "Pendente",
+      c.hasDebt ? (es ? "Pendiente (Fiado)" : "Em aberto (Fiado)") : c.isClosed ? (es ? "Cerrada" : "Fechada") : (es ? "Pendiente" : "Pendente"),
     ]);
     const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -403,12 +405,10 @@ export function FinancePanel() {
     a.download = `comandas-${fromDate}-a-${toDate}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success("CSV de comandas exportado com sucesso!");
+    toast.success(es ? "¡CSV de comandas exportado con éxito!" : "CSV de comandas exportado com sucesso!");
   }
 
-  function handleImportCsv() {
-    toast.info("Importação de CSV: selecione um arquivo de vendas ou extrato bancário para conciliação.");
-  }
+  const es = locale === "es";
 
   return (
     <div className="space-y-6">
@@ -417,12 +417,14 @@ export function FinancePanel() {
       {/* ======================================================== */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-ink flex items-center gap-2">
-            <Receipt className="size-6 text-accent" />
-            Gestão Operacional de Comandas
+          <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-ink flex items-center gap-2 text-balance">
+            <Receipt className="size-6 text-accent" aria-hidden="true" />
+            {es ? "Gestión Operativa de Comandas" : "Gestão Operacional de Comandas"}
           </h2>
           <p className="mt-1 text-xs sm:text-sm text-ink-muted">
-            Registre vendas, controle comandas abertas (fiado) e receba pagamentos no balcão.
+            {es
+              ? "Registra ventas, controla comandas abiertas y recibe pagos en caja."
+              : "Registre vendas, controle comandas abertas (fiado) e receba pagamentos no balcão."}
           </p>
         </div>
 
@@ -432,9 +434,10 @@ export function FinancePanel() {
             onClick={() => void loadData()}
             disabled={loading}
             className="grid size-10 place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink disabled:opacity-50 transition-colors cursor-pointer"
-            title="Atualizar dados"
+            title={es ? "Actualizar datos" : "Atualizar dados"}
+            aria-label={es ? "Actualizar datos" : "Atualizar dados"}
           >
-            <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
+            <RefreshCw size={15} className={loading ? "animate-spin" : ""} aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -442,52 +445,54 @@ export function FinancePanel() {
       {/* Grid de 3 Cards: Caixa (com Nova Venda), Gráfico Diário e Donut de Pagamentos */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Card 1: Caixa com Ação Rápida de Nova Venda */}
-        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs flex flex-col justify-between">
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-[0_1px_3px_0_rgb(15_23_42/0.06),0_1px_2px_-1px_rgb(15_23_42/0.04)] flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide flex items-center gap-1.5">
-                <Wallet className="size-4 text-accent" />
-                Caixa & Faturamento
+                <Wallet className="size-4 text-accent" aria-hidden="true" />
+                {es ? "Caja y Facturación" : "Caixa & Faturamento"}
               </span>
               <button
                 type="button"
                 onClick={() => setNewSaleChoiceOpen(true)}
                 className="inline-flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1 text-xs font-bold text-accent hover:bg-accent/25 transition-colors cursor-pointer"
               >
-                <Plus size={12} />
-                Nova venda
+                <Plus size={12} aria-hidden="true" />
+                {es ? "Nueva venta" : "Nova venda"}
               </button>
             </div>
 
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-2xl sm:text-3xl font-bold text-ink">
+              <span className="font-mono text-2xl sm:text-3xl font-bold text-ink tabular-nums">
                 <SensitiveValue>
                   {formatPriceFromCents(comandasTotals.totalCents, locale, currency)}
                 </SensitiveValue>
               </span>
             </div>
-            <p className="mt-1 text-xs text-ink-muted">
-              {comandas.length} comanda(s) no período selecionado
+            <p className="mt-1 text-xs text-ink-muted tabular-nums">
+              {es
+                ? `${comandas.length} comanda(s) en el período seleccionado`
+                : `${comandas.length} comanda(s) no período selecionado`}
             </p>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2 border-t border-border-subtle/60 pt-3">
-            <div className="rounded-xl bg-emerald-500/10 p-2.5 border border-emerald-500/20">
-              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 block">
-                Total Recebido
+            <div className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] p-2.5">
+              <span className="text-xs font-semibold text-[var(--status-success-ink)] block">
+                {es ? "Total Cobrado" : "Total Recebido"}
               </span>
-              <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+              <span className="font-mono text-sm font-bold text-[var(--status-success-ink)] tabular-nums">
                 <SensitiveValue>
                   {formatPriceFromCents(comandasTotals.paidCents, locale, currency)}
                 </SensitiveValue>
               </span>
             </div>
 
-            <div className="rounded-xl bg-rose-500/10 p-2.5 border border-rose-500/20">
-              <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 block">
-                Saldo Devedor (Fiado)
+            <div className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] p-2.5">
+              <span className="text-xs font-semibold text-[var(--status-danger-ink)] block">
+                {es ? "Saldo Pendiente" : "Saldo Devedor (Fiado)"}
               </span>
-              <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
+              <span className="font-mono text-sm font-bold text-[var(--status-danger-ink)] tabular-nums">
                 <SensitiveValue>
                   {formatPriceFromCents(comandasTotals.debtCents, locale, currency)}
                 </SensitiveValue>
@@ -497,13 +502,13 @@ export function FinancePanel() {
         </div>
 
         {/* Card 2: Mini-Gráfico Diário de Receitas x Despesas */}
-        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs flex flex-col justify-between">
+        <div className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-[0_1px_3px_0_rgb(15_23_42/0.06),0_1px_2px_-1px_rgb(15_23_42/0.04)] flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide">
-                Receitas x Despesas Diárias
+                {es ? "Ingresos vs Gastos Diarios" : "Receitas x Despesas Diárias"}
               </span>
-              <span className="text-[11px] text-ink-muted">Últimos dias</span>
+              <span className="text-xs text-ink-muted">{es ? "Últimos días" : "Últimos dias"}</span>
             </div>
 
             {/* Mini barras do período */}
@@ -633,8 +638,8 @@ export function FinancePanel() {
           </div>
 
           <div className="border-t border-border-subtle/60 pt-2 flex items-center justify-between text-xs">
-            <span className="text-ink-muted text-[11px]">Total no Meio:</span>
-            <span className="font-bold text-ink">
+            <span className="text-ink-muted">{es ? "Total por Método:" : "Total no Meio:"}</span>
+            <span className="font-mono font-bold text-ink tabular-nums">
               <SensitiveValue>
                 {formatPriceFromCents(donutData.total, locale, currency)}
               </SensitiveValue>
@@ -649,49 +654,40 @@ export function FinancePanel() {
       <div className="rounded-2xl border border-border-subtle bg-surface p-4 space-y-4 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-semibold text-ink-secondary">Período:</span>
+            <span className="font-semibold text-ink-secondary">{es ? "Período:" : "Período:"}</span>
             <input
               type="date"
               autoComplete="off"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
+              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 font-mono text-xs text-ink tabular-nums"
             />
-            <span className="text-ink-muted">até</span>
+            <span className="text-ink-muted">{es ? "hasta" : "até"}</span>
             <input
               type="date"
               autoComplete="off"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
-              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 text-xs text-ink"
+              className="rounded-lg border border-border-subtle bg-canvas/40 px-2.5 py-1.5 font-mono text-xs text-ink tabular-nums"
             />
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleImportCsv}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors cursor-pointer"
-            >
-              <Upload size={13} />
-              Importar CSV
-            </button>
-
-            <button
-              type="button"
               onClick={handleExportCsv}
               className="inline-flex items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors cursor-pointer"
             >
-              <Download size={13} />
-              Exportar CSV
+              <Download size={13} aria-hidden="true" />
+              {es ? "Exportar CSV" : "Exportar CSV"}
             </button>
 
             <Link
               href="/owner/finance/orders/new"
               className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-accent-ink hover:bg-accent-hover transition-colors cursor-pointer"
             >
-              <Plus size={13} />
-              + Nova comanda
+              <Plus size={13} aria-hidden="true" />
+              {es ? "Nueva comanda" : "Nova comanda"}
             </Link>
           </div>
         </div>
@@ -704,9 +700,9 @@ export function FinancePanel() {
                 setFromDate(todayIso);
                 setToDate(todayIso);
               }}
-              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
-              Hoje
+              {es ? "Hoy" : "Hoje"}
             </button>
             <button
               type="button"
@@ -714,9 +710,9 @@ export function FinancePanel() {
                 setFromDate(formatIsoInTimezone(new Date(Date.now() - 7 * dayInMs), timezone));
                 setToDate(todayIso);
               }}
-              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
-              7 dias
+              {es ? "7 días" : "7 dias"}
             </button>
             <button
               type="button"
@@ -727,19 +723,23 @@ export function FinancePanel() {
                 setFromDate(formatIsoInTimezone(first, timezone));
                 setToDate(formatIsoInTimezone(last, timezone));
               }}
-              className="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
+              className="cursor-pointer rounded-lg px-2.5 py-1 text-xs font-medium text-ink-secondary hover:text-ink hover:bg-surface transition-colors"
             >
-              Este mês
+              {es ? "Este mes" : "Este mês"}
             </button>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-[1fr_220px] flex-1 max-w-xl">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-muted" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-ink-muted" aria-hidden="true" />
               <input
                 type="text"
                 autoComplete="off"
-                placeholder="Buscar comanda por cliente, telefone ou serviço..."
+                placeholder={
+                  es
+                    ? "Buscar comanda por cliente, teléfono o servicio..."
+                    : "Buscar comanda por cliente, telefone ou serviço..."
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full rounded-xl border border-border-subtle bg-canvas/40 pl-9 pr-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
@@ -752,9 +752,9 @@ export function FinancePanel() {
               onChange={(e) => setStatusFilter(e.target.value as "ALL" | "OPEN_DEBT" | "CLOSED")}
               className="cursor-pointer rounded-xl border border-border-subtle bg-canvas/40 px-3 py-1.5 text-xs text-ink outline-none focus-visible:border-accent"
             >
-              <option value="ALL">Todas as Comandas</option>
-              <option value="OPEN_DEBT">Em aberto / Fiado (Com débito)</option>
-              <option value="CLOSED">Fechadas / Pagas 100%</option>
+              <option value="ALL">{es ? "Todas las Comandas" : "Todas as Comandas"}</option>
+              <option value="OPEN_DEBT">{es ? "Abiertas / Con saldo pendiente" : "Em aberto / Fiado (Com débito)"}</option>
+              <option value="CLOSED">{es ? "Cerradas / Pagadas 100%" : "Fechadas / Pagas 100%"}</option>
             </select>
           </div>
         </div>

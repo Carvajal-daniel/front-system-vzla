@@ -27,10 +27,10 @@ export function OwnerModal({ title, onClose, children, busy = false, wide = fals
   return (
     <dialog ref={dialog} aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
-      className={"fixed inset-0 m-auto max-h-[92dvh] overflow-y-auto rounded-2xl border border-border-strong bg-surface p-4 text-ink shadow-xl [color-scheme:light] backdrop:bg-slate-950/55 sm:p-6 dark:[color-scheme:dark] " +
+      className={"fixed inset-0 m-auto max-h-[92dvh] overflow-y-auto rounded-2xl border border-border-subtle bg-surface p-5 text-ink shadow-2xl [color-scheme:light] backdrop:bg-black/50 sm:p-6 dark:[color-scheme:dark] " +
         (wide ? "w-[min(96vw,72rem)]" : "w-[min(94vw,36rem)]")}>
-      <header className="mb-4 flex items-center justify-between gap-4">
-        <h2 id={titleId} className="text-lg font-semibold sm:text-xl">{title}</h2>
+      <header className="mb-4 flex items-center justify-between gap-4 border-b border-border-subtle/60 pb-3">
+        <h2 id={titleId} className="text-title-sm font-semibold text-ink">{title}</h2>
         <Button type="button" variant="ghost" size="icon-sm" aria-label={t.common.close} disabled={busy} onClick={onClose}>
           <X aria-hidden="true" />
         </Button>

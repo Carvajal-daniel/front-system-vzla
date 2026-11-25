@@ -224,22 +224,35 @@ export default function ClientsPage() {
 
   // Exportação CSV
   const handleExportCsv = () => {
+    const es = locale === "es";
     if (filteredClients.length === 0) {
-      toast.warning("Nenhum cliente para exportar.");
+      toast.warning(es ? "No hay clientes para exportar." : "Nenhum cliente para exportar.");
       return;
     }
 
-    const headers = [
-      "Nome",
-      "Telefone",
-      "Email",
-      "Documento (CPF / C.I.)",
-      "Total de Visitas",
-      "Faltas",
-      "Total Gasto (R$)",
-      "Saldo Devedor (R$)",
-      "Status",
-    ];
+    const headers = es
+      ? [
+          "Nombre",
+          "Teléfono",
+          "Email",
+          "Documento (CPF / C.I.)",
+          "Total de Visitas",
+          "Inasistencias",
+          `Total Gastado (${currency})`,
+          `Saldo Pendiente (${currency})`,
+          "Estado",
+        ]
+      : [
+          "Nome",
+          "Telefone",
+          "Email",
+          "Documento (CPF / C.I.)",
+          "Total de Visitas",
+          "Faltas",
+          `Total Gasto (${currency})`,
+          `Saldo Devedor (${currency})`,
+          "Status",
+        ];
 
     const rows = filteredClients.map((c) => {
       return [
@@ -251,12 +264,12 @@ export default function ClientsPage() {
         c.noShows,
         (c.totalSpentCents / 100).toFixed(2),
         (c.pendingDebtCents / 100).toFixed(2),
-        c.isBlocked ? "Bloqueado" : "Ativo",
+        c.isBlocked ? (es ? "Bloqueado" : "Bloqueado") : (es ? "Activo" : "Ativo"),
       ].join(",");
     });
 
     downloadCsv(`clientes_${getTodayIsoDateInTimezone(timezone)}.csv`, [headers.join(","), ...rows].join("\r\n"));
-    toast.success("Lista de clientes exportada com sucesso!");
+    toast.success(es ? "¡Lista de clientes exportada con éxito!" : "Lista de clientes exportada com sucesso!");
   };
 
   function openClientForm(client?: ClientRecord) {
@@ -324,16 +337,20 @@ export default function ClientsPage() {
     }
     setSavingClient(true);
     try {
-      const id = editingClient?.id ?? getRegistrationClientId(data);
+      let id: string;
+      if (editingClient) {
+        id = editingClient.id;
+        await saveClientDetails(id, data);
+      } else {
+        id = await createClient(data);
+      }
       if (selected.length) {
         await apiRequest(`/companies/me/client-profiles/${encodeURIComponent(id)}`, { method: "PATCH", body: { values: profileValues } });
       }
-      if (editingClient) saveClientDetails(id, data);
-      else createClient(data);
       toast.success(editingClient ? "Cliente atualizado." : "Cliente cadastrado com sucesso!");
       closeClientForm();
-    } catch {
-      toast.error("Não foi possível salvar o cliente.");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Não foi possível salvar o cliente.");
     } finally {
       setSavingClient(false);
     }
@@ -669,8 +686,8 @@ export default function ClientsPage() {
       )}
 
       {importOpen && (
-        <ClientImportDialog existingPhones={existingPhones} loading={loading} onClose={() => setImportOpen(false)} onImport={(rows) => {
-          const count = importClients(rows);
+        <ClientImportDialog existingPhones={existingPhones} loading={loading} onClose={() => setImportOpen(false)} onImport={async (rows) => {
+          const count = await importClients(rows);
           if (count) toast.success(count === 1 ? "1 cliente importado." : `${count} clientes importados.`);
           else toast.info("Nenhum cliente novo para importar.");
           setImportOpen(false);
@@ -740,7 +757,7 @@ function ClientImportDialog({ existingPhones, loading, onClose, onImport }: {
   existingPhones: Set<string>;
   loading: boolean;
   onClose: () => void;
-  onImport: (rows: ClientInput[]) => void;
+  onImport: (rows: ClientInput[]) => void | Promise<void>;
 }) {
   const fileVersion = useRef(0);
   const [csv, setCsv] = useState("");

@@ -5,16 +5,20 @@ import { displayCompanyRating, type OwnerAppearance } from "@/lib/company-settin
 import { CompanyRating } from "@/components/ui/company-rating";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import { useGooglePlace } from "@/lib/use-google-place";
-import { clientRecovery } from "@/lib/client-recovery";
-import { AgendaDialog } from "@/components/ui/agenda-controls";
+import {
+  WHATSAPP_CONNECTION_UPDATED_EVENT,
+  whatsappConnectionApi,
+  type EvolutionConnectionStatus,
+} from "@/lib/whatsapp-connection";
+import { aiCopilotApi, type CopilotHistoryMessage } from "@/lib/whatsapp-intelligence";
 import { Popover } from "@base-ui/react/popover";
 
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { Toaster } from "sonner";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Ban,
@@ -33,6 +37,7 @@ import {
   PanelLeftOpen,
   Plus,
   Receipt,
+  Scissors,
   Search,
   Send,
   Settings,
@@ -58,26 +63,21 @@ import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
 
 const sidebarActive = "bg-transparent text-white";
 const sidebarInactive = "text-slate-300 hover:bg-white/8 hover:text-white";
-const sidebarActiveDot = <span aria-hidden="true" className="ml-auto block h-2 w-2 shrink-0 rounded-full bg-[#00A8C6]" />;
+const sidebarActiveDot = <span aria-hidden="true" className="ml-auto block h-2 w-2 shrink-0 rounded-full bg-accent" />;
 
-function CloudGoLogo() {
+function BrandMark({ appName }: { appName: string }) {
   return (
     <Link
       href="/owner/appointments"
       className="flex items-center gap-2 text-ink group cursor-pointer select-none shrink-0"
-      title="CloudGo - Sistema de Gestão"
+      title={appName}
     >
-      <div className="grid size-8 sm:size-9 place-items-center rounded-xl bg-gradient-to-tr from-accent to-emerald-400 text-accent-ink shadow-xs group-hover:scale-105 transition-transform shrink-0">
-        <Sparkles size={16} className="text-white fill-white" />
+      <div className="grid size-8 sm:size-9 place-items-center rounded-xl bg-accent text-accent-ink shadow-xs transition-colors shrink-0">
+        <Scissors size={16} aria-hidden="true" />
       </div>
-      <div className="flex flex-col">
-        <span className="text-base sm:text-lg font-black tracking-tight leading-none text-ink">
-          Cloud<span className="text-accent">Go</span>
-        </span>
-        <span className="hidden sm:block text-[9px] font-bold uppercase tracking-wider text-ink-muted">
-          SaaS Gestão
-        </span>
-      </div>
+      <span className="text-sm sm:text-base font-bold tracking-tight leading-none text-ink">
+        {appName}
+      </span>
     </Link>
   );
 }
@@ -129,39 +129,39 @@ function QuickCreateDropdown({
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 font-medium text-ink hover:bg-subtle transition-colors"
             >
               <CalendarDays size={14} className="text-accent" />
-              <span>Novo Agendamento</span>
+              <span>{product.newAppointment}</span>
             </Link>
             <Link
               href="/owner/appointments?action=new-block"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 font-medium text-ink hover:bg-subtle transition-colors"
             >
-              <Ban size={14} className="text-rose-500" />
-              <span>Bloquear Agenda</span>
+              <Ban size={14} className="text-[var(--status-danger)]" />
+              <span>{product.blockAgenda}</span>
             </Link>
             <Link
               href="/owner/finance?action=new-sale"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 font-medium text-ink hover:bg-subtle transition-colors"
             >
-              <Receipt size={14} className="text-emerald-500" />
-              <span>Nova Comanda / Venda</span>
+              <Receipt size={14} className="text-[var(--status-success)]" />
+              <span>{product.newOrder}</span>
             </Link>
             <Link
               href="/owner/clients?action=new-client"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 font-medium text-ink hover:bg-subtle transition-colors"
             >
-              <UserPlus size={14} className="text-blue-500" />
-              <span>Novo Cliente</span>
+              <UserPlus size={14} className="text-accent" />
+              <span>{product.newClient}</span>
             </Link>
             <Link
               href="/owner/finance/payables?action=new-payable"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2 rounded-lg px-2.5 py-2 font-medium text-ink hover:bg-subtle transition-colors"
             >
-              <Wallet size={14} className="text-amber-500" />
-              <span>Nova Conta a Pagar</span>
+              <Wallet size={14} className="text-[var(--status-warning)]" />
+              <span>{product.newPayable}</span>
             </Link>
           </div>
         </>
@@ -180,24 +180,38 @@ function GlobalSearchModal({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useLocale();
+  const { product } = t;
   const [query, setQuery] = useState("");
 
   const searchItems = [
-    { label: "Agenda & Calendário", href: "/owner/appointments", category: "Navegação", icon: CalendarDays },
-    { label: "Base de Clientes (CRM)", href: "/owner/clients", category: "Navegação", icon: Users },
-    { label: "Gestão de Comandas", href: "/owner/finance", category: "Navegação", icon: Receipt },
-    { label: "Comissões da Equipe", href: "/owner/finance/commissions", category: "Financeiro", icon: Wallet },
-    { label: "Contas a Pagar / Despesas", href: "/owner/finance/payables", category: "Financeiro", icon: Wallet },
-    { label: "Catálogo de Serviços", href: "/owner/services", category: "Serviços", icon: Wrench },
-    { label: "Categorias de Serviços", href: "/owner/services/categories", category: "Serviços", icon: Wrench },
-    { label: "Pacotes de Serviços", href: "/owner/services/packages", category: "Serviços", icon: Package },
-    { label: "Estoque & Produtos", href: "/owner/inventory", category: "Estoque", icon: Package },
-    { label: "Fornecedores", href: "/owner/inventory/suppliers", category: "Estoque", icon: Package },
-    { label: "Ordens de Compra", href: "/owner/inventory/purchase-orders", category: "Estoque", icon: Package },
-    { label: "Relatório de Faturamento", href: "/owner/reports/finance", category: "Relatórios", icon: ChartNoAxesCombined },
-    { label: "Central do Link de Agendamento", href: "/owner/booking-link", category: "Configurações", icon: Smartphone },
-    { label: "Configurações & Planos", href: "/owner/settings", category: "Configurações", icon: Settings },
+    { label: `${product.agenda} · ${product.calendar}`, href: "/owner/appointments", category: product.agenda, icon: CalendarDays },
+    { label: product.clientBase, href: "/owner/clients", category: product.clients, icon: Users },
+    { label: product.overviewReceipts, href: "/owner/finance", category: product.finance, icon: Receipt },
+    { label: product.commissionsAdvances, href: "/owner/finance/commissions", category: product.finance, icon: Wallet },
+    { label: product.accounts, href: "/owner/finance/payables", category: product.finance, icon: Wallet },
+    { label: product.serviceListing, href: "/owner/services", category: product.services, icon: Wrench },
+    { label: `${product.services} · ${product.categories}`, href: "/owner/services/categories", category: product.services, icon: Wrench },
+    { label: product.packages, href: "/owner/services/packages", category: product.services, icon: Package },
+    { label: product.productListingMovements, href: "/owner/inventory", category: product.productsInventory, icon: Package },
+    { label: product.suppliers, href: "/owner/inventory/suppliers", category: product.productsInventory, icon: Package },
+    { label: product.purchaseOrders, href: "/owner/inventory/purchase-orders", category: product.productsInventory, icon: Package },
+    { label: product.financeReport, href: "/owner/reports/finance", category: product.reports, icon: ChartNoAxesCombined },
+    { label: product.bookingLink, href: "/owner/booking-link", category: product.settings, icon: Smartphone },
+    { label: "WhatsApp · Inbox & Atendimento", href: "/owner/whatsapp", category: product.clients, icon: Smartphone },
+    { label: "WhatsApp · Intelligence & Funil IA", href: "/owner/whatsapp/intelligence", category: product.clients, icon: ChartNoAxesCombined },
+    { label: "WhatsApp · Conexão e IA", href: "/owner/settings/whatsapp", category: product.settings, icon: Smartphone },
+    { label: product.settings, href: "/owner/settings", category: product.settings, icon: Settings },
   ];
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
 
   const filtered = searchItems.filter((item) =>
     item.label.toLowerCase().includes(query.toLowerCase()) ||
@@ -207,26 +221,34 @@ function GlobalSearchModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-20 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="fixed inset-0" onClick={onClose} />
-      <div className="relative w-full max-w-lg rounded-2xl border border-border-strong bg-surface p-4 shadow-2xl z-10 space-y-3">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={product.globalSearch}
+      className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-20 bg-black/50 backdrop-blur-xs"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="relative w-full max-w-lg rounded-2xl border border-border-subtle bg-surface p-4 shadow-2xl z-10 space-y-3">
         <div className="flex items-center gap-2 border-b border-border-subtle pb-3">
           <Search size={18} className="text-ink-muted shrink-0" />
           <input
             autoFocus
             type="text"
-            placeholder="Buscar páginas, clientes, comandas, relatórios..."
+            placeholder={product.searchPlaceholder}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full bg-transparent text-sm text-ink placeholder:text-ink-muted outline-none"
           />
-          <kbd className="hidden sm:inline-flex rounded border border-border-subtle bg-surface-subtle px-1.5 py-0.5 text-[10px] text-ink-muted font-mono">
+          <kbd className="hidden sm:inline-flex rounded border border-border-subtle bg-subtle px-1.5 py-0.5 text-[10px] text-ink-muted font-mono">
             ESC
           </kbd>
           <button
             type="button"
             onClick={onClose}
-            className="grid size-7 place-items-center rounded-lg text-ink-secondary hover:bg-surface-hover hover:text-ink cursor-pointer"
+            aria-label={t.common.close}
+            className="grid size-7 place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink cursor-pointer"
           >
             <X size={16} />
           </button>
@@ -241,10 +263,10 @@ function GlobalSearchModal({
                   key={item.href}
                   href={item.href}
                   onClick={onClose}
-                  className="flex items-center justify-between rounded-xl p-2.5 hover:bg-surface-hover transition-colors text-xs text-ink"
+                  className="flex items-center justify-between rounded-xl p-2.5 hover:bg-subtle transition-colors text-xs text-ink"
                 >
                   <div className="flex items-center gap-2.5">
-                    <span className="grid size-7 place-items-center rounded-lg bg-surface-subtle text-accent">
+                    <span className="grid size-7 place-items-center rounded-lg bg-subtle text-accent">
                       <Icon size={14} />
                     </span>
                     <span className="font-semibold">{item.label}</span>
@@ -257,7 +279,7 @@ function GlobalSearchModal({
             })
           ) : (
             <p className="py-8 text-center text-xs text-ink-muted">
-              Nenhum resultado encontrado para &quot;{query}&quot;.
+              {product.noSearchResults} &quot;{query}&quot;.
             </p>
           )}
         </div>
@@ -267,7 +289,7 @@ function GlobalSearchModal({
 }
 
 // ==========================================
-// DRAWER DO COPILOTO IA
+// DRAWER DO COPILOTO IA (CONECTADO À API REAL)
 // ==========================================
 function AiCopilotDrawer({
   open,
@@ -276,55 +298,103 @@ function AiCopilotDrawer({
   open: boolean;
   onClose: () => void;
 }) {
-  const [messages, setMessages] = useState<Array<{ sender: "user" | "bot"; text: string }>>([
+  const { locale } = useLocale();
+  const es = locale === "es";
+
+  const [messages, setMessages] = useState<
+    Array<{ sender: "user" | "bot"; text: string; provider?: string }>
+  >([
     {
       sender: "bot",
-      text: "Olá! Sou seu Copiloto IA. Posso analisar seus agendamentos, comandas abertas, retenção de clientes e dar recomendações práticas para impulsionar seu salão ou barbearia. Como posso ajudar?",
+      text: es
+        ? "¡Hola! Soy tu Copiloto IA de Gestión. Analizo tus ingresos, citas, comandas abiertas, comisiones pendientes, clientes inactivos y embudo de WhatsApp en tiempo real. ¿Cómo puedo ayudarte?"
+        : "Olá! Sou seu Copiloto IA de Gestão. Analiso seu faturamento, agendamentos, comandas abertas, comissões pendentes, clientes inativos e funil do WhatsApp em tempo real. Como posso ajudar?",
     },
   ]);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
+  const endRef = useRef<HTMLDivElement | null>(null);
 
-  const suggestedQuestions = [
-    "Quais serviços têm maior lucratividade?",
-    "Quantos clientes estão inadimplentes (com fiado)?",
-    "Como reduzir faltas e no-shows esta semana?",
-    "Dicas para fidelizar clientes que não voltam há 45 dias?",
-  ];
+  const suggestedQuestions = es
+    ? [
+        "¿Cómo está mi facturación y comandas abiertas hoy?",
+        "¿Cuál es la tasa de conversión y objeciones de WhatsApp?",
+        "¿Cuántas citas tengo hoy y cómo va el mes?",
+        "¿Cuántos clientes inactivos puedo recuperar este mes?",
+      ]
+    : [
+        "Como está meu faturamento e comandas abertas hoje?",
+        "Qual a taxa de conversão e principais objeções do WhatsApp?",
+        "Quantos agendamentos tenho hoje e como está o mês?",
+        "Quantos clientes inativos posso recuperar este mês?",
+      ];
 
-  function handleSend(textToSend?: string) {
-    const q = (textToSend || input).trim();
-    if (!q) return;
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (open) {
+      endRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length, open, thinking]);
+
+  async function handleSend(textToSend?: string) {
+    const q = (textToSend ?? input).trim();
+    if (!q || thinking) return;
+
+    const historyPayload: CopilotHistoryMessage[] = messages
+      .slice(-10)
+      .map((item) => ({
+        role: item.sender === "user" ? "user" : "assistant",
+        content: item.text,
+      }));
 
     setMessages((prev) => [...prev, { sender: "user", text: q }]);
     setInput("");
     setThinking(true);
 
-    setTimeout(() => {
-      let answer = "";
-      const lower = q.toLowerCase();
-
-      if (lower.includes("lucratividade") || lower.includes("serviços")) {
-        answer = "Com base no histórico operacional, serviços combinados (ex: Corte + Barba ou Química + Escova) apresentam maior margem e ticket médio ~40% superior. Recomendamos incentivar a venda cruzada de pacotes e a adição de produtos no checkout da comanda.";
-      } else if (lower.includes("inadimplentes") || lower.includes("fiado") || lower.includes("débito")) {
-        answer = "Identificamos comandas com saldo em aberto no financeiro. Para conter o fiado, você pode enviar lembretes rápidos via WhatsApp diretamente pela ficha do cliente em 'Clientes > Débitos' ou exigir sinal online de 30% a 50% para novos agendamentos.";
-      } else if (lower.includes("falta") || lower.includes("no-show")) {
-        answer = "A principal causa de no-show é o esquecimento. Seus agendamentos já contam com a trava de lembrete com 6 horas de antecedência. Adicionalmente, ative a cobrança de taxa de reserva antecipada pelo link de agendamento online.";
-      } else {
-        answer = "Excelente pergunta estratégica. Analisando as operações e métricas do seu negócio, recomendamos focar na fidelização ativa: premiar clientes fiéis via pontos de fidelidade e aplicar campanhas no WhatsApp para reativação dos clientes com mais de 30 dias sem visita.";
-      }
-
-      setMessages((prev) => [...prev, { sender: "bot", text: answer }]);
+    try {
+      const response = await aiCopilotApi.chat(q, historyPayload);
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "bot",
+          text: response.reply,
+          provider: response.provider,
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          sender: "bot",
+          text: es
+            ? "No pude consultar tus métricas en este momento. Intenta nuevamente en unos segundos."
+            : "Não consegui consultar os indicadores agora. Tente novamente em alguns instantes.",
+        },
+      ]);
+    } finally {
       setThinking(false);
-    }, 600);
+    }
   }
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={es ? "Copiloto IA del Negocio" : "Copiloto IA do Negócio"}
+      className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
+    >
       <div className="fixed inset-0" onClick={onClose} />
-      <div className="relative flex h-full w-full max-w-md flex-col border-l border-border-strong bg-surface shadow-2xl z-10 animate-in slide-in-from-right duration-200">
+      <div className="relative z-10 flex h-full w-full max-w-md flex-col border-l border-border-strong bg-surface shadow-2xl animate-in slide-in-from-right duration-200">
         {/* Header do Copiloto */}
         <div className="flex items-center justify-between border-b border-border-subtle p-4">
           <div className="flex items-center gap-2.5">
@@ -333,18 +403,25 @@ function AiCopilotDrawer({
             </span>
             <div>
               <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-bold text-ink">Copiloto IA do Negócio</h3>
+                <h3 className="text-sm font-bold text-ink">
+                  {es ? "Copiloto IA del Negocio" : "Copiloto IA do Negócio"}
+                </h3>
                 <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold text-accent">
-                  Beta
+                  IA
                 </span>
               </div>
-              <p className="text-[11px] text-ink-muted">Insights operacionais e inteligência</p>
+              <p className="text-[11px] text-ink-muted">
+                {es
+                  ? "Datos reales de finanzas, agenda y WhatsApp"
+                  : "Dados reais de financeiro, agenda e WhatsApp"}
+              </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-surface-hover hover:text-ink cursor-pointer"
+            aria-label={es ? "Cerrar" : "Fechar"}
+            className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink cursor-pointer"
           >
             <X size={16} />
           </button>
@@ -358,10 +435,10 @@ function AiCopilotDrawer({
               className={`flex ${m.sender === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[85%] rounded-2xl p-3 shadow-xs leading-relaxed ${
+                className={`max-w-[88%] whitespace-pre-wrap rounded-2xl p-3 shadow-xs leading-relaxed ${
                   m.sender === "user"
                     ? "bg-accent text-accent-ink rounded-tr-xs font-medium"
-                    : "border border-border-subtle bg-surface-subtle text-ink rounded-tl-xs"
+                    : "border border-border-subtle bg-subtle/60 text-ink rounded-tl-xs"
                 }`}
               >
                 {m.text}
@@ -371,61 +448,75 @@ function AiCopilotDrawer({
 
           {thinking && (
             <div className="flex justify-start">
-              <div className="rounded-2xl border border-border-subtle bg-surface-subtle p-3 text-ink-muted flex items-center gap-2">
+              <div className="flex items-center gap-2 rounded-2xl border border-border-subtle bg-subtle/60 p-3 text-ink-muted">
                 <Sparkles size={14} className="animate-spin text-accent" />
-                <span>Analisando indicadores do negócio...</span>
+                <span>
+                  {es
+                    ? "Analizando indicadores reales del negocio..."
+                    : "Analisando indicadores reais do negócio..."}
+                </span>
               </div>
             </div>
           )}
 
           {/* Sugestões rápidas */}
-          {messages.length <= 2 && (
+          {messages.length <= 2 && !thinking && (
             <div className="pt-2">
-              <span className="text-[11px] font-semibold text-ink-muted uppercase tracking-wider block mb-2">
-                Perguntas Frequentes
+              <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
+                {es ? "Preguntas rápidas" : "Perguntas Rápidas"}
               </span>
               <div className="space-y-1.5">
                 {suggestedQuestions.map((q, i) => (
                   <button
                     key={i}
                     type="button"
-                    onClick={() => handleSend(q)}
-                    className="w-full text-left rounded-xl border border-border-subtle bg-surface hover:bg-surface-hover p-2.5 text-xs text-ink transition-colors cursor-pointer flex items-center justify-between group"
+                    onClick={() => void handleSend(q)}
+                    className="group flex w-full cursor-pointer items-center justify-between rounded-xl border border-border-subtle bg-surface p-2.5 text-left text-xs text-ink transition-colors hover:border-accent hover:bg-subtle"
                   >
                     <span>{q}</span>
-                    <ArrowRight size={12} className="text-ink-muted group-hover:text-accent transition-colors" />
+                    <ArrowRight
+                      size={12}
+                      className="shrink-0 text-ink-muted transition-colors group-hover:text-accent"
+                    />
                   </button>
                 ))}
               </div>
             </div>
           )}
+          <div ref={endRef} />
         </div>
 
-        {/* Campo de envio */}
-        <div className="border-t border-border-subtle p-3">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSend();
-            }}
-            className="flex items-center gap-2"
-          >
+        {/* Input */}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSend();
+          }}
+          className="border-t border-border-subtle p-3"
+        >
+          <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder="Pergunte sobre seus dados ou peça dicas..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              className="flex-1 rounded-xl border border-border-subtle bg-surface-subtle px-3 py-2 text-xs text-ink placeholder:text-ink-muted outline-none focus-visible:border-accent"
+              disabled={thinking}
+              placeholder={
+                es
+                  ? "Pregunta sobre ingresos, agenda o WhatsApp..."
+                  : "Pergunte sobre faturamento, agenda ou WhatsApp..."
+              }
+              className="h-10 flex-1 rounded-xl border border-border-subtle bg-canvas/60 px-3 text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
             />
             <button
               type="submit"
-              disabled={!input.trim() || thinking}
-              className="grid size-9 place-items-center rounded-xl bg-accent text-accent-ink hover:bg-accent-hover disabled:opacity-50 transition-colors cursor-pointer"
+              disabled={thinking || !input.trim()}
+              aria-label={es ? "Enviar" : "Enviar"}
+              className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent text-accent-ink transition-colors hover:bg-accent-hover disabled:opacity-50 cursor-pointer"
             >
-              <Send size={14} />
+              <Send size={15} />
             </button>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -440,6 +531,7 @@ function getInitials(name: string): string {
 
 export function OwnerShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const reducedMotion = useReducedMotion();
   const { t, locale, setLocale } = useLocale();
   const { mode, palette, setMode, setPalette } = useTheme();
   const { session, logout } = useSession();
@@ -485,39 +577,54 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const isTrial = currentPlan === "TRIAL";
   const { product } = t;
   const [activeGroup, setActiveGroup] = useState<string | null>("agenda");
-  const [copilotOpen, setCopilotOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [flyout, setFlyout] = useState<{ group: string; pathname: string } | null>(null);
-  const [whatsappOpen, setWhatsappOpen] = useState(false);
-  const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(null);
+  const [whatsappState, setWhatsappState] = useState<EvolutionConnectionStatus | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(true);
   const [whatsappRefresh, setWhatsappRefresh] = useState(0);
   const isAgendaPage = pathname === "/owner/appointments";
-  const whatsappStatus = whatsappLoading ? t.common.loading : whatsappConnected === null
-    ? (locale === "es" ? "Estado no disponible" : "Status indisponível")
-    : whatsappConnected ? product.whatsappConnected : product.whatsappDisconnected;
+  const whatsappConnected = whatsappState === "CONNECTED";
+  const whatsappPending = whatsappState === "QRCODE_PENDING";
+  const whatsappStatus = whatsappLoading
+    ? t.common.loading
+    : whatsappState === null
+      ? (locale === "es" ? "Estado no disponible" : "Status indisponível")
+      : whatsappConnected
+        ? product.whatsappConnected
+        : whatsappPending
+          ? (locale === "es" ? "Esperando QR Code" : "Aguardando QR Code")
+          : product.whatsappDisconnected;
 
   useEffect(() => {
     const request = new AbortController();
-    void clientRecovery.connection(request.signal)
-      .then(({ connected }) => { if (!request.signal.aborted) setWhatsappConnected(connected); })
-      .catch(() => { if (!request.signal.aborted) setWhatsappConnected(null); })
-      .finally(() => { if (!request.signal.aborted) setWhatsappLoading(false); });
+    void whatsappConnectionApi.get(request.signal)
+      .then((connection) => {
+        if (!request.signal.aborted) setWhatsappState(connection.evolution.status);
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setWhatsappState(null);
+      })
+      .finally(() => {
+        if (!request.signal.aborted) setWhatsappLoading(false);
+      });
     return () => request.abort();
   }, [session.company.id, whatsappRefresh]);
 
-  function openWhatsapp() {
-    setMobileMenuOpen(false);
-    setFlyout(null);
-    setWhatsappOpen(true);
-    setWhatsappLoading(true);
-    setWhatsappRefresh((value) => value + 1);
-  }
+  useEffect(() => {
+    const handleConnectionUpdated = () => {
+      setWhatsappRefresh((value) => value + 1);
+    };
+    window.addEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, handleConnectionUpdated);
+    return () => {
+      window.removeEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, handleConnectionUpdated);
+    };
+  }, []);
 
   const whatsappIcon = <span className="relative grid size-9 shrink-0 place-items-center rounded-full bg-[#25D366] text-[#0F172A]">
     <WhatsAppIcon className="size-[18px]" />
-    <span aria-hidden="true" className={`absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-[#0F172A] ${whatsappLoading || whatsappConnected === null ? "bg-slate-400" : whatsappConnected ? "bg-emerald-400" : "bg-red-500"}`} />
+    <span aria-hidden="true" className={`absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-[#0F172A] ${whatsappLoading || whatsappState === null ? "bg-slate-400" : whatsappConnected ? "bg-emerald-400" : whatsappPending ? "bg-amber-400" : "bg-red-500"}`} />
   </span>;
 
   useEffect(() => {
@@ -552,7 +659,9 @@ export function OwnerShell({ children }: { children: ReactNode }) {
     ] },
     { key: "clients", label: product.clients, icon: Users, items: [
       { href: "/owner/clients", label: product.clientBase },
-      { href: "/owner/clients/churn", label: "Recuperar Clientes" },
+      { href: "/owner/whatsapp", label: locale === "es" ? "Inbox WhatsApp" : "Inbox WhatsApp" },
+      { href: "/owner/whatsapp/intelligence", label: "WhatsApp Intelligence" },
+      { href: "/owner/clients/churn", label: product.inactiveClients },
       { href: "/owner/clients/birthdays", label: product.birthdays },
       { href: "/owner/clients/returns", label: product.returns },
       { href: "/owner/clients/loyalty", label: product.loyalty },
@@ -569,13 +678,12 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       { href: "/owner/inventory/purchase-orders", label: product.purchaseOrders },
     ] },
     { key: "team", label: product.team, icon: Users, items: [
-      { href: "/owner/team", label: product.professionalsList }, { label: product.schedules },
+      { href: "/owner/team", label: product.professionalsList },
     ] },
     { key: "reports", label: product.reports, icon: ChartNoAxesCombined, items: [
       { href: "/owner/reports", label: product.mainReport },
       { href: "/owner/reports/agenda", label: product.agendaReport },
       { href: "/owner/reports/finance", label: product.financeReport },
-      { label: product.advancedReports },
     ] },
   ];
   const navItems = [
@@ -608,6 +716,10 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             (p) => pathname.startsWith(p),
           ))
       );
+    }
+    // Garante que a Inbox do WhatsApp não fique ativa na sub-rota /intelligence
+    if (href === "/owner/whatsapp") {
+      return pathname === "/owner/whatsapp";
     }
     // Garante que o relatório principal não permaneça ativo em sub-rotas como /owner/reports/agenda
     if (href === "/owner/reports") {
@@ -658,8 +770,8 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
-              aria-label="Abrir menu lateral"
-              title="Abrir menu lateral"
+              aria-label={product.openMenu}
+              title={product.openMenu}
               className="flex lg:hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink hover:border-accent transition-colors cursor-pointer"
             >
               <Menu className="h-4 w-4" aria-hidden="true" />
@@ -680,8 +792,8 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               )}
             </button>
 
-            {/* Logo e Nome do Sistema CloudGo */}
-            <CloudGoLogo />
+            {/* Logo e Nome do Sistema */}
+            <BrandMark appName={t.common.appName} />
 
             {/* Atalhos Rápidos na Topbar (Tablet e Desktop >= md) */}
             <div className="hidden md:flex items-center gap-1.5 border-l border-border-subtle/80 pl-2.5 shrink-0">
@@ -702,9 +814,18 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             </div>
           </div>
 
-          {/* Direita Mobile (< md): apenas 4 botões compactos bem espaçados */}
+          {/* Direita Mobile (< md): controles compactos bem espaçados */}
           <div className="flex md:hidden items-center gap-1.5 shrink-0">
             <QuickCreateDropdown product={product} compact align="right" />
+            <button
+              type="button"
+              onClick={() => setCopilotOpen(true)}
+              aria-label={locale === "es" ? "Copiloto IA" : "Copiloto IA"}
+              title={locale === "es" ? "Copiloto IA" : "Copiloto IA"}
+              className="grid size-9 place-items-center rounded-xl border border-accent/40 bg-accent/12 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
+            >
+              <Bot size={16} />
+            </button>
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
@@ -715,47 +836,41 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               <Search size={16} />
             </button>
             <NotificationsBell />
-            <button
-              type="button"
-              onClick={() => setCopilotOpen(true)}
-              aria-label={product.aiCopilot ?? "Copiloto IA"}
-              title={product.aiCopilot ?? "Copiloto IA"}
-              className="grid size-9 place-items-center rounded-xl border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
-            >
-              <Bot size={16} />
-            </button>
           </div>
 
           {/* Direita Tablet & Desktop (>= md): sem Tema, Paleta ou Idioma (movidos para Configurações) */}
           <div className="hidden md:flex items-center gap-1.5 shrink-0">
-            {/* 1) Botão pílula ciano vibrante Assine Agora (exibido apenas no Free Trial e somente em desktop >= lg para não duplicar no iPad/tablet) */}
+            {/* 1) Botão pílula Assine Agora (exibido apenas no Free Trial em desktop >= lg) */}
             {isTrial && (
               <Link
                 href="/owner/settings"
-                className="hidden lg:inline-flex items-center gap-2 rounded-full bg-[#00A8C6] hover:bg-[#0092AD] px-3.5 py-1 transition-all shadow-xs cursor-pointer shrink-0"
+                className="hidden lg:inline-flex items-center gap-2 rounded-full bg-accent hover:bg-accent-hover px-3.5 py-1 transition-all shadow-xs cursor-pointer shrink-0"
                 title="Conheça os Planos e faça upgrade"
               >
-                <Crown size={15} className="text-[#FFD43B] fill-[#FFD43B] shrink-0" />
+                <Crown size={15} className="text-amber-300 fill-amber-300 shrink-0" />
                 <span className="flex flex-col text-left leading-tight">
-                  <span className="text-white font-bold text-xs leading-tight whitespace-nowrap">
-                    {product.subscribeNow ?? "Assine Agora"}
+                  <span className="text-accent-ink font-bold text-xs leading-tight whitespace-nowrap">
+                    {product.subscribeNow}
                   </span>
-                  <span className="text-white/90 font-medium text-[10px] leading-tight whitespace-nowrap">
-                    Conheça os Planos
+                  <span className="text-accent-ink/85 font-medium text-[10px] leading-tight whitespace-nowrap">
+                    {product.seePlans}
                   </span>
                 </span>
               </Link>
             )}
 
-            {/* 2) Botão de ícone Copiloto IA (Bot) */}
+            {/* 2) Botão do Copiloto IA de Gestão */}
             <button
               type="button"
               onClick={() => setCopilotOpen(true)}
-              aria-label={product.aiCopilot ?? "Copiloto IA"}
-              title={product.aiCopilot ?? "Copiloto IA"}
-              className="grid size-9 lg:size-10 shrink-0 place-items-center rounded-xl border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 transition-colors cursor-pointer"
+              aria-label={locale === "es" ? "Copiloto IA del Negocio" : "Copiloto IA do Negócio"}
+              title={locale === "es" ? "Copiloto IA del Negocio" : "Copiloto IA do Negócio"}
+              className="inline-flex h-9 lg:h-10 shrink-0 items-center gap-1.5 rounded-xl border border-accent/35 bg-accent/12 px-2.5 lg:px-3 text-xs font-semibold text-accent hover:bg-accent/20 transition-colors cursor-pointer"
             >
               <Bot size={16} />
+              <span className="hidden xl:inline whitespace-nowrap">
+                {locale === "es" ? "Copiloto IA" : "Copiloto IA"}
+              </span>
             </button>
 
             {/* 3) Botão de ícone Busca Global (Search - abre modal Ctrl+K) */}
@@ -808,8 +923,8 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             className="fixed inset-0 bg-black/60 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
           />
-          <aside className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-slate-800 bg-[#0F172A] text-slate-100 shadow-2xl animate-in slide-in-from-left duration-200 [&_a]:cursor-pointer [&_button]:cursor-pointer">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3.5">
+          <aside className="owner-sidebar relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-[var(--border-subtle)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] shadow-2xl animate-in slide-in-from-left duration-200 [&_a]:cursor-pointer [&_button]:cursor-pointer">
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--border-subtle)] px-4 py-3.5">
               <div className="flex items-center gap-2.5 min-w-0">
                 <CompanyAvatar url={session.company.avatarUrl ?? session.avatarUrl} />
                 <div className="min-w-0">
@@ -826,7 +941,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                aria-label="Fechar menu"
+                aria-label={product.closeMenu}
                 className={`grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg ${sidebarInactive}`}
               >
                 <X size={16} />
@@ -834,32 +949,42 @@ export function OwnerShell({ children }: { children: ReactNode }) {
             </div>
 
             {/* Card WhatsApp no Drawer Mobile */}
-            <button
-              type="button" onClick={openWhatsapp}
-              className="mx-3 mt-3 flex w-[calc(100%-1.5rem)] cursor-pointer items-center gap-3 rounded-xl border border-slate-800 bg-white/5 p-3 text-left hover:bg-white/10 transition-colors"
+            <Link
+              href="/owner/settings/whatsapp"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setFlyout(null);
+              }}
+              className={`mx-3 mt-3 flex w-[calc(100%-1.5rem)] cursor-pointer items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                pathname === "/owner/settings/whatsapp"
+                  ? "border-emerald-500/40 bg-emerald-500/10"
+                  : "border-[var(--border-subtle)] bg-white/5 hover:bg-white/10"
+              }`}
             >
               {whatsappIcon}
               <span className="min-w-0">
                 <span className="block text-sm font-bold tracking-tight">WhatsApp</span>
-                <span className="block text-xs font-medium text-slate-300">{whatsappStatus}</span>
+                <span className={`block text-xs font-medium ${whatsappConnected ? "text-emerald-400" : "text-slate-300"}`}>
+                  {whatsappStatus}
+                </span>
               </span>
-            </button>
+            </Link>
 
             {/* Ações de Plano, Link de Agendamento, Consumo e Privacidade no Mobile */}
-            <div className="mx-3 mt-3 space-y-2 border-b border-slate-800 pb-3">
+            <div className="mx-3 mt-3 space-y-2 border-b border-[var(--border-subtle)] pb-3">
               {isTrial && (
                 <Link
                   href="/owner/settings"
                   onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center gap-2.5 rounded-full bg-[#00A8C6] hover:bg-[#0092AD] px-3.5 py-2 transition-colors shadow-xs"
+                  className="flex items-center gap-2.5 rounded-full bg-accent hover:bg-accent-hover px-3.5 py-2 transition-colors shadow-xs"
                 >
-                  <Crown size={15} className="text-[#FFD43B] fill-[#FFD43B] shrink-0" />
+                  <Crown size={15} className="text-amber-300 fill-amber-300 shrink-0" />
                   <span className="flex flex-col leading-tight">
-                    <span className="text-white font-bold text-xs leading-tight">
-                      {product.subscribeNow ?? "Assine Agora"}
+                    <span className="text-accent-ink font-bold text-xs leading-tight">
+                      {product.subscribeNow}
                     </span>
-                    <span className="text-white/90 font-medium text-[10px] leading-tight">
-                      Conheça os Planos
+                    <span className="text-accent-ink/85 font-medium text-[10px] leading-tight">
+                      {product.seePlans}
                     </span>
                   </span>
                 </Link>
@@ -871,16 +996,16 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-2 text-xs font-medium text-slate-200 hover:bg-white/10"
                 >
-                  <Smartphone size={14} className="text-[#00A8C6] shrink-0" />
-                  <span className="truncate">Link Online</span>
+                  <Smartphone size={14} className="text-accent shrink-0" />
+                  <span className="truncate">{product.onlineLinkShort}</span>
                 </Link>
                 <Link
                   href="/owner/settings"
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-2 text-xs font-medium text-slate-200 hover:bg-white/10"
                 >
-                  <Gauge size={14} className="text-[#00A8C6] shrink-0" />
-                  <span className="truncate">Consumo</span>
+                  <Gauge size={14} className="text-accent shrink-0" />
+                  <span className="truncate">{product.usageShort}</span>
                 </Link>
               </div>
 
@@ -985,8 +1110,8 @@ export function OwnerShell({ children }: { children: ReactNode }) {
         <motion.aside
           initial={false}
           animate={{ width: collapsed ? 76 : 232 }}
-          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-          className="hidden overflow-hidden border-r border-slate-800 bg-[#0F172A] text-slate-100 lg:fixed lg:top-[57px] lg:bottom-0 lg:z-30 lg:flex lg:flex-col [&_a]:cursor-pointer [&_button]:cursor-pointer"
+          transition={{ duration: reducedMotion ? 0 : 0.25, ease: [0.23, 1, 0.32, 1] }}
+          className="owner-sidebar hidden overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--surface-elevated)] text-[var(--ink-primary)] lg:fixed lg:top-[57px] lg:bottom-0 lg:z-30 lg:flex lg:flex-col [&_a]:cursor-pointer [&_button]:cursor-pointer"
         >
           {/* Topo da Sidebar: Nome da Empresa e Fuso Horário */}
           <div
@@ -1011,15 +1136,25 @@ export function OwnerShell({ children }: { children: ReactNode }) {
           </div>
 
           {/* Card Oficial do WhatsApp na Sidebar */}
-          <button type="button" onClick={openWhatsapp}
-            aria-label={`WhatsApp · ${whatsappStatus}`} title={collapsed ? `WhatsApp · ${whatsappStatus}` : undefined}
-            className={`mx-2.5 mt-2.5 flex cursor-pointer items-center rounded-xl border border-slate-800 bg-white/5 text-left transition-colors hover:bg-white/10 ${collapsed ? "justify-center py-2" : "gap-2.5 p-2.5"}`}>
+          <Link
+            href="/owner/settings/whatsapp"
+            onClick={() => setFlyout(null)}
+            aria-label={`WhatsApp · ${whatsappStatus}`}
+            title={collapsed ? `WhatsApp · ${whatsappStatus}` : undefined}
+            className={`mx-2.5 mt-2.5 flex cursor-pointer items-center rounded-xl border text-left transition-colors ${
+              pathname === "/owner/settings/whatsapp"
+                ? "border-emerald-500/40 bg-emerald-500/10"
+                : "border-slate-800 bg-white/5 hover:bg-white/10"
+            } ${collapsed ? "justify-center py-2" : "gap-2.5 p-2.5"}`}
+          >
             {whatsappIcon}
             {!collapsed && <span className="min-w-0">
               <span className="block text-sm font-bold">WhatsApp</span>
-              <span className="block text-xs font-medium text-slate-300">{whatsappStatus}</span>
+              <span className={`block text-xs font-medium ${whatsappConnected ? "text-emerald-400" : "text-slate-300"}`}>
+                {whatsappStatus}
+              </span>
             </span>}
-          </button>
+          </Link>
 
           {/* Navegação da Sidebar com Acordeão Único */}
           <nav
@@ -1053,7 +1188,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
                   </Popover.Trigger>
                   <Popover.Portal>
                     <Popover.Positioner side="right" align="start" sideOffset={14} className="z-50">
-                      <Popover.Popup className="max-h-[var(--available-height)] w-60 overflow-y-auto rounded-xl bg-[#0F172A] p-2 text-slate-100 shadow-lg outline-none">
+                      <Popover.Popup className="owner-sidebar max-h-[var(--available-height)] w-60 overflow-y-auto rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-elevated)] p-2 text-[var(--ink-primary)] shadow-lg outline-none">
                         <Popover.Title className="px-2.5 py-2 text-sm font-bold">{group.label}</Popover.Title>
                         {items}
                       </Popover.Popup>
@@ -1155,25 +1290,10 @@ export function OwnerShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      {whatsappOpen && <AgendaDialog centered title="WhatsApp" onClose={() => setWhatsappOpen(false)}>
-        <div className="space-y-3">
-          <p role="status" className="text-sm font-semibold">{whatsappStatus}</p>
-          {!whatsappLoading && whatsappConnected === false && <p className="text-sm text-ink-secondary">
-            {locale === "es" ? "Vincula la cuenta en el proveedor de WhatsApp y actualiza el estado." : "Vincule a conta no provedor de WhatsApp e atualize o status."}
-          </p>}
-          <button type="button" disabled={whatsappLoading} onClick={() => {
-            setWhatsappLoading(true);
-            setWhatsappRefresh((value) => value + 1);
-          }} className="min-h-10 cursor-pointer rounded-xl border border-border-subtle px-4 text-sm font-semibold hover:bg-subtle disabled:cursor-not-allowed">
-            {locale === "es" ? "Actualizar estado" : "Atualizar status"}
-          </button>
-        </div>
-      </AgendaDialog>}
-
       {/* Bottom Bar Mobile (5 atalhos principais sem corte de texto) */}
       <nav
         aria-label="Navegação móvel"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-[#263149] bg-[#131B2E]/95 text-slate-100 backdrop-blur-md lg:hidden shadow-lg"
+        className="owner-sidebar fixed inset-x-0 bottom-0 z-40 border-t border-[var(--border-subtle)] bg-[var(--surface-elevated)]/95 text-[var(--ink-primary)] backdrop-blur-md lg:hidden shadow-lg"
       >
         <div className="grid grid-cols-5 max-w-lg mx-auto">
           {mobileItems.map((item) => {
@@ -1200,8 +1320,10 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       {/* Toaster sincronizado com o tema claro/escuro do shell */}
       <Toaster theme={mode} richColors position="bottom-right" />
 
-      {/* Modal de Busca Global e Drawer do Copiloto IA */}
+      {/* Modal de Busca Global */}
       <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+      {/* Drawer do Copiloto IA Real */}
       <AiCopilotDrawer open={copilotOpen} onClose={() => setCopilotOpen(false)} />
     </div>
   );

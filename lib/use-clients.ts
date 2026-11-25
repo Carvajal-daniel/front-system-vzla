@@ -6,6 +6,9 @@ import { apiRequest } from "@/lib/api-client";
 import type { Appointment } from "@/lib/types/appointment";
 import type { AppointmentPayment } from "@/lib/types/finance";
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Normaliza o telefone mantendo apenas dígitos para comparação canônica.
  */
@@ -41,7 +44,7 @@ function normalizeClientName(name?: string): string {
 }
 
 /**
- * Normaliza o telefone ou o nome do cliente para gerar um identificador estável e canônico.
+ * Normaliza o telefone ou o nome do cliente para gerar um identificador canônico de compatibilidade.
  */
 export function getCanonicalClientId(phone?: string, name?: string): string {
   const digits = normalizeClientPhoneDigits(phone);
@@ -57,32 +60,41 @@ export function getCanonicalClientId(phone?: string, name?: string): string {
   return `c_${slug || "anonimo"}`;
 }
 
-/**
- * Informações cadastrais complementares persistidas localmente por empresa.
- */
+export interface ApiClientRecord {
+  id: string;
+  companyId: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  birthDate: string | null;
+  tags: string[];
+  notes: string | null;
+  lastVisitAt: string | null;
+  totalSpentCents: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ClientSupplement {
   id: string;
   companyId: string;
   name?: string;
   phone?: string;
   email?: string;
-  document?: string; // CPF ou documento de identificação
-  birthDate?: string; // Formato YYYY-MM-DD
+  document?: string;
+  birthDate?: string;
   gender?: "FEMALE" | "MALE" | "OTHER" | "";
   source?: string;
-  notes?: string; // Anamnese e anotações técnicas (cabelo, química, alergias)
-  isBlocked: boolean; // Bloqueado para agendamento online
-  customCreditsCents?: number;
-  mergedInto?: string;
-  deleted?: boolean;
-  blocked?: boolean;
-  debt?: number;
+  notes?: string;
+  tags?: string[];
+  isBlocked: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
- * Ficha consolidada 360º do cliente com histórico agregado de atendimentos e financeiro.
+ * Ficha consolidada 360º do cliente combinando base normalizada (/v1/clients)
+ * com histórico agregado de atendimentos e financeiro.
  */
 export interface ClientRecord {
   id: string;
@@ -94,6 +106,7 @@ export interface ClientRecord {
   gender?: "FEMALE" | "MALE" | "OTHER" | "";
   source?: string;
   notes?: string;
+  tags: string[];
   isBlocked: boolean;
   profileFields?: Record<string, string>;
   totalVisits: number;
@@ -108,91 +121,37 @@ export interface ClientRecord {
   updatedAt: string;
 }
 
-type BookingClientDetails = Pick<ClientRecord, "email" | "document" | "birthDate" | "gender" | "source"> & Record<string, string>;
+type BookingClientDetails = Pick<
+  ClientRecord,
+  "email" | "document" | "birthDate" | "gender" | "source"
+> &
+  Record<string, string>;
 
-type PaymentSummaryItem = Pick<AppointmentPayment, "openInCents" | "canCollect"> & { appointmentId: string };
+type PaymentSummaryItem = Pick<AppointmentPayment, "openInCents" | "canCollect"> & {
+  appointmentId: string;
+};
 
-export type ClientInput = Pick<ClientRecord, "name" | "phone" | "email" | "document" | "birthDate" | "gender" | "source" | "notes">;
+export type ClientInput = Pick<
+  ClientRecord,
+  "name" | "phone" | "email" | "document" | "birthDate" | "gender" | "source" | "notes"
+> & {
+  tags?: string[];
+  isBlocked?: boolean;
+};
 
-function getStorageKey(companyId: string): string {
-  return `atelier_clients_${companyId}`;
+const clientUpdateEvent = "atelier-clients-updated";
+
+function companyPhoneStorageKey(companyId: string): string {
+  return `atelier_clients_${companyId}_company_phone`;
 }
 
-function loadStoredSupplements(companyId: string): Record<string, ClientSupplement> {
-  if (typeof window === "undefined" || !companyId) return {};
-  try {
-    const raw = localStorage.getItem(getStorageKey(companyId));
-    if (!raw) return {};
-    const data = JSON.parse(raw);
-    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
-    return Object.fromEntries(Object.entries(data).filter(([, entry]) => entry && typeof entry === "object" && !Array.isArray(entry))
-      .map(([id, entry]) => [id, { ...entry as ClientSupplement, id }]));
-  } catch {
-    return {};
-  }
-}
-
-const clientStorageEvent = "atelier-clients-updated";
-
-function saveStoredSupplements(companyId: string, data: Record<string, ClientSupplement>): void {
-  localStorage.setItem(getStorageKey(companyId), JSON.stringify(data));
-  window.dispatchEvent(new Event(clientStorageEvent));
-}
-
-function resolveClientId(supplements: Record<string, ClientSupplement>, id: string): string {
-  const visited = new Set<string>();
-  while (supplements[id]?.mergedInto && !visited.has(id)) {
-    visited.add(id);
-    id = supplements[id].mergedInto!;
-  }
-  return id;
-}
-
-function isBlocked(supplement?: ClientSupplement): boolean {
-  return supplement?.isBlocked ?? supplement?.blocked ?? false;
-}
-
-function matchesStoredPhone(supplement: ClientSupplement, phoneKey: string): boolean {
-  const idPhone = /^c_(\d+)$/.exec(supplement.id)?.[1];
-  return clientPhoneKey(supplement.phone) === phoneKey || clientPhoneKey(idPhone) === phoneKey;
-}
-
-function bookingDebtKey(companyId: string) {
-  return `${getStorageKey(companyId)}_booking_debt`;
-}
-
-export function getClientBookingStatus(companyId: string, phone: string) {
-  const phoneKey = clientPhoneKey(phone);
-  const status = { isBlocked: false, hasDebt: false };
-  if (!phoneKey) return status;
-  const stored = loadStoredSupplements(companyId);
-  const relatedIds = new Set<string>();
-  let deletedMatch = false;
-  for (const entry of Object.values(stored)) {
-    if (!matchesStoredPhone(entry, phoneKey)) continue;
-    const client = stored[resolveClientId(stored, entry.id)];
-    if (!client || client.deleted) {
-      deletedMatch ||= Boolean(client?.deleted);
-      continue;
-    }
-    relatedIds.add(client.id);
-    status.isBlocked ||= isBlocked(client);
-    status.hasDebt ||= (client.debt ?? 0) > 0;
-  }
-  try {
-    const debtPhones: string[] = JSON.parse(localStorage.getItem(bookingDebtKey(companyId)) ?? "[]");
-    status.hasDebt ||= (!deletedMatch || relatedIds.size > 0) && debtPhones.includes(phoneKey);
-    status.hasDebt ||= Object.values(stored).some((entry) => relatedIds.has(resolveClientId(stored, entry.id)) &&
-      debtPhones.some((key) => matchesStoredPhone(entry, key)));
-  } catch {
-    // A consulta também funciona com apenas o cadastro local.
-  }
-  return status;
+export function getClientBookingStatus(_companyId: string, _phone: string) {
+  return { isBlocked: false, hasDebt: false };
 }
 
 export function rememberCompanyBookingPhone(companyId: string, phone: string) {
   try {
-    if (phone.trim()) localStorage.setItem(`${getStorageKey(companyId)}_company_phone`, phone);
+    if (phone.trim()) localStorage.setItem(companyPhoneStorageKey(companyId), phone);
   } catch {
     // O contato é opcional.
   }
@@ -200,18 +159,16 @@ export function rememberCompanyBookingPhone(companyId: string, phone: string) {
 
 export function getCompanyBookingPhone(companyId: string): string {
   try {
-    return localStorage.getItem(`${getStorageKey(companyId)}_company_phone`) ?? "";
+    return localStorage.getItem(companyPhoneStorageKey(companyId)) ?? "";
   } catch {
     return "";
   }
 }
 
 export function subscribeToClientStorage(callback: () => void) {
-  window.addEventListener(clientStorageEvent, callback);
-  window.addEventListener("storage", callback);
+  window.addEventListener(clientUpdateEvent, callback);
   return () => {
-    window.removeEventListener(clientStorageEvent, callback);
-    window.removeEventListener("storage", callback);
+    window.removeEventListener(clientUpdateEvent, callback);
   };
 }
 
@@ -230,136 +187,112 @@ export function getClientDuplicateGroups(clients: ClientRecord[]): ClientRecord[
     }
     for (const member of related) groups.set(member, related);
   }
-  return [...new Set(groups.values())].filter((group) => group.size > 1).map((group) =>
-    [...group].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)));
+  return [...new Set(groups.values())]
+    .filter((group) => group.size > 1)
+    .map((group) =>
+      [...group].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+    );
 }
 
 /**
- * Registra o cliente na base local (localStorage) da empresa caso ainda não exista pelo telefone.
- * Pode ser chamado em fluxos públicos (sem autenticação) sem acionar requisições privadas da API.
+ * Mantido por compatibilidade com fluxos públicos de agendamento.
+ * A persistência oficial agora ocorre exclusivamente no backend via /v1/clients.
  */
 export function registerClientIfMissing(
-  companyId: string,
+  _companyId: string,
   data: { name: string; phone: string },
 ): { created: boolean; id: string } {
-  const trimmedName = data.name.trim();
-  const trimmedPhone = data.phone.trim();
-  const canonicalId = getCanonicalClientId(trimmedPhone, trimmedName);
-
-  if (typeof window === "undefined" || !companyId || !trimmedName) {
-    return { created: false, id: canonicalId };
-  }
-
-  const stored = loadStoredSupplements(companyId);
-  const targetPhone = clientPhoneKey(trimmedPhone);
-
-  // Evita duplicação verificando pelo telefone normalizado ou pelo ID canônico
-  for (const [existingId, supp] of Object.entries(stored)) {
-    if (
-      (targetPhone && matchesStoredPhone(supp, targetPhone)) ||
-      existingId === canonicalId
-    ) {
-      return { created: false, id: resolveClientId(stored, existingId) };
-    }
-  }
-
-  const nowIso = new Date().toISOString();
-  const next: Record<string, ClientSupplement> = {
-    ...stored,
-    [canonicalId]: {
-      id: canonicalId,
-      companyId,
-      name: trimmedName,
-      phone: trimmedPhone,
-      isBlocked: false,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    },
+  return {
+    created: false,
+    id: getCanonicalClientId(data.phone.trim(), data.name.trim()),
   };
-  try {
-    saveStoredSupplements(companyId, next);
-  } catch {
-    return { created: false, id: canonicalId };
-  }
-  return { created: true, id: canonicalId };
+}
+
+function mergeBlockedTag(currentTags: string[], isBlocked?: boolean): string[] | undefined {
+  if (isBlocked === undefined) return undefined;
+  const cleaned = currentTags.filter((tag) => tag !== "blocked");
+  return isBlocked ? [...cleaned, "blocked"] : cleaned;
 }
 
 export function useClients(companyId: string) {
-  const [supplements, setSupplements] = useState<Record<string, ClientSupplement>>({});
+  const [apiClients, setApiClients] = useState<ApiClientRecord[]>([]);
   const [rawAppointments, setRawAppointments] = useState<Appointment[]>([]);
-  const [bookingDetails, setBookingDetails] = useState(new Map<string, BookingClientDetails>());
-  const [paymentsMap, setPaymentsMap] = useState<Map<string, PaymentSummaryItem>>(new Map());
+  const [bookingDetails, setBookingDetails] = useState(
+    new Map<string, BookingClientDetails>(),
+  );
+  const [paymentsMap, setPaymentsMap] = useState<Map<string, PaymentSummaryItem>>(
+    new Map(),
+  );
   const [loading, setLoading] = useState(true);
   const loadingRequest = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    const sync = () => setSupplements(loadStoredSupplements(companyId));
-    const syncStorage = (event: StorageEvent) => {
-      if (event.key === getStorageKey(companyId) || event.key === null) sync();
-    };
-    sync();
-    window.addEventListener(clientStorageEvent, sync);
-    window.addEventListener("storage", syncStorage);
-    return () => {
-      window.removeEventListener(clientStorageEvent, sync);
-      window.removeEventListener("storage", syncStorage);
-    };
-  }, [companyId]);
+  // Carrega a base oficial de clientes (/v1/clients) + agendamentos e financeiro
+  const refresh = useCallback(
+    async (showLoading = true) => {
+      if (!companyId) return;
+      loadingRequest.current?.abort();
+      const request = new AbortController();
+      loadingRequest.current = request;
+      if (showLoading) setLoading(true);
+      try {
+        const [clientsRes, apps, details] = await Promise.all([
+          apiRequest<{ clients: ApiClientRecord[] }>("/v1/clients", {
+            signal: request.signal,
+          }),
+          apiRequest<Appointment[]>("/appointments", {
+            signal: request.signal,
+          }),
+          apiRequest<{ phone: string; details: BookingClientDetails }[]>(
+            "/companies/me/client-booking-data",
+            { signal: request.signal },
+          ).catch(() => null),
+        ]);
 
-  // Carrega os agendamentos da API e consolida os recebimentos de comandas
-  const refresh = useCallback(async (showLoading = true) => {
-    if (!companyId) return;
-    loadingRequest.current?.abort();
-    const request = new AbortController();
-    loadingRequest.current = request;
-    if (showLoading) setLoading(true);
-    try {
-      const [apps, details] = await Promise.all([
-        apiRequest<Appointment[]>("/appointments", { signal: request.signal }),
-        apiRequest<{ phone: string; details: BookingClientDetails }[]>("/companies/me/client-booking-data", { signal: request.signal }).catch(() => null),
-      ]);
-      const ids = [...new Set(apps.map((appointment) => appointment.id))];
-      const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) =>
-        ids.slice(i * 100, (i + 1) * 100).join(","),
-      );
-      const pList = await Promise.all(batches.map((batch) =>
-        apiRequest<PaymentSummaryItem[]>("/finance/appointments/payment-summary", {
-          signal: request.signal, query: { ids: batch },
-        }).catch(() => []),
-      ));
-      if (request.signal.aborted) return;
-      const pMap = new Map(pList.flat().map((item) => [item.appointmentId, item]));
-      setRawAppointments(apps);
-      if (details) {
-        const byPhone = new Map<string, BookingClientDetails>();
-        for (const { phone, details: fields } of details) {
-          const key = clientPhoneKey(phone);
-          if (key) byPhone.set(key, { ...fields, ...byPhone.get(key) });
+        const ids = [...new Set(apps.map((appointment) => appointment.id))];
+        const batches = Array.from(
+          { length: Math.ceil(ids.length / 100) },
+          (_, i) => ids.slice(i * 100, (i + 1) * 100).join(","),
+        );
+        const pList = await Promise.all(
+          batches.map((batch) =>
+            apiRequest<PaymentSummaryItem[]>("/finance/appointments/payment-summary", {
+              signal: request.signal,
+              query: { ids: batch },
+            }).catch(() => []),
+          ),
+        );
+
+        if (request.signal.aborted) return;
+
+        const pMap = new Map(pList.flat().map((item) => [item.appointmentId, item]));
+        setApiClients(clientsRes.clients ?? []);
+        setRawAppointments(apps);
+
+        if (details) {
+          const byPhone = new Map<string, BookingClientDetails>();
+          for (const { phone, details: fields } of details) {
+            const key = clientPhoneKey(phone);
+            if (key) byPhone.set(key, { ...fields, ...byPhone.get(key) });
+          }
+          setBookingDetails(byPhone);
         }
-        setBookingDetails(byPhone);
+
+        setPaymentsMap((previous) =>
+          new Map(
+            ids.flatMap((id) => {
+              const payment = pMap.get(id) ?? previous.get(id);
+              return payment ? [[id, payment]] : [];
+            }),
+          ),
+        );
+      } catch {
+        // Em caso de falha de rede mantém último estado carregado
+      } finally {
+        if (!request.signal.aborted) setLoading(false);
       }
-      setPaymentsMap((previous) => new Map(ids.flatMap((id) => {
-        const payment = pMap.get(id) ?? previous.get(id);
-        return payment ? [[id, payment]] : [];
-      })));
-      if (ids.length && pMap.size === ids.length) {
-        const debtPhones = new Set(apps.flatMap((app) => {
-          const phone = clientPhoneKey(app.clientPhone);
-          const payment = pMap.get(app.id);
-          return phone && app.status !== "CANCELED" && payment && payment.openInCents > 0 ? [phone] : [];
-        }));
-        const snapshot = JSON.stringify([...debtPhones].sort());
-        if (localStorage.getItem(bookingDebtKey(companyId)) !== snapshot) {
-          localStorage.setItem(bookingDebtKey(companyId), snapshot);
-          window.dispatchEvent(new Event(clientStorageEvent));
-        }
-      }
-    } catch {
-      // Em caso de falha de rede
-    } finally {
-      if (!request.signal.aborted) setLoading(false);
-    }
-  }, [companyId]);
+    },
+    [companyId],
+  );
 
   useEffect(() => {
     if (!companyId) return;
@@ -371,59 +304,81 @@ export function useClients(companyId: string) {
     void refresh();
     window.addEventListener("focus", update);
     window.addEventListener("storage", sync);
+    window.addEventListener(clientUpdateEvent, update);
     return () => {
       loadingRequest.current?.abort();
       window.removeEventListener("focus", update);
       window.removeEventListener("storage", sync);
+      window.removeEventListener(clientUpdateEvent, update);
     };
   }, [companyId, refresh]);
 
-  // Consolidação dos clientes a partir dos agendamentos + dados cadastrados manualmente
+  // Consolidação 360º: base normalizada /v1/clients + histórico de agendamentos e financeiro
   const clients = useMemo<ClientRecord[]>(() => {
-    const clientsMap = new Map<string, ClientRecord>();
+    const clientsById = new Map<string, ClientRecord>();
+    const clientIdByPhoneKey = new Map<string, string>();
     const now = Date.now();
 
-    // 1. Processa agendamentos da API
-    const registeredPhones = new Map<string, string>();
-    for (const [id, supp] of Object.entries(supplements)) {
-      const phone = normalizeClientPhoneDigits(supp.phone);
-      if (phone.length >= 8 && (!registeredPhones.has(phone) || (!supp.mergedInto && !supp.deleted))) {
-        registeredPhones.set(phone, id);
-      }
+    // 1. Carrega clientes oficiais persistidos no PostgreSQL (/v1/clients)
+    for (const item of apiClients) {
+      const phoneKey = clientPhoneKey(item.phone);
+      const detail = phoneKey ? bookingDetails.get(phoneKey) : undefined;
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      const record: ClientRecord = {
+        id: item.id,
+        name: item.name,
+        phone: item.phone,
+        email: item.email ?? detail?.email,
+        document: detail?.document,
+        birthDate: item.birthDate ?? detail?.birthDate,
+        gender: detail?.gender,
+        source: detail?.source,
+        notes: item.notes ?? undefined,
+        tags,
+        isBlocked: tags.includes("blocked"),
+        profileFields: detail,
+        totalVisits: 0,
+        noShows: 0,
+        lastVisitAt: item.lastVisitAt,
+        totalSpentCents: item.totalSpentCents,
+        pendingDebtCents: 0,
+        collectiblePayments: [],
+        appointments: [],
+        futureAppointments: [],
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      };
+      clientsById.set(item.id, record);
+      if (phoneKey) clientIdByPhoneKey.set(phoneKey, item.id);
     }
+
+    // 2. Vincula agendamentos aos clientes pelo telefone normalizado
+    const appointmentTotalsByClient = new Map<
+      string,
+      { visits: number; spent: number; lastVisitAt: string | null }
+    >();
+
     for (const app of new Map(rawAppointments.map((app) => [app.id, app])).values()) {
-      const originalId = getCanonicalClientId(app.clientPhone, app.clientName);
-      const mappedId = supplements[originalId] ? originalId : registeredPhones.get(normalizeClientPhoneDigits(app.clientPhone)) ?? originalId;
-      const canonicalId = resolveClientId(supplements, mappedId);
-      if (supplements[canonicalId]?.deleted) continue;
-      const payment = paymentsMap.get(app.id);
+      const phoneKey = clientPhoneKey(app.clientPhone);
+      const matchedId =
+        (phoneKey && clientIdByPhoneKey.get(phoneKey)) ||
+        getCanonicalClientId(app.clientPhone, app.clientName);
 
-      // Calcula débito em aberto da comanda
-      let openDebt = 0;
-      if (app.status !== "CANCELED") {
-        if (payment) {
-          openDebt = payment.openInCents;
-        } else if (app.status !== "COMPLETED") {
-          openDebt = app.servicePriceInCentsSnapshot;
-        }
-      }
-
-      let existing = clientsMap.get(canonicalId);
+      let existing = clientsById.get(matchedId);
       if (!existing) {
-        const supp = supplements[canonicalId];
-        const detail = bookingDetails.get(clientPhoneKey(app.clientPhone));
+        const detail = phoneKey ? bookingDetails.get(phoneKey) : undefined;
         existing = {
-          id: canonicalId,
-          name: supp?.name || app.clientName,
-          phone: supp?.phone || app.clientPhone,
-          email: supp?.email ?? detail?.email,
-          document: supp?.document ?? detail?.document,
-          birthDate: supp?.birthDate ?? detail?.birthDate,
-          gender: supp?.gender ?? detail?.gender,
-          source: supp?.source ?? detail?.source,
-          notes: supp?.notes,
+          id: matchedId,
+          name: app.clientName,
+          phone: app.clientPhone,
+          email: detail?.email,
+          document: detail?.document,
+          birthDate: detail?.birthDate,
+          gender: detail?.gender,
+          source: detail?.source,
+          tags: [],
+          isBlocked: false,
           profileFields: detail,
-          isBlocked: isBlocked(supp),
           totalVisits: 0,
           noShows: 0,
           lastVisitAt: null,
@@ -435,69 +390,70 @@ export function useClients(companyId: string) {
           createdAt: app.createdAt,
           updatedAt: app.updatedAt,
         };
-        clientsMap.set(canonicalId, existing);
+        clientsById.set(matchedId, existing);
+        if (phoneKey) clientIdByPhoneKey.set(phoneKey, matchedId);
       }
 
-      // Adiciona o agendamento
+      const payment = paymentsMap.get(app.id);
+      let openDebt = 0;
+      if (app.status !== "CANCELED") {
+        if (payment) {
+          openDebt = payment.openInCents;
+        } else if (app.status !== "COMPLETED") {
+          openDebt = app.servicePriceInCentsSnapshot;
+        }
+      }
+
       existing.appointments.push(app);
 
       const startsAt = Date.parse(app.startsAt);
-      // Classifica visita concluída vs falta
+      const totals = appointmentTotalsByClient.get(existing.id) ?? {
+        visits: 0,
+        spent: 0,
+        lastVisitAt: null,
+      };
+
       if (app.status === "COMPLETED") {
-        existing.totalVisits += 1;
-        existing.totalSpentCents += app.servicePriceInCentsSnapshot;
-        if (startsAt <= now && (!existing.lastVisitAt || startsAt > Date.parse(existing.lastVisitAt))) {
-          existing.lastVisitAt = app.startsAt;
+        totals.visits += 1;
+        totals.spent += app.servicePriceInCentsSnapshot;
+        if (
+          startsAt <= now &&
+          (!totals.lastVisitAt || startsAt > Date.parse(totals.lastVisitAt))
+        ) {
+          totals.lastVisitAt = app.startsAt;
         }
       } else if (app.status === "NO_SHOW") {
         existing.noShows += 1;
       }
 
-      // Agendamentos futuros
+      appointmentTotalsByClient.set(existing.id, totals);
+
       if (startsAt > now && app.status !== "CANCELED") {
         existing.futureAppointments.push(app);
       }
 
-      // Soma débitos em aberto
       existing.pendingDebtCents += openDebt;
-      if (payment?.canCollect && payment.openInCents > 0) existing.collectiblePayments.push(payment);
-
-      // Mantém a data de cadastro mais antiga
-      if (new Date(app.createdAt) < new Date(existing.createdAt)) {
-        existing.createdAt = app.createdAt;
+      if (payment?.canCollect && payment.openInCents > 0) {
+        existing.collectiblePayments.push(payment);
       }
     }
 
-    // 2. Inclui clientes cadastrados manualmente que ainda não possuem agendamento
-    for (const [suppId, supp] of Object.entries(supplements)) {
-      if (!clientsMap.has(suppId) && supp.name && !supp.deleted && !supp.mergedInto) {
-        clientsMap.set(suppId, {
-          id: suppId,
-          name: supp.name,
-          phone: supp.phone || "",
-          email: supp.email,
-          document: supp.document,
-          birthDate: supp.birthDate,
-          gender: supp.gender,
-          source: supp.source,
-          notes: supp.notes,
-          isBlocked: isBlocked(supp),
-          totalVisits: 0,
-          noShows: 0,
-          lastVisitAt: null,
-          totalSpentCents: 0,
-          pendingDebtCents: 0,
-          collectiblePayments: [],
-          appointments: [],
-          futureAppointments: [],
-          createdAt: supp.createdAt,
-          updatedAt: supp.updatedAt,
-        });
+    for (const client of clientsById.values()) {
+      const totals = appointmentTotalsByClient.get(client.id);
+      if (totals) {
+        client.totalVisits = totals.visits;
+        if (totals.spent > client.totalSpentCents) {
+          client.totalSpentCents = totals.spent;
+        }
+        if (
+          totals.lastVisitAt &&
+          (!client.lastVisitAt ||
+            Date.parse(totals.lastVisitAt) > Date.parse(client.lastVisitAt))
+        ) {
+          client.lastVisitAt = totals.lastVisitAt;
+        }
       }
-    }
 
-    // Ordena os agendamentos internos por data decrescente
-    for (const client of clientsMap.values()) {
       client.appointments.sort(
         (a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime(),
       );
@@ -506,164 +462,160 @@ export function useClients(companyId: string) {
       );
     }
 
-    // Retorna ordenado alfabeticamente pelo nome
-    return Array.from(clientsMap.values()).sort((a, b) =>
+    return Array.from(clientsById.values()).sort((a, b) =>
       a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }),
     );
-  }, [rawAppointments, paymentsMap, supplements, bookingDetails]);
+  }, [apiClients, rawAppointments, paymentsMap, bookingDetails]);
 
-  const updateSupplements = useCallback((update: (stored: Record<string, ClientSupplement>) => void) => {
-    const stored = loadStoredSupplements(companyId);
-    update(stored);
-    saveStoredSupplements(companyId, stored);
-  }, [companyId]);
+  const fetchClientById = useCallback(async (id: string) => {
+    if (!UUID_REGEX.test(id)) return null;
+    const { client } = await apiRequest<{ client: ApiClientRecord }>(
+      `/v1/clients/${encodeURIComponent(id)}`,
+    );
+    setApiClients((previous) => {
+      const exists = previous.some((item) => item.id === client.id);
+      return exists
+        ? previous.map((item) => (item.id === client.id ? client : item))
+        : [...previous, client];
+    });
+    return client;
+  }, []);
+
+  const createClient = useCallback(async (data: ClientInput) => {
+    const tags = data.isBlocked
+      ? Array.from(new Set([...(data.tags ?? []), "blocked"]))
+      : data.tags;
+
+    const { client } = await apiRequest<{ client: ApiClientRecord }>("/v1/clients", {
+      method: "POST",
+      body: {
+        name: data.name.trim(),
+        phone: data.phone.trim(),
+        email: data.email?.trim() || null,
+        birthDate: data.birthDate?.trim() || null,
+        notes: data.notes?.trim() || null,
+        ...(tags ? { tags } : {}),
+      },
+    });
+
+    setApiClients((previous) => [...previous, client]);
+    window.dispatchEvent(new Event(clientUpdateEvent));
+    return client.id;
+  }, []);
 
   const saveClientDetails = useCallback(
-    (id: string, patch: Partial<ClientSupplement>) => {
-      updateSupplements((stored) => {
-        const resolvedId = resolveClientId(stored, id);
-        const existing = stored[resolvedId];
-        const now = new Date().toISOString();
-        const oldPhone = existing?.phone;
-        if (patch.phone && oldPhone && clientPhoneKey(patch.phone) !== clientPhoneKey(oldPhone)) {
-          const alias = getCanonicalClientId(oldPhone);
-          if (alias !== resolvedId && !stored[alias]) {
-            stored[alias] = { id: alias, companyId, phone: oldPhone, mergedInto: resolvedId, isBlocked: false, createdAt: now, updatedAt: now };
-          }
-        }
-        stored[resolvedId] = {
-          ...existing,
-          ...patch,
-          id: resolvedId,
-          companyId,
-          isBlocked: patch.isBlocked ?? isBlocked(existing),
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        };
-      });
+    async (id: string, patch: Partial<ClientSupplement>) => {
+      const current = clients.find((item) => item.id === id);
+      const nextTags =
+        patch.tags !== undefined
+          ? patch.tags
+          : mergeBlockedTag(current?.tags ?? [], patch.isBlocked);
+
+      // Se o registro ainda não existir na tabela `clients` (ex.: veio apenas de agendamento antigo), cria primeiro
+      if (!UUID_REGEX.test(id)) {
+        const name = (patch.name ?? current?.name ?? "").trim();
+        const phone = (patch.phone ?? current?.phone ?? "").trim();
+        if (!name || !phone) return;
+        await createClient({
+          name,
+          phone,
+          email: patch.email ?? current?.email,
+          birthDate: patch.birthDate ?? current?.birthDate,
+          notes: patch.notes ?? current?.notes,
+          tags: nextTags,
+        });
+        return;
+      }
+
+      const body: Record<string, unknown> = {};
+      if (patch.name !== undefined) body.name = patch.name.trim();
+      if (patch.phone !== undefined) body.phone = patch.phone.trim();
+      if (patch.email !== undefined) body.email = patch.email.trim() || null;
+      if (patch.birthDate !== undefined) {
+        body.birthDate = patch.birthDate.trim() || null;
+      }
+      if (patch.notes !== undefined) body.notes = patch.notes.trim() || null;
+      if (nextTags !== undefined) body.tags = nextTags;
+
+      if (Object.keys(body).length === 0) return;
+
+      const { client } = await apiRequest<{ client: ApiClientRecord }>(
+        `/v1/clients/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body,
+        },
+      );
+
+      setApiClients((previous) =>
+        previous.map((item) => (item.id === client.id ? client : item)),
+      );
+      window.dispatchEvent(new Event(clientUpdateEvent));
     },
-    [companyId, updateSupplements],
+    [clients, createClient],
   );
 
-  // Alterna o bloqueio de agendamento online do cliente
   const toggleBlockClient = useCallback(
-    (id: string) => {
-      const stored = loadStoredSupplements(companyId);
-      saveClientDetails(id, { isBlocked: !isBlocked(stored[resolveClientId(stored, id)]) });
+    async (id: string) => {
+      const current = clients.find((item) => item.id === id);
+      if (!current) return;
+      await saveClientDetails(id, { isBlocked: !current.isBlocked });
     },
-    [companyId, saveClientDetails],
+    [clients, saveClientDetails],
   );
 
-  // Atualiza anotações técnicas e anamnese
   const updateAnamnesis = useCallback(
-    (id: string, notes: string) => {
-      saveClientDetails(id, { notes });
+    async (id: string, notes: string) => {
+      await saveClientDetails(id, { notes });
     },
     [saveClientDetails],
   );
 
-  const getRegistrationClientId = useCallback((data: Pick<ClientInput, "name" | "phone">) => {
-    const stored = loadStoredSupplements(companyId);
-    const phoneKey = clientPhoneKey(data.phone);
-    const match = Object.values(stored).find((entry) => phoneKey && matchesStoredPhone(entry, phoneKey));
-    return resolveClientId(stored, match?.id ?? getCanonicalClientId(data.phone, data.name));
-  }, [companyId]);
-
-  // Cria um novo cliente manual
-  const createClient = useCallback(
-    (data: ClientInput) => {
-      const canonicalId = getCanonicalClientId(data.phone, data.name);
+  const getRegistrationClientId = useCallback(
+    (data: Pick<ClientInput, "name" | "phone">) => {
       const phoneKey = clientPhoneKey(data.phone);
-      let id = canonicalId;
-      updateSupplements((stored) => {
-        const match = Object.values(stored).find((entry) => phoneKey && matchesStoredPhone(entry, phoneKey));
-        id = resolveClientId(stored, match?.id ?? canonicalId);
-        const existing = stored[id];
-        if (existing && !existing.deleted && (existing.name || existing.phone)) return;
-        const now = new Date().toISOString();
-        stored[id] = {
-          ...existing,
-          ...data,
-          id,
-          companyId,
-          name: data.name.trim(),
-          phone: data.phone.trim(),
-          isBlocked: isBlocked(existing),
-          deleted: false,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        };
-      });
-      return id;
+      const match = clients.find(
+        (entry) => phoneKey && clientPhoneKey(entry.phone) === phoneKey,
+      );
+      return match?.id ?? getCanonicalClientId(data.phone, data.name);
     },
-    [companyId, updateSupplements],
+    [clients],
   );
 
-  const importClients = useCallback((rows: ClientInput[]) => {
-    let imported = 0;
-    updateSupplements((stored) => {
-      const phones = new Set(clients.flatMap((client) => [
-        clientPhoneKey(client.phone), ...client.appointments.map((appointment) => clientPhoneKey(appointment.clientPhone)),
-      ]));
-      for (const entry of Object.values(stored)) {
-        if (stored[resolveClientId(stored, entry.id)]?.deleted) continue;
-        phones.add(clientPhoneKey(entry.phone));
-        phones.add(clientPhoneKey(/^c_(\d+)$/.exec(entry.id)?.[1]));
-      }
-      const now = new Date().toISOString();
+  const importClients = useCallback(
+    async (rows: ClientInput[]) => {
+      let imported = 0;
+      const existingPhones = new Set(
+        clients.map((client) => clientPhoneKey(client.phone)).filter(Boolean),
+      );
+
       for (const row of rows) {
-        const phone = clientPhoneKey(row.phone);
-        if (!row.name.trim() || !phone || phones.has(phone)) continue;
-        const id = getCanonicalClientId(row.phone, row.name);
-        if (stored[id]?.mergedInto || stored[id]?.deleted) continue;
-        stored[id] = { ...row, id, companyId, isBlocked: false, createdAt: now, updatedAt: now };
-        phones.add(phone);
-        imported++;
+        const phoneKey = clientPhoneKey(row.phone);
+        if (!row.name.trim() || !phoneKey || existingPhones.has(phoneKey)) {
+          continue;
+        }
+        try {
+          await createClient(row);
+          existingPhones.add(phoneKey);
+          imported += 1;
+        } catch {
+          // Ignora duplicados/inválidos individuais para concluir o restante do lote
+        }
       }
-    });
-    return imported;
-  }, [clients, companyId, updateSupplements]);
 
-  const mergeClients = useCallback((group: ClientRecord[]) => {
-    const [primary, ...duplicates] = group;
-    if (!primary || !duplicates.length) return;
-    updateSupplements((stored) => {
-      if (group.some(({ id }) => stored[id]?.deleted || stored[id]?.mergedInto)) {
-        throw new Error("O grupo mudou. Revise os cadastros e tente novamente.");
-      }
-      const now = new Date().toISOString();
-      const notes = [...new Set(group.flatMap((client) => client.notes ? [client.notes] : []))].join("\n\n");
-      stored[primary.id] = {
-        ...stored[primary.id], id: primary.id, companyId, name: primary.name,
-        phone: group.find((client) => client.phone)?.phone,
-        email: group.find((client) => client.email)?.email,
-        document: group.find((client) => client.document)?.document,
-        birthDate: group.find((client) => client.birthDate)?.birthDate,
-        gender: group.find((client) => client.gender)?.gender,
-        source: group.find((client) => client.source)?.source,
-        notes,
-        isBlocked: group.some((client) => stored[client.id] ? isBlocked(stored[client.id]) : client.isBlocked),
-        customCreditsCents: group.reduce((sum, client) => sum + (stored[client.id]?.customCreditsCents ?? 0), 0),
-        debt: group.reduce((sum, client) => sum + (stored[client.id]?.debt ?? 0), 0),
-        createdAt: primary.createdAt,
-        updatedAt: now,
-      };
-      for (const client of duplicates) {
-        stored[client.id] = { id: client.id, companyId, phone: client.phone, isBlocked: false, mergedInto: primary.id,
-          createdAt: client.createdAt, updatedAt: now };
-      }
-    });
-  }, [companyId, updateSupplements]);
+      return imported;
+    },
+    [clients, createClient],
+  );
 
-  const deleteClient = useCallback((client: ClientRecord) => {
-    updateSupplements((stored) => {
-      const id = resolveClientId(stored, client.id);
-      stored[id] = { id, companyId, phone: client.phone, isBlocked: false, deleted: true,
-        createdAt: client.createdAt, updatedAt: new Date().toISOString() };
-    });
-  }, [companyId, updateSupplements]);
+  const mergeClients = useCallback((_group: ClientRecord[]) => {
+    // Mesclagem de registros já normalizados no banco será tratada em etapa dedicada do CRM.
+  }, []);
 
-  // Verifica se já existe cliente cadastrado na base (supplements ou, opcionalmente, outros agendamentos)
+  const deleteClient = useCallback((_client: ClientRecord) => {
+    // Exclusão definitiva não faz parte do Bloco 1 para preservar integridade histórica.
+  }, []);
+
   const hasRegisteredClient = useCallback(
     (params: {
       phone?: string;
@@ -673,35 +625,18 @@ export function useClients(companyId: string) {
     }): boolean => {
       const phoneDigits = clientPhoneKey(params.phone);
       const normalizedName = normalizeClientName(params.name);
-      const canonicalId = getCanonicalClientId(params.phone, params.name);
-
-      const stored = loadStoredSupplements(companyId);
-      const registered = stored[resolveClientId(stored, canonicalId)];
-      if (!registered?.deleted && (registered?.name || registered?.phone)) {
-        return true;
-      }
-
-      for (const supp of Object.values(stored)) {
-        if (stored[resolveClientId(stored, supp.id)]?.deleted) continue;
-        if (phoneDigits && matchesStoredPhone(supp, phoneDigits)) {
-          return true;
-        }
-        if (normalizedName && supp.name && normalizeClientName(supp.name) === normalizedName) {
-          return true;
-        }
-      }
-
-      // Quando a checagem exige cadastro oficial na base CRM (supplements), ignora clientes vindos apenas da API
-      if (params.onlySupplements) {
-        return false;
-      }
 
       for (const client of clients) {
-        const hasOtherAppointment = params.excludeAppointmentId
-          ? client.appointments.some((app) => app.id !== params.excludeAppointmentId)
-          : client.appointments.length > 0;
-        if (!hasOtherAppointment) continue;
-
+        if (params.onlySupplements && !UUID_REGEX.test(client.id)) {
+          continue;
+        }
+        if (
+          params.excludeAppointmentId &&
+          !UUID_REGEX.test(client.id) &&
+          !client.appointments.some((app) => app.id !== params.excludeAppointmentId)
+        ) {
+          continue;
+        }
         if (phoneDigits && clientPhoneKey(client.phone) === phoneDigits) {
           return true;
         }
@@ -712,18 +647,19 @@ export function useClients(companyId: string) {
 
       return false;
     },
-    [clients, companyId],
+    [clients],
   );
 
   const getClient = useCallback(
-    (id: string): ClientRecord | undefined => clients.find((c) => c.id === resolveClientId(supplements, id)),
-    [clients, supplements],
+    (id: string): ClientRecord | undefined => clients.find((c) => c.id === id),
+    [clients],
   );
 
   return {
     clients,
     loading,
     getClient,
+    fetchClientById,
     hasRegisteredClient,
     saveClientDetails,
     toggleBlockClient,

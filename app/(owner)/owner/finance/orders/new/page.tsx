@@ -724,15 +724,19 @@ export default function NewOrderPage() {
 
     setSubmitting(true);
     try {
-      // 1. Se houver cliente informado e ainda não estiver na base local, cadastra automaticamente
+      // 1. Se houver cliente informado com telefone e ainda não estiver na base, cadastra automaticamente
       let targetClientId = selectedClientId;
-      if (trimmedName && !targetClientId) {
-        targetClientId = createClient({
-          name: trimmedName,
-          phone: normalizedPhone ?? "",
-          email: clientEmail || undefined,
-          document: clientDocument || undefined,
-        });
+      if (trimmedName && normalizedPhone && !targetClientId) {
+        try {
+          targetClientId = await createClient({
+            name: trimmedName,
+            phone: normalizedPhone,
+            email: clientEmail || undefined,
+            document: clientDocument || undefined,
+          });
+        } catch {
+          // Não bloqueia o fechamento da comanda caso o telefone já exista ou seja inválido
+        }
       }
 
       // 2. Persiste comanda, pagamentos e baixa automática de estoque (SALE_OUT) em transação única no backend

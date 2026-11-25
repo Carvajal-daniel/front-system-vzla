@@ -1,9 +1,10 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
+import { Toaster } from "sonner";
 import {
   Ban,
   CalendarDays,
@@ -15,7 +16,7 @@ import {
   UserCircle2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/locale-context";
-import { useTheme } from "@/lib/theme-context";
+import { applyDashboardTheme, useTheme } from "@/lib/theme-context";
 import { useSidebarCollapsed } from "@/lib/use-sidebar-collapsed";
 import { useSession } from "@/components/ui/auth-guard";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
@@ -32,10 +33,22 @@ function getInitials(name: string): string {
 
 export function CollaboratorShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const reducedMotion = useReducedMotion();
   const { t } = useLocale();
   const { mode, palette } = useTheme();
   const { session, logout } = useSession();
   const { collapsed, toggle } = useSidebarCollapsed();
+
+  useEffect(() => {
+    applyDashboardTheme(mode, palette);
+  }, [mode, palette]);
+
+  useEffect(() => () => {
+    const root = document.documentElement;
+    delete root.dataset.theme;
+    delete root.dataset.palette;
+    root.classList.remove("dark");
+  }, []);
 
   const navItems = [
     { href: "/collaborator", label: t.nav.collaboratorAgenda, icon: CalendarDays },
@@ -66,7 +79,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
       <motion.aside
         initial={false}
         animate={{ width: collapsed ? 76 : 260 }}
-        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: reducedMotion ? 0 : 0.25, ease: [0.23, 1, 0.32, 1] }}
         className="hidden md:flex md:flex-col md:fixed md:inset-y-0 z-30 border-r border-border-subtle bg-surface overflow-visible"
       >
         <div
@@ -134,7 +147,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
                   <motion.span
                     layoutId="collab-sidebar-active"
                     className="absolute left-0 top-2.5 bottom-2.5 w-1 rounded-r-full bg-accent-ink/80"
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                    transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
                   />
                 )}
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -269,6 +282,9 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
           })}
         </div>
       </nav>
+
+      {/* Toaster sincronizado com o tema claro/escuro do shell */}
+      <Toaster theme={mode} richColors position="bottom-right" />
     </div>
   );
 }
