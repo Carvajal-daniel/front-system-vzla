@@ -1,11 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell, CheckCheck, Volume2, VolumeX } from "lucide-react";
+import {
+  ArrowRight,
+  Bell,
+  CheckCheck,
+  Sparkles,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
 import { formatDateTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
+import {
+  INSIGHTS_UPDATED_EVENT,
+  intelligenceApi,
+  type ProactiveInsightItem,
+} from "@/lib/intelligence-api";
 import type { Appointment } from "@/lib/types/appointment";
 import { useSession } from "@/components/ui/auth-guard";
 
@@ -15,7 +34,11 @@ const SOUND_CHANGE_EVENT = "atelier:notification-sound-change";
 
 function readSoundPreference() {
   if (typeof window === "undefined") return true;
-  try { return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "false"; } catch { return true; }
+  try {
+    return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
 }
 
 function subscribeSoundPreference(callback: () => void) {
@@ -45,7 +68,6 @@ function readSeenIds(storageKey: string): Set<string> {
 function writeSeenIds(storageKey: string, ids: Set<string>): void {
   if (typeof window === "undefined") return;
   try {
-    // Mantém apenas os 200 IDs mais recentes para não inflar o localStorage
     const trimmed = Array.from(ids).slice(-200);
     window.localStorage.setItem(storageKey, JSON.stringify(trimmed));
   } catch {
@@ -53,49 +75,71 @@ function writeSeenIds(storageKey: string, ids: Set<string>): void {
   }
 }
 
-/**
- * Sininho de notificações para Owner e Colaborador: consulta periodicamente
- * os agendamentos recentes, destaca não lidos com badge e exibe aviso discreto
- * quando uma nova reserva chega durante a sessão.
- */
 export function NotificationsBell() {
   const router = useRouter();
   const { session } = useSession();
   const { locale, t } = useLocale();
   const storageKey = `atelier_seen_appts_${session.id}`;
-  const endpoint =
-    session.role === "OWNER" ? "/appointments" : "/me/appointments";
+  const isOwner = session.role === "OWNER";
+  const endpoint = isOwner ? "/appointments" : "/me/appointments";
 
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Appointment[]>([]);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
+  const [aiInsights, setAiInsights] = useState<ProactiveInsightItem[]>([]);
+  const [aiPendingCount, setAiPendingCount] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const soundEnabled = useSyncExternalStore(subscribeSoundPreference, readSoundPreference, () => true);
+  const soundEnabled = useSyncExternalStore(
+    subscribeSoundPreference,
+    readSoundPreference,
+    () => true,
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
   const knownIdsRef = useRef<Set<string>>(new Set());
 
-  const playAlert = useCallback((force = false) => {
-    if ((!soundEnabled && !force) || typeof window === "undefined") return;
+  const playAlert = useCallback(
+    (force = false) => {
+      if ((!soundEnabled && !force) || typeof window === "undefined") return;
+      try {
+        const AudioContextConstructor = window.AudioContext;
+        if (!AudioContextConstructor) return;
+        const context = new AudioContextConstructor();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = "sine";
+        oscillator.frequency.setValueAtTime(880, context.currentTime);
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.23);
+        oscillator.onended = () => {
+          void context.close();
+        };
+      } catch {
+        // Áudio opcional
+      }
+    },
+    [soundEnabled],
+  );
+
+  const pollAiInsights = useCallback(async () => {
+    if (!isOwner) return;
     try {
-      const AudioContextConstructor = window.AudioContext;
-      if (!AudioContextConstructor) return;
-      const context = new AudioContextConstructor();
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, context.currentTime);
-      gain.gain.setValueAtTime(0.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.23);
-      oscillator.onended = () => { void context.close(); };
-    } catch { /* audio is optional and may be blocked by browser policy */ }
-  }, [soundEnabled]);
+      const data = await intelligenceApi.listInsights({
+        status: "PENDING",
+        limit: 5,
+      });
+      setAiInsights(data.insights);
+      setAiPendingCount(data.pendingCount);
+    } catch {
+      // Falha silenciosa no polling
+    }
+  }, [isOwner]);
 
   const pollAppointments = useCallback(async () => {
     try {
@@ -106,7 +150,7 @@ export function NotificationsBell() {
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
-      const topRecent = sorted.slice(0, 12);
+      const topRecent = sorted.slice(0, 8);
       setRecent(topRecent);
 
       const seen = readSeenIds(storageKey);
@@ -114,7 +158,6 @@ export function NotificationsBell() {
       if (!initializedRef.current) {
         initializedRef.current = true;
         knownIdsRef.current = new Set(sorted.map((a) => a.id));
-        // Na primeira carga, se ainda não havia histórico salvo, marca os existentes como vistos
         if (seen.size === 0 && sorted.length > 0) {
           const allIds = new Set(sorted.map((a) => a.id));
           writeSeenIds(storageKey, allIds);
@@ -145,13 +188,17 @@ export function NotificationsBell() {
       }
       setUnreadIds(nextUnread);
     } catch {
-      // Falha silenciosa no polling para não interromper o uso do painel
+      // Falha silenciosa no polling
     }
   }, [endpoint, playAlert, storageKey, t.notifications.newBookingToast]);
 
   const toggleSound = () => {
     const next = !soundEnabled;
-    try { window.localStorage.setItem(SOUND_STORAGE_KEY, String(next)); } catch { /* storage may be unavailable */ }
+    try {
+      window.localStorage.setItem(SOUND_STORAGE_KEY, String(next));
+    } catch {
+      // Storage indisponível
+    }
     window.dispatchEvent(new CustomEvent(SOUND_CHANGE_EVENT));
     if (next) playAlert(true);
   };
@@ -159,16 +206,23 @@ export function NotificationsBell() {
   useEffect(() => {
     let active = true;
     const run = () => {
-      if (active) void pollAppointments();
+      if (!active) return;
+      void pollAppointments();
+      void pollAiInsights();
     };
     const initialTimer = window.setTimeout(run, 400);
     const interval = window.setInterval(run, POLL_INTERVAL_MS);
+    const onInsightsUpdated = () => {
+      if (active) void pollAiInsights();
+    };
+    window.addEventListener(INSIGHTS_UPDATED_EVENT, onInsightsUpdated);
     return () => {
       active = false;
       window.clearTimeout(initialTimer);
       window.clearInterval(interval);
+      window.removeEventListener(INSIGHTS_UPDATED_EVENT, onInsightsUpdated);
     };
-  }, [pollAppointments]);
+  }, [pollAppointments, pollAiInsights]);
 
   useEffect(() => {
     if (!open) return;
@@ -200,7 +254,6 @@ export function NotificationsBell() {
     setUnreadIds(new Set());
   };
 
-  // Marca notificação como lida, fecha o popover e navega diretamente para o card na agenda
   const handleSelectNotification = (appointmentId: string) => {
     const seen = readSeenIds(storageKey);
     seen.add(appointmentId);
@@ -211,11 +264,11 @@ export function NotificationsBell() {
       return next;
     });
     setOpen(false);
-    const basePath = session.role === "OWNER" ? "/owner" : "/collaborator";
+    const basePath = isOwner ? "/owner" : "/collaborator";
     router.push(`${basePath}?appointmentId=${encodeURIComponent(appointmentId)}`);
   };
 
-  const unreadCount = unreadIds.size;
+  const totalBadgeCount = unreadIds.size + (isOwner ? aiPendingCount : 0);
 
   return (
     <div ref={containerRef} className="relative inline-flex items-center">
@@ -226,12 +279,12 @@ export function NotificationsBell() {
         aria-haspopup="menu"
         aria-label={t.notifications.title}
         title={t.notifications.title}
-        className="relative flex h-11 w-11 items-center justify-center rounded-full border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
+        className="relative grid min-h-11 min-w-11 md:min-h-9 md:min-w-9 md:h-9 md:w-9 place-items-center rounded-lg border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
       >
-        <Bell className="h-4 w-4" aria-hidden="true" />
-        {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 font-mono text-[10px] font-bold text-accent-ink tabular-nums">
-            {unreadCount > 9 ? "9+" : unreadCount}
+        <Bell className="size-4" aria-hidden="true" />
+        {totalBadgeCount > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-accent px-1 font-mono text-xs leading-none font-semibold text-accent-ink tabular-nums">
+            {totalBadgeCount > 9 ? "9+" : totalBadgeCount}
           </span>
         )}
       </button>
@@ -239,7 +292,7 @@ export function NotificationsBell() {
       {toastMessage && (
         <div
           role="status"
-          className="fixed bottom-20 right-4 z-50 rounded-2xl border border-accent/30 bg-surface px-4 py-3 text-xs font-semibold text-ink shadow-xl lg:bottom-6"
+          className="fixed bottom-20 right-4 z-50 rounded-xl border border-accent/30 bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink shadow-lg lg:bottom-6"
         >
           <span className="inline-flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-accent" />
@@ -252,35 +305,96 @@ export function NotificationsBell() {
         <div
           role="menu"
           aria-label={t.notifications.title}
-          className="absolute right-0 top-13 z-50 w-80 max-w-[90vw] rounded-2xl border border-border-subtle bg-surface p-3 shadow-xl"
+          className="absolute right-0 top-12 z-50 w-88 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-xl"
         >
-          <div className="mb-2 flex items-center justify-between gap-2 px-1">
-            <p className="text-xs font-bold text-ink">
+          <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3.5 py-2.5">
+            <p className="text-xs font-semibold text-ink">
               {t.notifications.title}
             </p>
-            <div className="flex items-center gap-2">
-            <button type="button" onClick={toggleSound} aria-label={soundEnabled ? t.product.soundOn : t.product.soundOff} title={soundEnabled ? t.product.soundOn : t.product.soundOff} className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-subtle hover:text-ink">
-              {soundEnabled ? <Volume2 className="size-3.5" aria-hidden="true" /> : <VolumeX className="size-3.5" aria-hidden="true" />}
-            </button>
-            {unreadCount > 0 && (
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={handleMarkAllRead}
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline cursor-pointer"
+                onClick={toggleSound}
+                aria-label={
+                  soundEnabled ? t.product.soundOn : t.product.soundOff
+                }
+                title={soundEnabled ? t.product.soundOn : t.product.soundOff}
+                className="grid size-8 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-subtle hover:text-ink cursor-pointer"
               >
-                <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                {t.notifications.markAllRead}
+                {soundEnabled ? (
+                  <Volume2 className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <VolumeX className="size-3.5" aria-hidden="true" />
+                )}
               </button>
-            )}
+              {unreadIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft cursor-pointer"
+                >
+                  <CheckCheck className="size-3.5" aria-hidden="true" />
+                  {t.notifications.markAllRead}
+                </button>
+              )}
             </div>
           </div>
 
+          {/* Seção de Oportunidades e Alertas Proativos da IA */}
+          {isOwner && (
+            <div className="border-b border-border-subtle bg-accent-soft/25">
+              <div className="flex items-center justify-between px-3.5 py-2">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-accent">
+                  <Sparkles className="size-3.5" aria-hidden="true" />
+                  Oportunidades IA ({aiPendingCount})
+                </span>
+                <Link
+                  href="/owner/intelligence"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent hover:underline"
+                >
+                  <span>Abrir Central</span>
+                  <ArrowRight className="size-3" aria-hidden="true" />
+                </Link>
+              </div>
+              {aiInsights.length === 0 ? (
+                <p className="px-3.5 pb-2.5 text-xs text-ink-muted">
+                  Nenhuma oportunidade pendente no radar agora.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border-subtle/50">
+                  {aiInsights.slice(0, 3).map((insight) => (
+                    <li key={insight.id}>
+                      <Link
+                        href="/owner/intelligence"
+                        onClick={() => setOpen(false)}
+                        className="block px-3.5 py-2 text-xs transition-colors hover:bg-accent-soft/50"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-ink truncate">
+                            {insight.title}
+                          </span>
+                          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-[10px] font-mono font-semibold text-accent">
+                            {insight.module}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 line-clamp-2 text-ink-secondary">
+                          {insight.description}
+                        </p>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {recent.length === 0 ? (
-            <p className="px-2 py-6 text-center text-xs text-ink-muted">
+            <p className="px-4 py-6 text-center text-xs text-ink-muted">
               {t.notifications.empty}
             </p>
           ) : (
-            <ul className="max-h-72 space-y-1.5 overflow-y-auto">
+            <ul className="max-h-60 divide-y divide-border-subtle/70 overflow-y-auto">
               {recent.map((appt) => {
                 const isUnread = unreadIds.has(appt.id);
                 return (
@@ -290,10 +404,10 @@ export function NotificationsBell() {
                       role="menuitem"
                       onClick={() => handleSelectNotification(appt.id)}
                       className={[
-                        "w-full text-left rounded-xl border px-3 py-2 text-xs transition-colors cursor-pointer",
+                        "w-full text-left px-3.5 py-2.5 text-xs transition-colors cursor-pointer",
                         isUnread
-                          ? "border-accent/30 bg-accent-soft/40 hover:bg-accent-soft/70"
-                          : "border-border-subtle bg-subtle/40 hover:bg-subtle",
+                          ? "bg-accent-soft/45 hover:bg-accent-soft/75"
+                          : "bg-surface hover:bg-subtle/70",
                       ].join(" ")}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -304,10 +418,10 @@ export function NotificationsBell() {
                           <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />
                         )}
                       </div>
-                      <p className="text-ink-secondary truncate">
+                      <p className="mt-0.5 text-ink-secondary truncate">
                         {appt.serviceNameSnapshot}
                       </p>
-                      <p className="mt-0.5 font-mono text-[11px] text-ink-muted tabular-nums">
+                      <p className="mt-1 font-mono text-xs text-ink-muted tabular-nums">
                         {formatDateTimeInTimezone(
                           appt.startsAt,
                           session.company.timezone,

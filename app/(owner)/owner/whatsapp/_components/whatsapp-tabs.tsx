@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { BarChart3, MessageSquare } from "lucide-react";
+import { Bot, MessageSquare, Sparkles } from "lucide-react";
 import { useLocale } from "@/lib/i18n/locale-context";
 
 export function WhatsAppTabs({
   active,
 }: {
-  active: "inbox" | "intelligence";
+  active: "inbox" | "settings" | "intelligence";
 }) {
   const { locale } = useLocale();
   const es = locale === "es";
@@ -20,17 +20,23 @@ export function WhatsAppTabs({
       icon: MessageSquare,
     },
     {
+      id: "settings" as const,
+      href: "/owner/settings/whatsapp",
+      label: es ? "Recepcionista IA & Conexión" : "Recepcionista IA & Conexão",
+      icon: Bot,
+    },
+    {
       id: "intelligence" as const,
-      href: "/owner/whatsapp/intelligence",
-      label: "WhatsApp Intelligence",
-      icon: BarChart3,
+      href: "/owner/intelligence",
+      label: "IA Intelligence",
+      icon: Sparkles,
     },
   ];
 
   return (
     <div
       role="tablist"
-      aria-label="WhatsApp"
+      aria-label="Recepcionista IA WhatsApp"
       className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-border-subtle bg-surface p-1 shadow-xs"
     >
       {tabs.map((tab) => {

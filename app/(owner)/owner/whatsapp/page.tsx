@@ -250,39 +250,48 @@ export default function WhatsAppInboxPage() {
     }
   }
 
+  function isConversationAiPaused(conv: WhatsAppConversationItem): boolean {
+    if (conv.assignedMode !== "AI_AUTOPILOT") return true;
+    if (conv.aiPausedUntil) {
+      const until = Date.parse(conv.aiPausedUntil);
+      if (!Number.isNaN(until) && until > Date.now()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function handleToggleMode() {
     if (!activeConversation || togglingMode) return;
-    const nextMode: WhatsAppAssignedMode =
-      activeConversation.assignedMode === "AI_AUTOPILOT"
-        ? "HUMAN"
-        : "AI_AUTOPILOT";
+    const currentlyPaused = isConversationAiPaused(activeConversation);
 
     setTogglingMode(true);
     try {
-      const res = await whatsappInboxApi.updateMode(
-        activeConversation.id,
-        nextMode,
-      );
+      const res = currentlyPaused
+        ? await whatsappInboxApi.resumeAi(activeConversation.id)
+        : await whatsappInboxApi.pauseAi(activeConversation.id);
       setActiveConversation(res.conversation);
       setConversations((prev) =>
-        prev.map((c) => (c.id === res.conversation.id ? { ...c, ...res.conversation } : c)),
+        prev.map((c) =>
+          c.id === res.conversation.id ? { ...c, ...res.conversation } : c,
+        ),
       );
       toast.success(
-        nextMode === "HUMAN"
+        currentlyPaused
           ? es
-            ? "Conversación asumida en modo manual."
-            : "Conversa assumida para atendimento manual."
+            ? "IA reactivada para esta conversación."
+            : "IA reativada para esta conversa!"
           : es
-            ? "Conversación devuelta al agente IA."
-            : "Conversa devolvida para o Piloto Automático de IA.",
+            ? "Conversación asumida: IA pausada."
+            : "Conversa assumida: IA pausada para atendimento manual.",
       );
     } catch (error) {
       toast.error(
         error instanceof ApiError
           ? error.message
           : es
-            ? "No fue posible cambiar el modo."
-            : "Não foi possível alterar o modo da conversa.",
+            ? "No fue posible cambiar el estado de la IA."
+            : "Não foi possível alterar o status da IA nesta conversa.",
       );
     } finally {
       setTogglingMode(false);
@@ -595,12 +604,12 @@ export default function WhatsAppInboxPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                      activeConversation.assignedMode === "AI_AUTOPILOT"
+                      !isConversationAiPaused(activeConversation)
                         ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                         : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
                     }`}
                   >
-                    {activeConversation.assignedMode === "AI_AUTOPILOT" ? (
+                    {!isConversationAiPaused(activeConversation) ? (
                       <>
                         <Bot size={13} />
                         {es ? "IA Activa" : "IA Ativa"}
@@ -608,7 +617,7 @@ export default function WhatsAppInboxPage() {
                     ) : (
                       <>
                         <UserRound size={13} />
-                        {es ? "Atención Manual" : "Atendimento Manual"}
+                        {es ? "IA Pausada" : "IA Pausada"}
                       </>
                     )}
                   </span>
@@ -622,18 +631,18 @@ export default function WhatsAppInboxPage() {
                   >
                     {togglingMode ? (
                       <Loader2 size={13} className="animate-spin" />
-                    ) : activeConversation.assignedMode === "AI_AUTOPILOT" ? (
+                    ) : !isConversationAiPaused(activeConversation) ? (
                       <UserRound size={13} />
                     ) : (
                       <Sparkles size={13} />
                     )}
-                    {activeConversation.assignedMode === "AI_AUTOPILOT"
+                    {!isConversationAiPaused(activeConversation)
                       ? es
-                        ? "Asumir Conversación"
-                        : "Assumir Conversa"
+                        ? "Asumir conversación"
+                        : "Assumir conversa"
                       : es
-                        ? "Devolver a la IA"
-                        : "Devolver para IA"}
+                        ? "Reactivar IA"
+                        : "Reativar IA"}
                   </Button>
                 </div>
               </div>

@@ -16,6 +16,7 @@ export interface WhatsAppConversationItem {
   contactName: string | null;
   status: WhatsAppConversationStatus;
   assignedMode: WhatsAppAssignedMode;
+  aiPausedUntil?: string | null;
   unreadCount: number;
   lastMessageAt: string;
   createdAt: string;
@@ -107,6 +108,24 @@ export const whatsappInboxApi = {
       {
         method: "PATCH",
         body: { assignedMode },
+      },
+    ),
+
+  pauseAi: (conversationId: string, durationMinutes?: number) =>
+    apiRequest<{ conversation: WhatsAppConversationItem }>(
+      `/v1/whatsapp/conversations/${encodeURIComponent(conversationId)}/pause-ai`,
+      {
+        method: "POST",
+        body: durationMinutes ? { durationMinutes } : {},
+      },
+    ),
+
+  resumeAi: (conversationId: string) =>
+    apiRequest<{ conversation: WhatsAppConversationItem }>(
+      `/v1/whatsapp/conversations/${encodeURIComponent(conversationId)}/resume-ai`,
+      {
+        method: "POST",
+        body: {},
       },
     ),
 

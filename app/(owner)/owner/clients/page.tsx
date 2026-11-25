@@ -26,6 +26,7 @@ import { useLocale } from "@/lib/i18n/locale-context";
 import { useSession } from "@/components/ui/auth-guard";
 import { AgendaDialog } from "@/components/ui/agenda-controls";
 import { Button } from "@/components/ui/button";
+import { ModuleAiInsightBanner } from "@/components/ui/module-ai-insight-banner";
 import { SensitiveValue } from "@/components/ui/sensitive-value";
 import { ClientDataFields } from "@/components/ui/client-data-fields";
 import { clientFields, selectedClientFields } from "@/lib/company-settings";
@@ -410,6 +411,8 @@ export default function ClientsPage() {
           </button>
         </div>
       </div>
+
+      <ModuleAiInsightBanner module="CLIENTS" />
 
       {/* 3 KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

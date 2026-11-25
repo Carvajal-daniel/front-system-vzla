@@ -30,6 +30,7 @@ import {
   type ConnectEvolutionResponse,
   type WhatsAppConnectionState,
 } from "@/lib/whatsapp-connection";
+import { WhatsAppTabs } from "../../whatsapp/_components/whatsapp-tabs";
 
 const fieldClass =
   "h-10 w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 text-sm text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/25";
@@ -260,6 +261,8 @@ export default function WhatsAppSettingsPage() {
 
   return (
     <div className="space-y-6">
+      <WhatsAppTabs active="settings" />
+
       {/* Cabeçalho */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
@@ -274,12 +277,12 @@ export default function WhatsAppSettingsPage() {
             <span className="grid size-9 place-items-center rounded-xl bg-[#25D366]/15 text-[#25D366]">
               <WhatsAppIcon className="size-5" />
             </span>
-            {es ? "Conexión de WhatsApp y Canales" : "Conexão WhatsApp e Canais"}
+            {es ? "Recepcionista IA y Canales WhatsApp" : "Recepcionista IA & Conexão de Canais"}
           </h1>
           <p className="text-xs sm:text-sm text-ink-muted">
             {es
-              ? "Administra el WhatsApp de atención 1-a-1 (QR Code) y el canal oficial de campañas masivas (Datafy)."
-              : "Gerencie o WhatsApp de atendimento 1-a-1 (QR Code) e o canal oficial de campanhas em massa (Datafy)."}
+              ? "Configura las reglas de la Recepcionista IA y conecta 1 o 2 canales: QR Code (Evolution) y API Oficial Meta / Campañas."
+              : "Configure as regras da Recepcionista IA e conecte 1 ou 2 canais: QR Code (Evolution) para recepção 1-a-1 e API Oficial Meta / Campanhas."}
           </p>
         </div>
 
