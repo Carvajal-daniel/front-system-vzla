@@ -28,6 +28,8 @@ import {
   notifyWhatsAppConnectionUpdated,
   whatsappConnectionApi,
   type ConnectEvolutionResponse,
+  type TenantWhatsAppChannelStatusDTO,
+  type WhatsAppChannelsStatusResponse,
   type WhatsAppConnectionState,
 } from "@/lib/whatsapp-connection";
 import { WhatsAppTabs } from "../../whatsapp/_components/whatsapp-tabs";
@@ -41,6 +43,8 @@ export default function WhatsAppSettingsPage() {
   const { currentPlan } = usePlanLimits();
 
   const [connection, setConnection] = useState<WhatsAppConnectionState | null>(null);
+  const [channelsState, setChannelsState] =
+    useState<WhatsAppChannelsStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -68,15 +72,23 @@ export default function WhatsAppSettingsPage() {
     setDatafyInstanceId(state.datafy.instanceId ?? "");
   }, []);
 
+  const evolutionChannel: TenantWhatsAppChannelStatusDTO | undefined =
+    channelsState?.channels.find((channel) => channel.provider === "EVOLUTION");
+
   const loadConnection = useCallback(
     async (showLoader = true) => {
       if (showLoader) setLoading(true);
       else setRefreshing(true);
 
       try {
-        const state = await whatsappConnectionApi.get();
+        const [state, channels] = await Promise.all([
+          whatsappConnectionApi.get(),
+          whatsappConnectionApi.getChannelsStatus(),
+        ]);
         syncFromState(state);
-        if (state.evolution.status === "CONNECTED") {
+        setChannelsState(channels);
+        const evo = channels.channels.find((c) => c.provider === "EVOLUTION");
+        if (evo?.status === "CONNECTED") {
           setQrModal(null);
         }
       } catch (error) {
@@ -99,15 +111,22 @@ export default function WhatsAppSettingsPage() {
     void loadConnection(true);
   }, [loadConnection]);
 
-  // Atualiza automaticamente enquanto aguarda leitura do QR Code
+  // Polling leve a cada 5s em /v1/whatsapp/channels/status enquanto aguarda leitura do QR Code
+  const currentEvolutionStatus =
+    evolutionChannel?.status ?? connection?.evolution.status ?? "DISCONNECTED";
+
   useEffect(() => {
-    if (!qrModal || connection?.evolution.status === "CONNECTED") return;
+    const shouldPoll =
+      Boolean(qrModal) || currentEvolutionStatus === "QRCODE_PENDING";
+    if (!shouldPoll || currentEvolutionStatus === "CONNECTED") return;
+
     const interval = setInterval(() => {
       void whatsappConnectionApi
-        .get()
-        .then((state) => {
-          syncFromState(state);
-          if (state.evolution.status === "CONNECTED") {
+        .getChannelsStatus()
+        .then((channels) => {
+          setChannelsState(channels);
+          const evo = channels.channels.find((c) => c.provider === "EVOLUTION");
+          if (evo?.status === "CONNECTED") {
             setQrModal(null);
             notifyWhatsAppConnectionUpdated();
             toast.success(
@@ -118,7 +137,7 @@ export default function WhatsAppSettingsPage() {
         .catch(() => undefined);
     }, 5000);
     return () => clearInterval(interval);
-  }, [qrModal, connection?.evolution.status, es, syncFromState]);
+  }, [qrModal, currentEvolutionStatus, es]);
 
   async function handleConnectEvolution() {
     setConnecting(true);
@@ -252,7 +271,15 @@ export default function WhatsAppSettingsPage() {
     }
   }
 
-  const evolutionStatus = connection?.evolution.status ?? "DISCONNECTED";
+  const evolutionStatus = currentEvolutionStatus;
+  const evolutionInstanceName =
+    evolutionChannel?.credentials.instanceName ??
+    connection?.evolution.instanceName ??
+    null;
+  const evolutionPhoneNumber =
+    evolutionChannel?.phoneNumber ?? connection?.evolution.phoneNumber ?? null;
+  const evolutionMode =
+    channelsState?.mode ?? connection?.evolution.mode ?? "MOCK_READY";
   const isEvolutionConnected = evolutionStatus === "CONNECTED";
   const isEvolutionPending = evolutionStatus === "QRCODE_PENDING";
   const isDatafyConnected =
@@ -375,17 +402,17 @@ export default function WhatsAppSettingsPage() {
                     {es ? "Instancia de la empresa" : "Instância da empresa"}
                   </p>
                   <p className="truncate font-mono text-[11px] text-ink-muted">
-                    {connection?.evolution.instanceName}
+                    {evolutionInstanceName ?? "—"}
                   </p>
-                  {connection?.evolution.phoneNumber && (
+                  {evolutionPhoneNumber && (
                     <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                       {es ? "Número conectado:" : "Número conectado:"}{" "}
                       <span className="font-mono">
-                        {connection.evolution.phoneNumber}
+                        {evolutionPhoneNumber}
                       </span>
                     </p>
                   )}
-                  {connection?.evolution.mode === "MOCK_READY" && (
+                  {evolutionMode === "MOCK_READY" && (
                     <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
                       {es
                         ? "Modo desarrollo (MOCK_READY)"
@@ -407,7 +434,7 @@ export default function WhatsAppSettingsPage() {
                       ) : (
                         <QrCode size={14} />
                       )}
-                      {es ? "Conectar WhatsApp" : "Conectar WhatsApp"}
+                      {es ? "Conectar con QR Code" : "Conectar com QR Code"}
                     </Button>
                   )}
 

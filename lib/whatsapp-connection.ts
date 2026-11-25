@@ -37,6 +37,29 @@ export interface ConnectEvolutionResponse {
   mode: "LIVE" | "MOCK_READY";
 }
 
+export interface TenantWhatsAppChannelStatusDTO {
+  id: string;
+  provider: "EVOLUTION" | "META_OFFICIAL" | "MOCK";
+  purpose: "ALL" | "RECEPTION_ONLY" | "CAMPAIGNS_ONLY";
+  phoneNumber: string | null;
+  status: EvolutionConnectionStatus;
+  credentials: {
+    instanceName?: string;
+    phoneNumberId?: string;
+    wabaId?: string;
+    hasAccessToken?: boolean;
+    accessTokenMasked?: string;
+    hasApiKey?: boolean;
+    apiKeyMasked?: string;
+  };
+  updatedAt: string;
+}
+
+export interface WhatsAppChannelsStatusResponse {
+  channels: TenantWhatsAppChannelStatusDTO[];
+  mode: "LIVE" | "MOCK_READY";
+}
+
 export const WHATSAPP_CONNECTION_UPDATED_EVENT =
   "cloudgo-whatsapp-connection-updated";
 
@@ -50,15 +73,26 @@ export const whatsappConnectionApi = {
   get: (signal?: AbortSignal) =>
     apiRequest<WhatsAppConnectionState>("/v1/whatsapp/connection", { signal }),
 
-  connectEvolution: () =>
-    apiRequest<ConnectEvolutionResponse>("/v1/whatsapp/evolution/connect", {
-      method: "POST",
+  getChannelsStatus: (signal?: AbortSignal) =>
+    apiRequest<WhatsAppChannelsStatusResponse>("/v1/whatsapp/channels/status", {
+      signal,
     }),
 
+  connectEvolution: () =>
+    apiRequest<ConnectEvolutionResponse>(
+      "/v1/whatsapp/channels/evolution/connect",
+      {
+        method: "POST",
+      },
+    ),
+
   disconnectEvolution: () =>
-    apiRequest<{ status: "DISCONNECTED" }>("/v1/whatsapp/evolution/disconnect", {
-      method: "POST",
-    }),
+    apiRequest<{ status: "DISCONNECTED" }>(
+      "/v1/whatsapp/channels/evolution/disconnect",
+      {
+        method: "POST",
+      },
+    ),
 
   saveDatafy: (body: {
     enabled?: boolean;
