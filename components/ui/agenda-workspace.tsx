@@ -234,8 +234,9 @@ function filterStatus(row: Appointment, filter: StatusFilter) {
   return !filter || (filter === "CANCELED_OR_ABSENT" ? row.status === "CANCELED" || row.status === "NO_SHOW" : row.status === filter);
 }
 
-export function AgendaWorkspace({ session, renderReceipt }: {
+export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
   session: MeResponse;
+  initialDate?: string;
   renderReceipt?: (props: { appointmentId: string; timezone: string; onClose: () => void; onChanged: () => void }) => ReactNode;
 }) {
   const { locale, t } = useLocale();
@@ -256,8 +257,8 @@ export function AgendaWorkspace({ session, renderReceipt }: {
   const canManagePayments = isOwner && !!renderReceipt;
   const clock = useMemo(() => agendaClock(timezone), [timezone]);
   const [initialToday] = useState(() => getTodayIsoDateInTimezone(timezone));
-  const [focus, setFocus] = useState(initialToday);
-  const [miniMonth, setMiniMonth] = useState(initialToday);
+  const [focus, setFocus] = useState(initialDate ?? initialToday);
+  const [miniMonth, setMiniMonth] = useState(initialDate ?? initialToday);
   const [view, setView] = useState<AgendaView>("day");
   const [selectedPersonIds, setSelectedPersonIds] = useState<ReadonlySet<string> | null>(null);
   const [status, setStatus] = useState<Filter>("");
@@ -471,11 +472,11 @@ export function AgendaWorkspace({ session, renderReceipt }: {
     const ctl = new AbortController();
     void apiRequest<Appointment>(`/appointments/${encodeURIComponent(targetId)}`, { signal: ctl.signal }).then((row) => {
       if (ctl.signal.aborted) return;
-      const date = clock(row.startsAt).date;
+      const date = initialDate ?? clock(row.startsAt).date;
       setFocus(date); setMiniMonth(date); setOpened(row); setSelectedPersonIds(null); setStatus("");
     }).catch((error) => { if (!ctl.signal.aborted) setActionError(error instanceof ApiError && error.status === 404 ? copy.empty : t.errors.networkDescription); });
     return () => ctl.abort();
-  }, [clock, copy.empty, targetId, t.errors.networkDescription]);
+  }, [clock, copy.empty, initialDate, targetId, t.errors.networkDescription]);
 
   const staff = useMemo(() => new Map<string, AgendaPerson>((isOwner ? catalog.people : [session]).map((person) => [person.id, person])), [isOwner, catalog.people, session]);
   const activePeople = useMemo(() => isOwner ? catalog.people.filter((person) => person.isActive) : [session], [isOwner, catalog.people, session]);

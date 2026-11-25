@@ -10,6 +10,15 @@ export function calendarDate(day: string) {
   return new Date(`${day}T00:00:00Z`);
 }
 
+export function parseAgendaDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+
+  const date = calendarDate(value);
+  if (Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value) {
+    return value;
+  }
+}
+
 export function shiftAgendaDay(day: string, steps: number) {
   const date = calendarDate(day);
   date.setUTCDate(date.getUTCDate() + steps);

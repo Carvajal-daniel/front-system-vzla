@@ -97,6 +97,7 @@ export function resolveModuleFromPathname(
   pathname: string,
 ): IntelligenceModule | undefined {
   if (
+    pathname === "/owner/agenda" ||
     pathname.startsWith("/owner/appointments") ||
     pathname.startsWith("/owner/blocks")
   ) {

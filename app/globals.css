@@ -267,6 +267,46 @@
 }
 
 /* ============================================================================
+ * Acabamento exclusivo dos dashboards autenticados (.dashboard-shell)
+ * Não afeta Landing (/), Auth (/login, /register), Booking (/book/*) ou Review.
+ * ========================================================================== */
+.dashboard-shell {
+  caret-color: var(--accent-primary);
+}
+
+.dashboard-shell ::selection {
+  background-color: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+  color: var(--ink-primary);
+}
+
+.dashboard-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--border-strong) 55%, transparent) transparent;
+}
+
+.dashboard-shell *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dashboard-shell *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dashboard-shell *::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--border-strong) 55%, transparent);
+  border-radius: 9999px;
+}
+
+.dashboard-shell *::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-strong);
+}
+
+.dashboard-shell a:not([class*="no-underline"]):hover {
+  text-underline-offset: 3px;
+}
+
+/* ============================================================================
  * Paletas dos dashboards
  * ========================================================================== */
 [data-palette="cyan"] {

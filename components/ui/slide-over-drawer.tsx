@@ -42,14 +42,14 @@ export function SlideOverDrawer({
           data-theme={mode}
           className={[
             mode === "dark" ? "dark" : "",
-            "animate-drawer-in fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-md flex-col border-l border-border-subtle bg-surface text-ink shadow-2xl outline-none",
+            "dashboard-shell animate-drawer-in fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-md flex-col border-l border-border-subtle bg-surface text-ink shadow-2xl outline-none",
           ]
             .filter(Boolean)
             .join(" ")}
         >
-          <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-4">
+          <div className="flex items-start justify-between gap-3 border-b border-border-subtle px-4 py-3.5 sm:px-5">
             <div className="min-w-0">
-              <Dialog.Title className="text-title-sm font-semibold text-ink">
+              <Dialog.Title className="text-base sm:text-lg font-semibold tracking-tight text-ink">
                 {title}
               </Dialog.Title>
               {description && (
@@ -61,13 +61,13 @@ export function SlideOverDrawer({
             <Dialog.Close
               type="button"
               aria-label={t.common.close}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-subtle hover:text-ink transition-colors cursor-pointer"
+              className="grid min-h-11 min-w-11 md:min-h-9 md:min-w-9 shrink-0 place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink transition-colors cursor-pointer"
             >
-              <X className="h-5 w-5" aria-hidden="true" />
+              <X className="size-4" aria-hidden="true" />
             </Dialog.Close>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-5 py-5">{children}</div>
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">{children}</div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

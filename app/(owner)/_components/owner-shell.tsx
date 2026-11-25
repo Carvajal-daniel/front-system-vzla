@@ -9,6 +9,7 @@ import {
   WHATSAPP_CONNECTION_UPDATED_EVENT,
   whatsappConnectionApi,
   type EvolutionConnectionStatus,
+  type WhatsAppConnectionUpdatedDetail,
 } from "@/lib/whatsapp-connection";
 import { type CopilotHistoryMessage } from "@/lib/whatsapp-intelligence";
 import {
@@ -711,7 +712,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const [whatsappState, setWhatsappState] = useState<EvolutionConnectionStatus | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(true);
   const [whatsappRefresh, setWhatsappRefresh] = useState(0);
-  const isAgendaPage = pathname === "/owner/appointments";
+  const isAgendaPage = pathname === "/owner/appointments" || pathname === "/owner/agenda";
   const whatsappConnected = whatsappState === "CONNECTED";
   const whatsappPending = whatsappState === "QRCODE_PENDING";
   const whatsappStatus = whatsappLoading
@@ -726,9 +727,23 @@ export function OwnerShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const request = new AbortController();
-    void whatsappConnectionApi.get(request.signal)
-      .then((connection) => {
-        if (!request.signal.aborted) setWhatsappState(connection.evolution.status);
+    // Lê o status oficial do canal Evolution em /v1/whatsapp/channels/status (mesma fonte da tela /owner/settings/whatsapp),
+    // com fallback para /v1/whatsapp/connection caso o tenant ainda não tenha registro em tenant_whatsapp_channels.
+    void whatsappConnectionApi
+      .getChannelsStatus(request.signal)
+      .then(async (channelsResponse) => {
+        if (request.signal.aborted) return;
+        const evolutionChannel = channelsResponse.channels.find(
+          (channel) => channel.provider === "EVOLUTION",
+        );
+        if (evolutionChannel) {
+          setWhatsappState(evolutionChannel.status);
+          return;
+        }
+        const legacyConnection = await whatsappConnectionApi.get(request.signal);
+        if (!request.signal.aborted) {
+          setWhatsappState(legacyConnection.evolution.status);
+        }
       })
       .catch(() => {
         if (!request.signal.aborted) setWhatsappState(null);
@@ -740,7 +755,14 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   }, [session.company.id, whatsappRefresh]);
 
   useEffect(() => {
-    const handleConnectionUpdated = () => {
+    const handleConnectionUpdated = (event: Event) => {
+      const detail = (
+        event as CustomEvent<WhatsAppConnectionUpdatedDetail | undefined>
+      ).detail;
+      if (detail?.status) {
+        setWhatsappState(detail.status);
+        setWhatsappLoading(false);
+      }
       setWhatsappRefresh((value) => value + 1);
     };
     window.addEventListener(WHATSAPP_CONNECTION_UPDATED_EVENT, handleConnectionUpdated);
@@ -837,7 +859,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const isActive = (href: string) => {
     // Garante que o calendário principal não fique ativo nas sub-páginas /list e /restore
     if (href === "/owner/appointments") {
-      return pathname === "/owner/appointments";
+      return isAgendaPage;
     }
     // Garante que a tela de Comandas permaneça ativa em /owner/finance e /owner/finance/orders/*, mas não em comissões ou contas a pagar
     if (href === "/owner/finance") {
@@ -936,7 +958,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               <Link
                 href="/owner/appointments"
                 className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                  pathname === "/owner/appointments"
+                  isAgendaPage
                     ? "bg-accent-soft text-accent border border-accent/25"
                     : "border border-border-subtle bg-surface text-ink-secondary hover:text-ink hover:border-border-strong"
                 }`}

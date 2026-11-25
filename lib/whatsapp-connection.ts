@@ -63,9 +63,23 @@ export interface WhatsAppChannelsStatusResponse {
 export const WHATSAPP_CONNECTION_UPDATED_EVENT =
   "cloudgo-whatsapp-connection-updated";
 
-export function notifyWhatsAppConnectionUpdated(): void {
+export interface WhatsAppConnectionUpdatedDetail {
+  status?: EvolutionConnectionStatus;
+}
+
+// Dispara evento global para manter a Sidebar e a tela de configurações sincronizadas imediatamente.
+export function notifyWhatsAppConnectionUpdated(
+  status?: EvolutionConnectionStatus,
+): void {
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event(WHATSAPP_CONNECTION_UPDATED_EVENT));
+    window.dispatchEvent(
+      new CustomEvent<WhatsAppConnectionUpdatedDetail>(
+        WHATSAPP_CONNECTION_UPDATED_EVENT,
+        {
+          detail: status ? { status } : {},
+        },
+      ),
+    );
   }
 }
 

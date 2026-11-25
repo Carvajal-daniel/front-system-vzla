@@ -18,8 +18,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { AgendaDialog } from "@/components/ui/agenda-controls";
+import { useSession } from "@/components/ui/auth-guard";
 import { Button } from "@/components/ui/button";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
+import { agendaClock, parseAgendaDate } from "@/lib/agenda";
 import { ApiError } from "@/lib/api-client";
 import { useLocale } from "@/lib/i18n/locale-context";
 import {
@@ -84,8 +86,59 @@ function formatToolLabel(tool: AiExecutedToolAction["tool"], es: boolean): strin
   }
 }
 
+function bookingAgendaHref(
+  action: AiExecutedToolAction,
+  message: string,
+  clock: ReturnType<typeof agendaClock>,
+) {
+  const data = action.data && typeof action.data === "object"
+    ? action.data as Record<string, unknown>
+    : undefined;
+  const appointmentId = [data?.appointmentId, data?.id, action.input?.appointmentId]
+    .find((id): id is string => typeof id === "string" && id.trim().length > 0);
+
+  let date: string | undefined;
+  for (const metadata of [data, action.input]) {
+    date = parseAgendaDate(metadata?.date) ?? parseAgendaDate(metadata?.localDate);
+    if (date) break;
+
+    const startsAt = metadata?.startsAt;
+    if (typeof startsAt !== "string") continue;
+    const localDate = parseAgendaDate(startsAt.slice(0, 10));
+    if (!localDate) continue;
+    if (startsAt === localDate) {
+      date = localDate;
+      break;
+    }
+
+    const instant = Date.parse(startsAt);
+    if (Number.isFinite(instant)) {
+      date = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(startsAt) ? clock(instant).date : localDate;
+      break;
+    }
+  }
+
+  if (!date) {
+    for (const [, day, month, year] of message.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g)) {
+      date = parseAgendaDate(`${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`);
+      if (date) break;
+    }
+  }
+
+  return {
+    pathname: "/owner/agenda",
+    query: {
+      ...(date ? { date } : {}),
+      ...(appointmentId ? { appointmentId: appointmentId.trim() } : {}),
+    },
+  };
+}
+
 export default function WhatsAppInboxPage() {
   const { locale } = useLocale();
+  const { session } = useSession();
+  const timezone = session.company?.timezone || "America/Sao_Paulo";
+  const clock = useMemo(() => agendaClock(timezone), [timezone]);
   const es = locale === "es";
 
   const [conversations, setConversations] = useState<WhatsAppConversationItem[]>([]);
@@ -725,10 +778,10 @@ export default function WhatsAppInboxPage() {
                                   {action.tool === "criar_agendamento" &&
                                     action.ok && (
                                       <Link
-                                        href="/owner/appointments"
+                                        href={bookingAgendaHref(action, msg.content, clock)}
                                         className="font-semibold text-accent underline"
                                       >
-                                        {es ? "Ver agenda" : "Ver agenda"}
+                                        Ver agenda
                                       </Link>
                                     )}
                                 </div>

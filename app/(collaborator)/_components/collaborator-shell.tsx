@@ -78,25 +78,25 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
       {/* Sidebar retrátil à esquerda (desktop) */}
       <motion.aside
         initial={false}
-        animate={{ width: collapsed ? 76 : 260 }}
-        transition={{ duration: reducedMotion ? 0 : 0.25, ease: [0.23, 1, 0.32, 1] }}
+        animate={{ width: collapsed ? 76 : 232 }}
+        transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.23, 1, 0.32, 1] }}
         className="hidden md:flex md:flex-col md:fixed md:inset-y-0 z-30 border-r border-border-subtle bg-surface overflow-visible"
       >
         <div
           className={[
-            "flex items-center border-b border-border-subtle py-4",
-            collapsed ? "justify-center px-2" : "justify-between gap-2 px-4",
+            "flex h-14 items-center border-b border-border-subtle",
+            collapsed ? "justify-center px-2" : "justify-between gap-2 px-3.5",
           ].join(" ")}
         >
           {!collapsed && (
             <div className="flex items-center gap-2.5 min-w-0">
               <CompanyAvatar url={session.company.avatarUrl} />
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">
+                <p className="truncate text-sm font-semibold leading-tight text-ink">
                   {session.company.companyName}
                 </p>
-                <p className="inline-flex items-center gap-1 text-[11px] font-mono text-ink-muted truncate">
-                  <Globe2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <p className="mt-0.5 inline-flex items-center gap-1 text-xs font-mono text-ink-muted truncate">
+                  <Globe2 className="size-3 shrink-0" aria-hidden="true" />
                   {session.company.timezone}
                 </p>
               </div>
@@ -112,19 +112,19 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
             title={
               collapsed ? t.common.expandSidebar : t.common.collapseSidebar
             }
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border-subtle bg-subtle/60 text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
+            className="grid size-9 shrink-0 place-items-center rounded-lg border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
           >
             {collapsed ? (
-              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+              <PanelLeftOpen className="size-4" aria-hidden="true" />
             ) : (
-              <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+              <PanelLeftClose className="size-4" aria-hidden="true" />
             )}
           </button>
         </div>
 
         <nav
           aria-label="Navegação do colaborador"
-          className="flex-1 space-y-1.5 p-3 overflow-y-auto"
+          className="flex-1 space-y-1 p-2.5 overflow-y-auto"
         >
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -136,21 +136,21 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
                 aria-current={active ? "page" : undefined}
                 title={collapsed ? item.label : undefined}
                 className={[
-                  "group relative flex min-h-11 items-center rounded-xl text-sm font-semibold transition-colors cursor-pointer",
-                  collapsed ? "justify-center px-0" : "gap-3 px-3.5",
+                  "group relative flex min-h-10 items-center rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                  collapsed ? "justify-center px-0" : "gap-2.5 px-3",
                   active
-                    ? "bg-accent text-accent-ink shadow-xs"
+                    ? "bg-accent text-accent-ink font-semibold shadow-xs"
                     : "text-ink-secondary hover:bg-subtle hover:text-ink",
                 ].join(" ")}
               >
                 {active && !collapsed && (
                   <motion.span
                     layoutId="collab-sidebar-active"
-                    className="absolute left-0 top-2.5 bottom-2.5 w-1 rounded-r-full bg-accent-ink/80"
+                    className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-accent-ink/80"
                     transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
                   />
                 )}
-                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <Icon className="size-4 shrink-0" aria-hidden="true" />
                 {!collapsed && <span className="truncate">{item.label}</span>}
 
                 {/* Tooltip flutuante elegante no modo compacto */}
@@ -167,13 +167,13 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="border-t border-border-subtle p-3 space-y-2">
+        <div className="border-t border-border-subtle p-2.5 space-y-2">
           <Link
             href="/collaborator/profile"
             title={collapsed ? session.name : undefined}
             className={[
-              "flex items-center rounded-xl bg-subtle/80 transition-colors hover:bg-subtle cursor-pointer",
-              collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-2.5",
+              "flex items-center rounded-lg bg-subtle/70 transition-colors hover:bg-subtle cursor-pointer",
+              collapsed ? "justify-center p-2" : "gap-2.5 px-2.5 py-2",
             ].join(" ")}
           >
             {session.avatarUrl ? (
@@ -181,10 +181,10 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
               <img
                 src={session.avatarUrl}
                 alt={session.name}
-                className="h-8 w-8 shrink-0 rounded-full object-cover border border-border-subtle"
+                className="size-8 shrink-0 rounded-full object-cover border border-border-subtle"
               />
             ) : (
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-bold text-accent">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">
                 {getInitials(session.name)}
               </span>
             )}
@@ -193,7 +193,7 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs font-semibold text-ink">
                   {session.name}
                 </p>
-                <p className="truncate text-[11px] text-ink-muted">
+                <p className="truncate text-xs text-ink-muted">
                   {session.email}
                 </p>
               </div>
@@ -206,11 +206,11 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
             aria-label={t.common.logout}
             title={collapsed ? t.common.logout : undefined}
             className={[
-              "flex min-h-11 w-full items-center justify-center rounded-xl border border-border-strong bg-surface text-xs font-semibold text-ink-secondary transition-colors hover:bg-subtle hover:text-ink cursor-pointer",
+              "flex min-h-10 w-full items-center justify-center rounded-lg border border-border-subtle bg-surface text-xs font-semibold text-ink-secondary transition-colors hover:border-border-strong hover:bg-subtle hover:text-ink cursor-pointer",
               collapsed ? "px-0" : "gap-2 px-3",
             ].join(" ")}
           >
-            <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <LogOut className="size-4 shrink-0" aria-hidden="true" />
             {!collapsed && <span>{t.common.logout}</span>}
           </button>
         </div>
@@ -219,22 +219,22 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
       {/* Conteúdo principal + Topbar limpo */}
       <div
         className={[
-          "flex flex-1 flex-col min-w-0 transition-[padding] duration-250 ease-out",
-          collapsed ? "md:pl-[76px]" : "md:pl-[260px]",
+          "flex flex-1 flex-col min-w-0 transition-[padding] duration-220 ease-out",
+          collapsed ? "md:pl-[76px]" : "md:pl-[232px]",
         ].join(" ")}
       >
-        <header data-shell-header className="sticky top-0 z-20 border-b border-border-subtle bg-surface/90 backdrop-blur-md">
-          <div className="flex w-full items-center justify-between gap-3 px-4 py-3 lg:px-6">
+        <header data-shell-header className="sticky top-0 z-20 h-14 border-b border-border-subtle bg-surface/95 backdrop-blur-md">
+          <div className="flex h-full w-full items-center justify-between gap-3 px-3.5 sm:px-5 lg:px-6">
             <div className="min-w-0">
-              <p className="text-xs font-medium text-ink-muted md:hidden truncate">
+              <p className="text-xs font-medium text-ink-muted md:hidden truncate leading-none mb-0.5">
                 {session.company.companyName}
               </p>
-              <h1 className="text-base sm:text-lg font-semibold tracking-tight text-ink truncate">
+              <h1 className="text-base sm:text-lg font-semibold tracking-tight text-ink truncate leading-tight">
                 {activeItem.label}
               </h1>
             </div>
 
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
               <NotificationsBell />
               <ThemeCustomizer />
               <LocaleSwitcher />
@@ -243,25 +243,25 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
                 onClick={logout}
                 aria-label={t.common.logout}
                 title={t.common.logout}
-                className="flex md:hidden h-10 w-10 items-center justify-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:text-ink cursor-pointer"
+                className="grid md:hidden min-h-11 min-w-11 place-items-center rounded-lg border border-border-subtle bg-surface text-ink-secondary hover:border-border-strong hover:text-ink cursor-pointer"
               >
-                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <LogOut className="size-4" aria-hidden="true" />
               </button>
             </div>
           </div>
         </header>
 
-        <main className="w-full flex-1 px-4 py-6 pb-24 lg:px-6 lg:pb-12">
+        <main className="w-full flex-1 px-3.5 py-5 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5 lg:px-6 lg:py-6 lg:pb-10">
           {children}
         </main>
       </div>
 
-      {/* Bottom Bar Mobile (alvos de toque confortáveis >= 48px) */}
+      {/* Bottom Bar Mobile com safe-area e alvos de toque confortáveis (>= 48px) */}
       <nav
         aria-label="Navegação móvel"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-border-subtle bg-surface/95 backdrop-blur-md md:hidden shadow-lg"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-border-subtle bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden shadow-lg"
       >
-        <div className="grid grid-cols-4 max-w-sm mx-auto">
+        <div className="grid w-full max-w-lg grid-cols-4 mx-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -271,12 +271,18 @@ export function CollaboratorShell({ children }: { children: ReactNode }) {
                 href={item.href}
                 aria-current={active ? "page" : undefined}
                 className={[
-                  "flex min-h-14 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition-colors",
-                  active ? "text-accent font-bold" : "text-ink-muted hover:text-ink",
+                  "relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 px-1 py-1.5 text-xs font-medium transition-colors",
+                  active ? "text-accent font-semibold" : "text-ink-muted hover:text-ink",
                 ].join(" ")}
               >
-                <Icon className="h-4.5 w-4.5 shrink-0" aria-hidden="true" />
-                <span className="truncate max-w-full text-center">{item.label}</span>
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-0 h-0.5 w-8 rounded-full bg-accent"
+                  />
+                )}
+                <Icon className="size-4.5 shrink-0" aria-hidden="true" />
+                <span className="w-full truncate text-center leading-tight">{item.label}</span>
               </Link>
             );
           })}

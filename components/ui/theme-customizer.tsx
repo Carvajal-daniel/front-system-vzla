@@ -59,12 +59,12 @@ export function ThemeCustomizer({ className = "" }: { className?: string }) {
         onClick={toggleMode}
         aria-label={mode === "dark" ? t.theme.toggleLight : t.theme.toggleDark}
         title={mode === "dark" ? t.theme.toggleLight : t.theme.toggleDark}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
+        className="grid min-h-11 min-w-11 md:min-h-9 md:min-w-9 md:h-9 md:w-9 place-items-center rounded-lg border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
       >
         {mode === "dark" ? (
-          <Sun className="h-4 w-4" aria-hidden="true" />
+          <Sun className="size-4" aria-hidden="true" />
         ) : (
-          <Moon className="h-4 w-4" aria-hidden="true" />
+          <Moon className="size-4" aria-hidden="true" />
         )}
       </button>
 
@@ -75,16 +75,16 @@ export function ThemeCustomizer({ className = "" }: { className?: string }) {
         aria-haspopup="menu"
         aria-label={t.theme.paletteLabel}
         title={t.theme.paletteLabel}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
+        className="grid min-h-11 min-w-11 md:min-h-9 md:min-w-9 md:h-9 md:w-9 place-items-center rounded-lg border border-border-subtle bg-surface text-ink-secondary transition-colors hover:border-border-strong hover:text-ink cursor-pointer"
       >
-        <Palette className="h-4 w-4 text-accent" aria-hidden="true" />
+        <Palette className="size-4 text-accent" aria-hidden="true" />
       </button>
 
       {open && (
         <div
           role="menu"
           aria-label={t.theme.paletteLabel}
-          className="absolute right-0 top-13 z-50 w-56 rounded-2xl border border-border-subtle bg-surface p-3 shadow-lg"
+          className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-border-subtle bg-surface p-3 shadow-xl"
         >
           <p className="mb-2.5 px-1 text-xs font-semibold text-ink-secondary">
             {t.theme.paletteLabel}
