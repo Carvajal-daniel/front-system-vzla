@@ -23,6 +23,7 @@ import { ApiError, apiRequest, getApiBaseUrl } from "@/lib/api-client";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import {
   authorizeMercadoPagoOAuth,
+  connectExistingAsaas,
   createAsaasExpressSubaccount,
   disconnectMercadoPagoOAuth,
   getPaymentConnectionStatus,
@@ -81,10 +82,9 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
   const [asaasAddressNumber, setAsaasAddressNumber] = useState("");
   const [asaasPostalCode, setAsaasPostalCode] = useState("");
 
-  // Acordeão de chave manual Asaas
+  // Acordeão de conexão Asaas existente via API Key (sem exigir token de webhook)
   const [manualAsaasOpen, setManualAsaasOpen] = useState(false);
   const [manualApiKey, setManualApiKey] = useState("");
-  const [manualWebhookToken, setManualWebhookToken] = useState("");
   const [manualStaticPixKey, setManualStaticPixKey] = useState("");
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState("");
@@ -226,24 +226,23 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
   const handleSaveManualAsaas = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (savingManual) return;
+    const trimmedKey = manualApiKey.trim();
+    if (trimmedKey.length < 12) {
+      setManualError("Informe uma API Key válida do Asaas.");
+      return;
+    }
     setSavingManual(true);
     setManualError("");
     try {
-      await apiRequest<GatewaySettings>("/payments/config", {
-        method: "PUT",
-        body: {
-          paymentProvider: "ASAAS",
-          staticPixKey: manualStaticPixKey.trim() || null,
-          ...(manualApiKey.trim() ? { providerApiKey: manualApiKey.trim() } : {}),
-          ...(manualWebhookToken.trim() ? { webhookToken: manualWebhookToken.trim() } : {}),
-        },
+      await connectExistingAsaas({
+        apiKey: trimmedKey,
+        staticPixKey: manualStaticPixKey.trim() || null,
       });
       setManualApiKey("");
-      setManualWebhookToken("");
-      toast.success("Credenciais manuais do Asaas salvas com sucesso!");
+      toast.success("Conta Asaas conectada com sucesso!");
       await loadPaymentData();
     } catch (error) {
-      setManualError(paymentError(error, "Não foi possível salvar a chave manual do Asaas."));
+      setManualError(paymentError(error, "Não foi possível validar a API Key do Asaas."));
     } finally {
       setSavingManual(false);
     }
@@ -277,6 +276,11 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
   const isMpConnected = status?.provider === "MERCADO_PAGO" && status.connected;
   const isAsaasConnected = status?.provider === "ASAAS" && status.connected;
   const isSandboxActive = status?.provider === "SANDBOX" && status.connected;
+  const mpOAuthAvailable = status ? status.capabilities.mercadoPagoOAuthAvailable : true;
+  const asaasExpressAvailable = status ? status.capabilities.asaasExpressAvailable : true;
+  const highlightFallbackOptions = Boolean(
+    status && !status.connected && (!mpOAuthAvailable || !asaasExpressAvailable),
+  );
 
   return (
     <section className="space-y-4" aria-labelledby="payment-hub-heading">
@@ -455,9 +459,9 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
             ) : (
               <Button
                 type="button"
-                disabled={connectingMp}
+                disabled={connectingMp || !mpOAuthAvailable}
                 onClick={() => void handleConnectMercadoPago()}
-                className="w-full cursor-pointer bg-sky-600 text-white hover:bg-sky-700 sm:w-auto"
+                className="w-full cursor-pointer bg-sky-600 text-white hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
               >
                 {connectingMp ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -467,9 +471,9 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
                 {connectingMp ? "Redirecionando…" : "Conectar com Mercado Pago"}
               </Button>
             )}
-            {!isMpConnected && status && !status.capabilities.mercadoPagoOAuthAvailable && (
-              <span className="text-[11px] text-ink-muted">
-                OAuth aguardando credenciais do aplicativo no servidor.
+            {!isMpConnected && status && !mpOAuthAvailable && (
+              <span className="inline-flex items-center rounded-full border border-border-subtle bg-canvas px-2.5 py-1 text-[11px] font-medium text-ink-muted">
+                Aguardando configuração da plataforma
               </span>
             )}
           </div>
@@ -517,77 +521,69 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
+                disabled={!asaasExpressAvailable}
                 onClick={openAsaasModal}
-                className="w-full cursor-pointer bg-accent text-accent-ink hover:bg-accent-hover sm:w-auto"
+                className="w-full cursor-pointer bg-accent text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
               >
                 <Sparkles className="size-4" aria-hidden />
                 {isAsaasConnected ? "Recriar / Atualizar Conta Asaas" : "Ativar Conta Asaas Automática"}
               </Button>
-              {status && !status.capabilities.asaasExpressAvailable && !isAsaasConnected && (
-                <span className="text-[11px] text-ink-muted">
-                  Ativação expressa aguarda chave mestra no servidor.
+              {status && !asaasExpressAvailable && !isAsaasConnected && (
+                <span className="inline-flex items-center rounded-full border border-border-subtle bg-canvas px-2.5 py-1 text-[11px] font-medium text-ink-muted">
+                  Aguardando configuração da plataforma
                 </span>
               )}
             </div>
 
-            {/* Acordeão discreto para chave manual */}
-            <div className="border-t border-border-subtle pt-2.5">
+            {/* Conexão direta de conta Asaas existente via API Key (sem exigir webhook token) */}
+            <div
+              className={`border-t border-border-subtle pt-2.5 ${
+                highlightFallbackOptions && !isAsaasConnected
+                  ? "rounded-xl border border-accent/35 bg-accent/5 p-3"
+                  : ""
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => setManualAsaasOpen((open) => !open)}
-                className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-ink-secondary hover:text-ink"
+                className="flex w-full cursor-pointer items-center justify-between gap-1.5 text-xs font-semibold text-ink hover:text-accent"
               >
-                <KeyRound className="size-3.5" aria-hidden />
-                Já possui conta Asaas? Inserir chave manualmente
-                {manualAsaasOpen ? (
+                <span className="flex items-center gap-1.5">
+                  <KeyRound className="size-3.5 text-accent" aria-hidden />
+                  Já possui conta Asaas? Conectar via API Key
+                </span>
+                {manualAsaasOpen || (highlightFallbackOptions && !isAsaasConnected) ? (
                   <ChevronUp className="size-3.5" aria-hidden />
                 ) : (
                   <ChevronDown className="size-3.5" aria-hidden />
                 )}
               </button>
 
-              {manualAsaasOpen && (
+              {(manualAsaasOpen || (highlightFallbackOptions && !isAsaasConnected)) && (
                 <form onSubmit={handleSaveManualAsaas} className="mt-3 space-y-3 rounded-xl border border-border-subtle bg-canvas/40 p-3.5">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="space-y-1 text-xs font-medium text-ink">
-                      API Key do Asaas
-                      <input
-                        type="password"
-                        value={manualApiKey}
-                        onChange={(e) => setManualApiKey(e.target.value)}
-                        minLength={12}
-                        maxLength={1000}
-                        required={!(gatewayConfig?.paymentProvider === "ASAAS" && gatewayConfig.hasProviderApiKey)}
-                        autoComplete="new-password"
-                        placeholder={
-                          gatewayConfig?.paymentProvider === "ASAAS" && gatewayConfig.hasProviderApiKey
-                            ? "Chave já cadastrada"
-                            : "$aact_..."
-                        }
-                        className={paymentFieldClass}
-                      />
-                    </label>
-                    <label className="space-y-1 text-xs font-medium text-ink">
-                      Token secreto do webhook
-                      <input
-                        type="password"
-                        value={manualWebhookToken}
-                        onChange={(e) => setManualWebhookToken(e.target.value)}
-                        minLength={32}
-                        maxLength={256}
-                        required={!(gatewayConfig?.paymentProvider === "ASAAS" && gatewayConfig.hasWebhookToken)}
-                        autoComplete="new-password"
-                        placeholder={
-                          gatewayConfig?.paymentProvider === "ASAAS" && gatewayConfig.hasWebhookToken
-                            ? "Token já cadastrado"
-                            : "Mínimo 32 caracteres"
-                        }
-                        className={paymentFieldClass}
-                      />
-                    </label>
-                  </div>
                   <label className="block space-y-1 text-xs font-medium text-ink">
-                    Chave Pix estática de fallback (opcional)
+                    API Key do Asaas
+                    <input
+                      type="password"
+                      value={manualApiKey}
+                      onChange={(e) => setManualApiKey(e.target.value)}
+                      minLength={12}
+                      maxLength={1000}
+                      required
+                      autoComplete="new-password"
+                      placeholder={
+                        gatewayConfig?.paymentProvider === "ASAAS" && gatewayConfig.hasProviderApiKey
+                          ? "Cole uma nova API Key para atualizar"
+                          : "$aact_..."
+                      }
+                      className={paymentFieldClass}
+                    />
+                    <span className="block text-[11px] font-normal text-ink-muted">
+                      Encontre no painel do Asaas em <strong>Integrações → Chaves de API</strong>. O webhook é configurado automaticamente.
+                    </span>
+                  </label>
+                  <label className="block space-y-1 text-xs font-medium text-ink">
+                    Chave Pix estática (opcional)
                     <input
                       type="text"
                       value={manualStaticPixKey}
@@ -605,10 +601,9 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
                   <Button
                     type="submit"
                     disabled={savingManual}
-                    variant="outline"
-                    className="cursor-pointer"
+                    className="cursor-pointer bg-accent text-accent-ink hover:bg-accent-hover"
                   >
-                    {savingManual ? "Salvando…" : "Salvar chave manual do Asaas"}
+                    {savingManual ? "Validando e conectando…" : "Conectar conta Asaas"}
                   </Button>
                 </form>
               )}
@@ -618,7 +613,13 @@ export function PaymentGatewaySettings({ onStatusChange }: PaymentGatewaySetting
       </div>
 
       {/* Card Modo Sandbox (Testes) */}
-      <div className="flex flex-col gap-3 rounded-2xl border border-border-subtle bg-surface p-4 shadow-xs sm:flex-row sm:items-center sm:justify-between">
+      <div
+        className={`flex flex-col gap-3 rounded-2xl border p-4 shadow-xs sm:flex-row sm:items-center sm:justify-between ${
+          highlightFallbackOptions && !isSandboxActive
+            ? "border-violet-500/40 bg-violet-500/5"
+            : "border-border-subtle bg-surface"
+        }`}
+      >
         <div className="flex items-start gap-3">
           <div
             className={`grid size-10 shrink-0 place-items-center rounded-xl ${

@@ -73,6 +73,25 @@ export function createAsaasExpressSubaccount(payload: AsaasExpressSubaccountInpu
   });
 }
 
+export interface ConnectExistingAsaasInput {
+  apiKey: string;
+  staticPixKey?: string | null;
+}
+
+export interface ConnectExistingAsaasResult {
+  provider: "ASAAS";
+  connected: boolean;
+  accountLabel: string;
+  walletId: string | null;
+}
+
+export function connectExistingAsaas(payload: ConnectExistingAsaasInput) {
+  return apiRequest<ConnectExistingAsaasResult>("/payments/onboarding/asaas/connect-existing", {
+    method: "POST",
+    body: payload,
+  });
+}
+
 export interface ClubPlan {
   id: string;
   name: string;
