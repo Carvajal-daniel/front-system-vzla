@@ -66,11 +66,17 @@ export function ClubPanel() {
     const controller = new AbortController();
     void Promise.all([
       apiRequest<ClubPlan[]>("/subscription-plans", { signal: controller.signal }),
-      apiRequest<Service[]>("/services", { signal: controller.signal }),
-    ]).then(([newPlans, newServices]) => {
+      // A rota GET /services retorna { services: Service[] }; extrai com segurança para evitar lista vazia.
+      apiRequest<Service[] | { services?: Service[] }>("/services", { signal: controller.signal }),
+    ]).then(([newPlans, rawServices]) => {
       if (!controller.signal.aborted) {
+        const normalizedServices = Array.isArray(rawServices)
+          ? rawServices
+          : Array.isArray(rawServices?.services)
+            ? rawServices.services
+            : [];
         setPlans(newPlans);
-        setServices(newServices);
+        setServices(normalizedServices);
       }
     }, () => { if (!controller.signal.aborted) setPlansError(true); });
     void apiRequest<GatewaySettings>("/payments/config", { signal: controller.signal }).then((result) => {
@@ -157,7 +163,7 @@ export function ClubPanel() {
             </div>
             <dl className="space-y-2 border-t border-border-subtle pt-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-1.5"><dt className="flex items-center gap-1.5 text-ink-secondary"><CalendarDays className="size-4" aria-hidden />{text("Dias permitidos")}</dt><dd className="font-medium">{summarizeClubDays(plan.allowedDaysOfWeek, locale)}</dd></div>
-              <div className="flex flex-wrap justify-between gap-1.5"><dt className="text-ink-secondary">{text("Carência")}</dt><dd>{plan.gracePeriodDays} {plan.gracePeriodDays === 1 ? text("dia") : text("dias")}</dd></div>
+              <div className="flex flex-wrap justify-between gap-1.5"><dt className="text-ink-secondary">{text("Tolerância de atraso")}</dt><dd>{plan.gracePeriodDays} {plan.gracePeriodDays === 1 ? text("dia") : text("dias")}</dd></div>
               <div className="flex flex-wrap justify-between gap-1.5"><dt className="text-ink-secondary">{text("Limite mensal")}</dt><dd>{plan.maxMonthlyUses === null ? text("Ilimitado") : `${plan.maxMonthlyUses} ${plan.maxMonthlyUses === 1 ? text("uso") : text("usos")}`}</dd></div>
             </dl>
             <div className="mt-auto flex flex-wrap items-center gap-2">
@@ -193,7 +199,7 @@ export function ClubPanel() {
           </li>)}
         </ul>}
     </section>}
-    {planEditor && <ClubPlanDialog plan={planEditor.plan} services={services} onClose={() => setPlanEditor(undefined)} onSaved={(plan) => { replacePlan(plan); setPlanEditor(undefined); }} />}
+    {planEditor && <ClubPlanDialog plan={planEditor.plan} services={services} currency={currency} onClose={() => setPlanEditor(undefined)} onSaved={(plan) => { replacePlan(plan); setPlanEditor(undefined); }} />}
     {enrolling && gateway && <ClubEnrollmentDialog plans={activePlans} gateway={gateway} onClose={() => setEnrolling(false)} onSaved={(subscription, document) => {
       setEnrolling(false);
       setFilter("");

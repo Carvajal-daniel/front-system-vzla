@@ -74,6 +74,12 @@ export function PublicPortalShell({ data }: PublicPortalShellProps) {
           name: name?.trim() ? name.trim() : undefined,
         });
         setIdentification(result);
+        // Preenche o nome automaticamente caso o cliente já exista na base e o campo ainda esteja vazio.
+        if (result.customerName) {
+          setClientName((current) =>
+            current.trim().length === 0 ? result.customerName! : current,
+          );
+        }
       } catch (error) {
         setIdentifyError(
           getPublicPortalErrorMessage(
@@ -197,6 +203,7 @@ export function PublicPortalShell({ data }: PublicPortalShellProps) {
             company={company}
             depositPolicy={depositPolicy}
             services={services}
+            hasClubPlans={clubPlans.length > 0}
             whatsappUrl={whatsappUrl}
             clientName={clientName}
             clientPhoneDigits={clientPhoneDigits}
@@ -206,6 +213,7 @@ export function PublicPortalShell({ data }: PublicPortalShellProps) {
             onClientNameChange={setClientName}
             onClientPhoneDigitsChange={handlePhoneChange}
             onIdentify={handleIdentify}
+            onGoToClub={() => setActiveTab("club")}
           />
         ) : (
           <ClubTab

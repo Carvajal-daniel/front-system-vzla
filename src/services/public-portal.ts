@@ -118,6 +118,7 @@ export interface PublicIdentifyRequest {
 
 export interface PublicIdentifyResponse {
   recognized: boolean;
+  customerName: string | null;
   isSubscriber: boolean;
   subscription: PublicCustomerSubscription | null;
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -10,11 +11,12 @@ import {
   Crown,
   Loader2,
   Scissors,
+  ShieldCheck,
   Sparkles,
   User,
-  UserCheck,
   Users,
 } from "lucide-react";
+import { ApiError } from "@/lib/api-client";
 import {
   formatDuration,
   formatNationalPhoneDisplay,
@@ -42,6 +44,7 @@ interface BookingTabProps {
   company: PublicPortalCompany;
   depositPolicy: PublicDepositPolicy;
   services: PublicPortalService[];
+  hasClubPlans: boolean;
   whatsappUrl: string | null;
   clientName: string;
   clientPhoneDigits: string;
@@ -51,6 +54,15 @@ interface BookingTabProps {
   onClientNameChange: (name: string) => void;
   onClientPhoneDigitsChange: (digits: string) => void;
   onIdentify: (digits: string, name?: string) => Promise<void>;
+  onGoToClub: () => void;
+}
+
+function formatCpfDisplay(digits: string): string {
+  const clean = digits.slice(0, 11);
+  if (clean.length <= 3) return clean;
+  if (clean.length <= 6) return `${clean.slice(0, 3)}.${clean.slice(3)}`;
+  if (clean.length <= 9) return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6)}`;
+  return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6, 9)}-${clean.slice(9)}`;
 }
 
 interface DayOption {
@@ -112,6 +124,7 @@ export function BookingTab({
   company,
   depositPolicy,
   services,
+  hasClubPlans,
   whatsappUrl,
   clientName,
   clientPhoneDigits,
@@ -121,6 +134,7 @@ export function BookingTab({
   onClientNameChange,
   onClientPhoneDigitsChange,
   onIdentify,
+  onGoToClub,
 }: BookingTabProps) {
   const timezone = company.timezone || "America/Sao_Paulo";
   const currency = company.currency || "BRL";
@@ -147,6 +161,8 @@ export function BookingTab({
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [bookingResult, setBookingResult] = useState<PublicAppointmentResponse | null>(null);
   const [pixConfirmed, setPixConfirmed] = useState(false);
+  const [requiresDocument, setRequiresDocument] = useState(false);
+  const [cpfDigits, setCpfDigits] = useState("");
 
   const lastAutoIdentifiedRef = useRef<string>("");
 
@@ -157,16 +173,17 @@ export function BookingTab({
     setSelectedDate((current) => current || generated[0]?.isoDate || "");
   }, [timezone]);
 
-  // Identifica automaticamente quando o cliente completa 10 ou 11 dígitos.
+  // Identifica automaticamente com debounce de 400ms quando o cliente digita ao menos 10 dígitos.
   useEffect(() => {
-    if (
-      clientPhoneDigits.length >= 10 &&
-      clientPhoneDigits !== lastAutoIdentifiedRef.current
-    ) {
+    if (clientPhoneDigits.length < 10) {
+      lastAutoIdentifiedRef.current = "";
+      return;
+    }
+    if (clientPhoneDigits !== lastAutoIdentifiedRef.current) {
       const timer = window.setTimeout(() => {
         lastAutoIdentifiedRef.current = clientPhoneDigits;
         void onIdentify(clientPhoneDigits, clientName.trim() || undefined);
-      }, 450);
+      }, 400);
       return () => window.clearTimeout(timer);
     }
   }, [clientPhoneDigits, clientName, onIdentify]);
@@ -340,6 +357,10 @@ export function BookingTab({
       setBookingError("Preencha seu telefone com DDD antes de confirmar.");
       return;
     }
+    if (requiresDocument && cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      setBookingError("Informe um CPF válido (11 dígitos) para gerar o Pix do sinal.");
+      return;
+    }
 
     setSubmittingBooking(true);
     try {
@@ -349,17 +370,42 @@ export function BookingTab({
         startsAt: selectedSlot.startsAt,
         clientName: clientName.trim(),
         clientPhone: clientPhoneDigits,
+        ...(cpfDigits.length === 11 || cpfDigits.length === 14
+          ? { document: cpfDigits }
+          : {}),
       });
+
+      // Nunca tratar um agendamento retornado como CANCELED como sucesso silencioso.
+      if (response.appointment.status === "CANCELED") {
+        setBookingError(
+          "Não foi possível concluir o agendamento porque a cobrança do sinal falhou. Tente novamente ou fale pelo WhatsApp.",
+        );
+        setSlotsRefreshKey((n) => n + 1);
+        return;
+      }
+
+      setRequiresDocument(false);
       setBookingResult(response);
-      setPixConfirmed(!response.requiresDeposit);
+      setPixConfirmed(
+        !response.requiresDeposit || response.appointment.status === "CONFIRMED",
+      );
     } catch (error) {
+      if (error instanceof ApiError && error.code === "DOCUMENT_REQUIRED_FOR_PIX") {
+        setRequiresDocument(true);
+        setBookingError(
+          error.message || "Informe seu CPF para gerar o Pix do sinal.",
+        );
+        return;
+      }
       setBookingError(
         getPublicPortalErrorMessage(
           error,
           "Não foi possível concluir o agendamento. Tente novamente.",
         ),
       );
-      setSlotsRefreshKey((n) => n + 1);
+      if (error instanceof ApiError && error.status === 409) {
+        setSlotsRefreshKey((n) => n + 1);
+      }
     } finally {
       setSubmittingBooking(false);
     }
@@ -370,6 +416,7 @@ export function BookingTab({
     setPixConfirmed(false);
     setSelectedSlot(null);
     setBookingError(null);
+    setRequiresDocument(false);
     setSlotsRefreshKey((n) => n + 1);
   }
 
@@ -396,23 +443,38 @@ export function BookingTab({
   }
 
   // Tela final de Agendamento Confirmado
-  if (bookingResult && pixConfirmed) {
+  if (
+    bookingResult &&
+    (pixConfirmed || bookingResult.appointment.status === "CONFIRMED") &&
+    bookingResult.appointment.status !== "CANCELED"
+  ) {
     const confirmedDateLabel =
       days.find((d) => d.isoDate === selectedDate)?.fullLabel ?? selectedDate;
     const confirmedTime = selectedSlot
       ? formatTimeInTimezone(selectedSlot.startsAt, timezone, "pt-BR")
       : formatTimeInTimezone(bookingResult.appointment.startsAt, timezone, "pt-BR");
 
+    const paidAmountLabel = bookingResult.coveredByClub
+      ? "R$ 0,00 (Clube VIP)"
+      : bookingResult.payment
+        ? `${formatPriceFromCents(bookingResult.payment.amountCents, "pt-BR", currency)} (Sinal Pix pago)`
+        : selectedService
+          ? `${formatPriceFromCents(selectedService.priceInCents, "pt-BR", currency)} (no local)`
+          : "No local";
+
     return (
-      <section className="rounded-2xl border border-[var(--status-success-border)] bg-surface p-6 text-center shadow-xs space-y-5">
-        <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-[var(--status-success-bg)] text-[var(--status-success-ink)]">
-          <CheckCircle2 className="size-7" aria-hidden="true" />
+      <section className="rounded-2xl border-2 border-[var(--status-success-border)] bg-surface p-6 text-center shadow-sm space-y-5">
+        <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-[var(--status-success-bg)] text-[var(--status-success-ink)]">
+          <CheckCircle2 className="size-8" aria-hidden="true" />
         </div>
         <div>
-          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-success-bg)] px-3 py-1 text-xs font-semibold text-[var(--status-success-ink)]">
-            Agendamento Confirmado
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--status-success-bg)] px-3.5 py-1 text-xs font-bold text-[var(--status-success-ink)]">
+            {bookingResult.coveredByClub && (
+              <Crown className="size-3.5" aria-hidden="true" />
+            )}
+            Agendamento Confirmado!
           </span>
-          <h2 className="mt-2 text-xl font-bold text-ink">
+          <h2 className="mt-2.5 text-xl font-bold text-ink">
             Tudo certo, {clientName.trim().split(" ")[0]}!
           </h2>
           <p className="mt-1 text-sm text-ink-secondary">
@@ -448,8 +510,14 @@ export function BookingTab({
               {confirmedTime}
             </span>
           </div>
+          <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
+            <span className="text-ink-secondary">Valor</span>
+            <span className="font-bold tabular-nums text-[var(--status-success-ink)]">
+              {paidAmountLabel}
+            </span>
+          </div>
           {bookingResult.coveredByClub && (
-            <div className="flex items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-ink-secondary">Benefício</span>
               <span className="inline-flex items-center gap-1 font-semibold text-[var(--status-success-ink)]">
                 <Crown className="size-3.5" aria-hidden="true" />
@@ -510,6 +578,15 @@ export function BookingTab({
                 const digits = stripNonDigits(e.target.value).slice(0, 11);
                 onClientPhoneDigitsChange(digits);
               }}
+              onBlur={() => {
+                if (
+                  clientPhoneDigits.length >= 10 &&
+                  (clientPhoneDigits !== lastAutoIdentifiedRef.current || !identification)
+                ) {
+                  lastAutoIdentifiedRef.current = clientPhoneDigits;
+                  void onIdentify(clientPhoneDigits, clientName.trim() || undefined);
+                }
+              }}
               className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-ink tabular-nums placeholder:text-ink-muted focus:border-accent focus:outline-none"
             />
           </div>
@@ -533,37 +610,20 @@ export function BookingTab({
           </div>
         </div>
 
-        {clientPhoneDigits.length >= 10 && !activeSubscription && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              disabled={identifying}
-              onClick={() => {
-                lastAutoIdentifiedRef.current = clientPhoneDigits;
-                void onIdentify(clientPhoneDigits, clientName.trim() || undefined);
-              }}
-              className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-accent-soft transition-colors disabled:opacity-50"
-            >
-              <UserCheck className="size-3.5" aria-hidden="true" />
-              Verificar assinatura Clube VIP
-            </button>
-          </div>
-        )}
-
         {identifyError && (
-          <p role="alert" className="text-xs text-[var(--status-danger-ink)]">
+          <p role="alert" className="text-xs font-medium text-[var(--status-danger-ink)]">
             {identifyError}
           </p>
         )}
 
-        {activeSubscription && (
-          <div className="rounded-xl border border-[var(--status-success-border)] bg-[var(--status-success-bg)] p-3.5 space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--status-success-ink)]">
-                <Crown className="size-4" aria-hidden="true" />
-                Membro VIP • {activeSubscription.planName}
+        {!identifying && identification && activeSubscription && (
+          <div className="rounded-xl border border-amber-400/60 bg-gradient-to-br from-emerald-500/12 via-amber-500/10 to-emerald-500/5 p-4 space-y-2.5 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                <Crown className="size-4 text-amber-500" aria-hidden="true" />
+                Assinante VIP • {activeSubscription.planName}
               </span>
-              <span className="rounded-full bg-surface/80 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--status-success-ink)]">
+              <span className="rounded-full border border-amber-400/40 bg-surface/90 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
                 {activeSubscription.remainingUses === null
                   ? "Usos ilimitados"
                   : `${activeSubscription.remainingUses} ${
@@ -573,18 +633,44 @@ export function BookingTab({
                     }`}
               </span>
             </div>
-            <p className="text-xs text-[var(--status-success-ink)]/90">
-              {activeSubscription.exemptsDeposit
-                ? "Você tem isenção de sinal online"
-                : "Benefícios do seu plano aplicados automaticamente"}
-              {activeSubscription.includedServiceIds.length > 0
-                ? ` e ${activeSubscription.includedServiceIds.length} ${
-                    activeSubscription.includedServiceIds.length === 1
-                      ? "serviço coberto"
-                      : "serviços cobertos"
-                  } no seu clube.`
-                : "."}
-            </p>
+            <div className="flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1 rounded-lg bg-[var(--status-success-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--status-success-ink)]">
+                <ShieldCheck className="size-3.5" aria-hidden="true" />
+                Sinal isento
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-800 dark:text-amber-200">
+                <Sparkles className="size-3.5" aria-hidden="true" />
+                Serviços inclusos saem por R$ 0,00
+              </span>
+            </div>
+          </div>
+        )}
+
+        {!identifying && identification && !identification.isSubscriber && (
+          <div className="rounded-xl border border-border-strong/70 bg-subtle/70 p-3.5 space-y-2.5">
+            <div className="flex items-start gap-2.5">
+              <Crown className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden="true" />
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="text-xs font-semibold text-ink">
+                  Você ainda não é assinante do Clube VIP
+                </p>
+                <p className="text-xs text-ink-secondary">
+                  {depositPolicy.enabled && depositPolicy.depositPercentage > 0
+                    ? `Esta barbearia exige sinal de ${depositPolicy.depositPercentage}% via Pix para não-assinantes. Membros do Clube VIP têm isenção de sinal e serviços inclusos.`
+                    : "Assine um plano do Clube VIP para aproveitar serviços inclusos e vantagens exclusivas."}
+                </p>
+              </div>
+            </div>
+            {hasClubPlans && (
+              <button
+                type="button"
+                onClick={onGoToClub}
+                className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent hover:text-accent-ink"
+              >
+                Ver planos do Clube VIP
+                <ArrowRight className="size-3.5" aria-hidden="true" />
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -990,9 +1076,22 @@ export function BookingTab({
             <div className="border-t border-border-subtle pt-2.5 flex items-center justify-between gap-2">
               <span className="text-ink-secondary">Valor do serviço</span>
               {selectedServiceCovered ? (
-                <span className="font-bold text-[var(--status-success-ink)]">
-                  Incluso no Clube (R$ 0,00)
-                </span>
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <span className="text-xs text-ink-muted line-through tabular-nums">
+                    {formatPriceFromCents(
+                      selectedService.priceInCents,
+                      "pt-BR",
+                      currency,
+                    )}
+                  </span>
+                  <span className="font-bold tabular-nums text-[var(--status-success-ink)]">
+                    R$ 0,00
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--status-success-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--status-success-ink)]">
+                    <Crown className="size-3" aria-hidden="true" />
+                    Incluso no Clube VIP
+                  </span>
+                </div>
               ) : (
                 <span className="font-bold tabular-nums text-ink">
                   {formatPriceFromCents(
@@ -1004,7 +1103,14 @@ export function BookingTab({
               )}
             </div>
 
-            {depositApplies && (
+            {selectedServiceCovered ? (
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-ink-secondary">Sinal via Pix</span>
+                <span className="font-semibold text-[var(--status-success-ink)]">
+                  Isento (Assinante VIP)
+                </span>
+              </div>
+            ) : depositApplies ? (
               <div className="flex items-center justify-between gap-2 text-xs">
                 <span className="text-ink-secondary">
                   Sinal via Pix ({depositPolicy.depositPercentage}%)
@@ -1013,8 +1119,34 @@ export function BookingTab({
                   {formatPriceFromCents(depositAmountCents, "pt-BR", currency)}
                 </span>
               </div>
-            )}
+            ) : null}
           </div>
+
+          {requiresDocument && !selectedServiceCovered && (
+            <div className="rounded-xl border border-accent/40 bg-accent-soft/40 p-3.5 space-y-2">
+              <label
+                htmlFor="portal-client-cpf"
+                className="block text-xs font-semibold text-ink"
+              >
+                CPF para gerar o Pix do sinal *
+              </label>
+              <input
+                id="portal-client-cpf"
+                type="text"
+                inputMode="numeric"
+                placeholder="000.000.000-00"
+                value={formatCpfDisplay(cpfDigits)}
+                onChange={(e) => {
+                  setCpfDigits(stripNonDigits(e.target.value).slice(0, 11));
+                  setBookingError(null);
+                }}
+                className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-ink tabular-nums placeholder:text-ink-muted focus:border-accent focus:outline-none"
+              />
+              <p className="text-[11px] text-ink-secondary">
+                Exigido pelo provedor de pagamentos apenas para emitir a cobrança Pix com segurança.
+              </p>
+            </div>
+          )}
 
           {providerUnavailableWarning && (
             <div
@@ -1045,9 +1177,10 @@ export function BookingTab({
           {bookingError && (
             <div
               role="alert"
-              className="rounded-xl border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] p-3.5 text-xs font-medium text-[var(--status-danger-ink)]"
+              className="flex items-start gap-2.5 rounded-xl border-2 border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] p-3.5 text-xs font-semibold text-[var(--status-danger-ink)]"
             >
-              {bookingError}
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span>{bookingError}</span>
             </div>
           )}
 
@@ -1064,6 +1197,11 @@ export function BookingTab({
                   aria-hidden="true"
                 />
                 Confirmando agendamento…
+              </>
+            ) : selectedServiceCovered ? (
+              <>
+                <Crown className="size-4" aria-hidden="true" />
+                Confirmar Agendamento VIP
               </>
             ) : depositApplies ? (
               <>
