@@ -497,14 +497,21 @@ function AgendaPanel({ publicLink = false }: { publicLink?: boolean }) {
   const es = locale === "es";
   const save = useSave();
   const [draft, setDraft] = useState<Partial<Pick<CompanySettings,
-    "agendaInterval" | "bookingInterval" | "leadTime" | "maxAdvanceBookingDays" | "allowClientCancel" |
+    "slug" | "agendaInterval" | "bookingInterval" | "leadTime" | "maxAdvanceBookingDays" | "allowClientCancel" |
     "cancelLeadTime" | "allowClientConfirm" | "allowClientReschedule" | "maxActiveBookingsPerClient" |
     "newBookingCancelsPrevious">>>({});
   const [linkStatus, setLinkStatus] = useState("");
   const [qr, setQr] = useState("");
-  const path = `/book/${session.company.id}`;
+  // Usa o slug amigável do Portal Público com fallback seguro para a rota legada /book/[companyId] caso ainda não carregado.
+  const activeSlug = settings.slug?.trim();
+  const path = activeSlug ? `/${encodeURIComponent(activeSlug)}` : `/book/${session.company.id}`;
   const url = typeof window === "undefined" ? path : new URL(path, window.location.origin).href;
+  const originPrefix = typeof window === "undefined" ? "/" : `${window.location.origin}/`;
   const minutes = (value: number) => `${value} min`;
+
+  useEffect(() => {
+    setQr("");
+  }, [url]);
 
   const values = { ...settings, ...draft };
   const selectClass = field + " cursor-pointer disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-50";
@@ -534,13 +541,36 @@ function AgendaPanel({ publicLink = false }: { publicLink?: boolean }) {
 
   return <><form className="space-y-4" onSubmit={(event) => {
     event.preventDefault();
-    void save.run(async () => { await saveCompanySettings(session.company.id, draft); setDraft({}); });
+    const payload = { ...draft };
+    if (typeof payload.slug === "string") {
+      payload.slug = payload.slug.trim();
+    }
+    void save.run(async () => { await saveCompanySettings(session.company.id, payload); setDraft({}); });
   }}>
     {!publicLink && <Card title={es ? "Horarios e intervalos" : "Horários e Intervalos"}>
       <Options label={es ? "Intervalo de la cuadrícula interna" : "Intervalo da grade interna"} values={agendaIntervals} value={values.agendaInterval} render={minutes} onChange={(agendaInterval) => setDraft({ ...draft, agendaInterval })} />
       <Save state={save} disabled={!Object.keys(draft).length} />
     </Card>}
     {publicLink && <>
+      <Card title={es ? "Dirección del Portal Público" : "Endereço do Portal Público"}>
+        <Field label={es ? "Slug personalizado" : "Slug personalizado"}>
+          <div className="flex items-center overflow-hidden rounded-xl border border-border-strong bg-surface focus-within:border-accent">
+            <span className="shrink-0 bg-subtle px-3 py-2.5 text-xs font-mono text-ink-muted select-none">{originPrefix}</span>
+            <input
+              type="text"
+              value={values.slug ?? ""}
+              minLength={2}
+              maxLength={100}
+              placeholder={es ? "mi-barberia" : "minha-barbearia"}
+              className="min-h-11 w-full min-w-0 bg-transparent px-3 text-sm font-mono text-ink outline-none"
+              onChange={(event) => setDraft({ ...draft, slug: event.target.value })}
+            />
+          </div>
+          <p className="text-xs text-ink-muted">
+            {es ? "Usa letras minúsculas, números y guiones. Se normaliza automáticamente al guardar." : "Use letras minúsculas, números e hífens. O endereço é normalizado automaticamente ao salvar."}
+          </p>
+        </Field>
+      </Card>
       <Card title={es ? "Horarios del enlace" : "Horários do link"}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={es ? "Intervalo entre horarios" : "Intervalo entre horários"}>
@@ -679,7 +709,8 @@ function RemindersPanel() {
   const digits = phone.startsWith(country) ? phone.slice(country.length) : "";
   const names = es ? ["Estándar con botones", "Texto simple", "Atención por WhatsApp", "Enlace externo", "Personalizado"]
     : ["Padrão com Botões", "Texto Simples", "Atendimento via WhatsApp", "Link Externo", "Personalizado"];
-  const appUrl = typeof window === "undefined" ? `/book/${session.company.id}` : new URL(`/book/${session.company.id}`, window.location.origin).href;
+  const reminderPath = settings.slug?.trim() ? `/${encodeURIComponent(settings.slug.trim())}` : `/book/${session.company.id}`;
+  const appUrl = typeof window === "undefined" ? reminderPath : new URL(reminderPath, window.location.origin).href;
   const preview = renderReminderMessage(
     current.template,
     {

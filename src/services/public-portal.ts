@@ -201,8 +201,29 @@ export interface PublicPaymentStatusResponse {
   paidAt: string | null;
 }
 
+export interface PublicCompanySlugResponse {
+  slug: string;
+}
+
 function portalBasePath(slug: string): string {
   return `/public/${encodeURIComponent(slug)}`;
+}
+
+/**
+ * Consulta o slug público da empresa a partir do UUID legado para redirecionamento.
+ */
+export function getPublicCompanySlug(
+  companyId: string,
+  signal?: AbortSignal,
+): Promise<PublicCompanySlugResponse> {
+  return apiRequest<PublicCompanySlugResponse>(
+    `/public/companies/${encodeURIComponent(companyId)}/slug`,
+    {
+      method: "GET",
+      auth: false,
+      signal,
+    },
+  );
 }
 
 /**

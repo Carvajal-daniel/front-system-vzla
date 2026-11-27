@@ -18,9 +18,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api-client";
 import { displayCompanyRating, formatCompanyAddress } from "@/lib/company-settings";
 import { useLocale } from "@/lib/i18n/locale-context";
-import { useCompanySettings } from "@/lib/use-company-settings";
+import { saveCompanySettings, useCompanySettings } from "@/lib/use-company-settings";
 import { CompanyRating } from "@/components/ui/company-rating";
 import { useSession } from "@/components/ui/auth-guard";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
@@ -31,9 +32,11 @@ export default function BookingLinkPage() {
   const { session } = useSession();
   const company = session.company;
   const companyId = company.id;
-  const { settings } = useCompanySettings(companyId);
+  const { settings } = useCompanySettings(companyId, undefined, true, true);
   const address = formatCompanyAddress(settings.address);
   const [qr, setQr] = useState<{ png: string; svg: string }>();
+  const [slugDraft, setSlugDraft] = useState<string | null>(null);
+  const [savingSlug, setSavingSlug] = useState(false);
 
   const [copied, setCopied] = useState(false);
   const [deviceType, setDeviceType] = useState<"iphone" | "android">("iphone");
@@ -41,10 +44,37 @@ export default function BookingLinkPage() {
   const [instagram, setInstagram] = useState("@salao_vip");
   const [customTitle, setCustomTitle] = useState(company.companyName);
 
-  // URL pública do link de agendamento
+  // URL pública amigável do Portal Público (fallback para /book/[companyId] apenas se o slug vier vazio)
+  const activeSlug = settings.slug?.trim();
+  const bookingPath = activeSlug
+    ? `/${encodeURIComponent(activeSlug)}`
+    : `/book/${encodeURIComponent(companyId)}`;
   const bookingUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/book/${encodeURIComponent(companyId)}`
-    : `https://seusalao.com.br/book/${companyId}`;
+    ? `${window.location.origin}${bookingPath}`
+    : `https://seusalao.com.br${bookingPath}`;
+  const originPrefix = typeof window !== "undefined"
+    ? `${window.location.origin}/`
+    : "https://seusalao.com.br/";
+  const currentSlugInput = slugDraft ?? settings.slug ?? "";
+
+  async function handleSaveSlug() {
+    const trimmed = currentSlugInput.trim();
+    if (trimmed.length < 2) {
+      toast.error("Informe um endereço com pelo menos 2 caracteres.");
+      return;
+    }
+    setSavingSlug(true);
+    try {
+      const updated = await saveCompanySettings(companyId, { slug: trimmed });
+      setSlugDraft(null);
+      toast.success(`Link atualizado para /${updated.slug ?? trimmed}`);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Não foi possível salvar o slug.";
+      toast.error(message);
+    } finally {
+      setSavingSlug(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -105,7 +135,7 @@ export default function BookingLinkPage() {
     const url = URL.createObjectURL(new Blob([qr.svg], { type: "image/svg+xml;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `qrcode-agendamento-${companyId}.svg`;
+    link.download = `qrcode-agendamento-${activeSlug ?? companyId}.svg`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -182,6 +212,31 @@ export default function BookingLinkPage() {
               >
                 {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
                 <span>{copied ? "Copiado!" : "Copiar"}</span>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex flex-1 items-center overflow-hidden rounded-xl border border-border-subtle bg-canvas/40 focus-within:border-accent">
+                <span className="shrink-0 bg-subtle/60 px-2.5 py-2 text-xs font-mono text-ink-muted select-none">
+                  {originPrefix}
+                </span>
+                <input
+                  type="text"
+                  value={currentSlugInput}
+                  onChange={(e) => setSlugDraft(e.target.value)}
+                  placeholder="minha-barbearia"
+                  minLength={2}
+                  maxLength={100}
+                  className="flex-1 bg-transparent px-2.5 py-2 text-xs sm:text-sm font-mono text-ink outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleSaveSlug()}
+                disabled={savingSlug || slugDraft === null || slugDraft.trim() === (settings.slug ?? "").trim()}
+                className="inline-flex items-center justify-center rounded-xl bg-accent px-3.5 py-2 text-xs font-bold text-accent-ink hover:bg-accent-hover disabled:opacity-50 transition-colors cursor-pointer shrink-0"
+              >
+                {savingSlug ? "Salvando..." : "Salvar endereço"}
               </button>
             </div>
 

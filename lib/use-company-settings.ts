@@ -22,7 +22,7 @@ type SettingsPatch = Partial<Omit<CompanySettings, "rating" | "countryCodeConfig
 export async function saveCompanySettings(companyId: string, body: SettingsPatch) {
   const settings = await apiRequest<CompanySettings>("/companies/me/settings", { method: "PATCH", body });
   publish(`${companyId}:private`, settings);
-  const publicKeys = ["address", "countryCode", "description", "agendaInterval", "bookingInterval", "leadTime", "maxAdvanceBookingDays", "allowClientCancel",
+  const publicKeys = ["slug", "address", "countryCode", "description", "agendaInterval", "bookingInterval", "leadTime", "maxAdvanceBookingDays", "allowClientCancel",
     "cancelLeadTime", "allowClientConfirm", "allowClientReschedule", "maxActiveBookingsPerClient", "newBookingCancelsPrevious", "birthdayRadar", "surveyEnabled", "rating",
     "googleMapsUrl", "googleRating", "googleReviewsCount", "googlePlaceId", "clientFieldSlots"] as const;
   const publicSettings = { ...defaultCompanySettings };

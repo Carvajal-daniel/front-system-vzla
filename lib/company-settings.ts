@@ -61,6 +61,7 @@ export const countryDefaults = {
 } as const satisfies Record<CompanyCountry, { ddi: PhoneCountryCode; timezone: string; currency: Currency; locale: Locale }>;
 
 export interface CompanySettings {
+  slug?: string | null;
   countryCode: CompanyCountry;
   countryCodeConfigured?: boolean;
   documents?: CompanyDocuments;
@@ -94,6 +95,7 @@ export interface CompanySettings {
 }
 
 export const defaultCompanySettings: CompanySettings = {
+  slug: null,
   countryCode: "BR",
   address: null,
   agendaInterval: 30,
