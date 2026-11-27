@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Building2, CalendarClock, Users, Star, Globe2, KeyRound, Palette, Copy, QrCode, Bell, CreditCard, Package, Link2 } from "lucide-react";
 import { ApiError, apiRequest } from "@/lib/api-client";
 import { companyWeekday } from "@/lib/agenda";
@@ -68,11 +69,22 @@ const ownerCountryCodes = ["+55", "+58", "+1", "+34", "+351"] as const;
 const field = "min-h-11 w-full min-w-0 rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink";
 
 export function SettingsPanel() {
-  const [active, setActive] = useState<SettingsSectionId>("company");
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialSection: SettingsSectionId =
+    requestedTab === "payments" || requestedTab === "payment" ? "payment" : "company";
+  const [active, setActive] = useState<SettingsSectionId>(initialSection);
   const { locale, t } = useLocale();
   const es = locale === "es";
   const { session } = useSession();
   const { settings } = useCompanySettings(session.company.id, undefined, true, true);
+
+  // Sincroniza a aba ativa ao retornar de fluxos externos como o OAuth do Mercado Pago (?tab=payments).
+  useEffect(() => {
+    if (requestedTab === "payments" || requestedTab === "payment") {
+      setActive("payment");
+    }
+  }, [requestedTab]);
 
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[15.5rem_minmax(0,1fr)]">

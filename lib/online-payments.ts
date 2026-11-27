@@ -18,6 +18,61 @@ export interface GatewaySettings {
   webhookPath?: string;
 }
 
+export interface PaymentConnectionStatus {
+  provider: PaymentProvider;
+  connected: boolean;
+  accountLabel: string | null;
+  walletId: string | null;
+  mpUserId: string | null;
+  depositEnabled: boolean;
+  depositPercentage: number;
+  autoRefundHours: number;
+  capabilities: {
+    mercadoPagoOAuthAvailable: boolean;
+    asaasExpressAvailable: boolean;
+  };
+}
+
+export interface AsaasExpressSubaccountInput {
+  name: string;
+  email: string;
+  cpfCnpj: string;
+  mobilePhone: string;
+  incomeValue: number;
+  address?: string;
+  addressNumber?: string;
+  postalCode?: string;
+}
+
+export interface AsaasExpressSubaccountResult {
+  provider: "ASAAS";
+  connected: boolean;
+  accountLabel: string;
+  walletId: string;
+}
+
+export function getPaymentConnectionStatus(signal?: AbortSignal) {
+  return apiRequest<PaymentConnectionStatus>("/payments/connection-status", { signal });
+}
+
+export function authorizeMercadoPagoOAuth() {
+  return apiRequest<{ authorizationUrl: string }>("/payments/oauth/mercadopago/authorize");
+}
+
+export function disconnectMercadoPagoOAuth() {
+  return apiRequest<{ disconnected: boolean; provider: PaymentProvider }>(
+    "/payments/oauth/mercadopago/disconnect",
+    { method: "POST" },
+  );
+}
+
+export function createAsaasExpressSubaccount(payload: AsaasExpressSubaccountInput) {
+  return apiRequest<AsaasExpressSubaccountResult>("/payments/onboarding/asaas/subaccount", {
+    method: "POST",
+    body: payload,
+  });
+}
+
 export interface ClubPlan {
   id: string;
   name: string;
