@@ -24,6 +24,8 @@ import { getCanonicalClientId } from "@/lib/use-clients";
 import { AppointmentHoverCard } from "./agenda-card";
 import type { AgendaPayment, HoverCardAnchor } from "./agenda-card";
 import { ProfessionalAvatar, type AgendaPerson } from "./agenda-controls";
+import { BarberOperationsMenu } from "./barber-operations-menu";
+import type { CascadeDelayMinutes } from "@/lib/operations-api";
 
 const arrow = "grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-ink-secondary hover:bg-subtle hover:text-ink focus-visible:outline-2 focus-visible:outline-accent";
 const closedSurface = "bg-[color-mix(in_srgb,var(--status-danger-bg)_60%,var(--surface-elevated))]";
@@ -193,6 +195,9 @@ export function AgendaTimeGrid({
   onRescheduleConflict,
   collaboratorId,
   onEmptySlotSelect,
+  onCascadeDelay,
+  onEmergencyAbsence,
+  operationsBusy = false,
 }: {
   days: string[];
   dayPeople?: AgendaPerson[];
@@ -216,6 +221,9 @@ export function AgendaTimeGrid({
   onRescheduleConflict: () => void;
   collaboratorId?: string;
   onEmptySlotSelect?: (date: string, startMinute: number, endMinute?: number, personId?: string) => void;
+  onCascadeDelay?: (person: AgendaPerson, delayMinutes: CascadeDelayMinutes) => void;
+  onEmergencyAbsence?: (person: AgendaPerson) => void;
+  operationsBusy?: boolean;
 }) {
   const { locale } = useLocale();
   const copy = agendaStrings(locale);
@@ -494,7 +502,15 @@ export function AgendaTimeGrid({
         {columns.map(({ key, day, closed, person }) => person ? (
           <div key={key} className="flex min-w-0 items-center gap-1.5 overflow-hidden border-l border-border-subtle px-2 py-1.5">
             <ProfessionalAvatar person={person} className="size-6" />
-            <span className="min-w-0 truncate text-xs font-medium text-ink" title={person.name}>{person.name}</span>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink" title={person.name}>{person.name}</span>
+            {isOwner && onCascadeDelay && onEmergencyAbsence && (
+              <BarberOperationsMenu
+                person={person}
+                disabled={operationsBusy}
+                onCascadeDelay={onCascadeDelay}
+                onEmergencyAbsence={onEmergencyAbsence}
+              />
+            )}
           </div>
         ) : <button key={key} data-agenda-date={day} type="button" onClick={() => onSelect(day)} aria-pressed={day === selected}
           className={`flex min-h-16 cursor-pointer items-center justify-center gap-2 border-l border-border-subtle px-1 text-sm hover:bg-subtle ${closed ? `${closedSurface} text-[var(--status-danger-ink)]` : "text-ink-secondary"}`}>

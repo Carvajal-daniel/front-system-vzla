@@ -79,6 +79,8 @@ export interface CompanySettings {
   clientFields: Record<ClientField, ClientFieldMode> & Partial<Record<string, ClientFieldMode>>;
   birthdayRadar: boolean;
   surveyEnabled: boolean;
+  googleReviewUrl?: string | null;
+  enablePostVisitSurvey?: boolean;
   rating: { average: number; count: number } | null;
   googleMapsUrl: string | null;
   googlePlaceId: string | null;
@@ -112,6 +114,8 @@ export const defaultCompanySettings: CompanySettings = {
   },
   birthdayRadar: false,
   surveyEnabled: false,
+  googleReviewUrl: null,
+  enablePostVisitSurvey: true,
   rating: null,
   googleMapsUrl: null,
   googlePlaceId: null,

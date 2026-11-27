@@ -6,6 +6,7 @@ import {
   Brain,
   Check,
   Loader2,
+  Radar,
   RefreshCw,
   RotateCcw,
   Sparkles,
@@ -13,6 +14,7 @@ import {
   UserX,
   Users,
 } from "lucide-react";
+import { IndividualChurnRadar } from "./_components/individual-churn-radar";
 import { AgendaDialog } from "@/components/ui/agenda-controls";
 import { useSession } from "@/components/ui/auth-guard";
 import { SensitiveValue } from "@/components/ui/sensitive-value";
@@ -164,6 +166,7 @@ export default function RecoveryPage() {
   const text = copy[locale];
   const { id: companyId, currency, timezone } = session.company;
 
+  const [activeTab, setActiveTab] = useState<"radar" | "inactivity">("radar");
   const [days, setDays] = useState<InactiveDays>(30);
   const [goal, setGoal] = useState<"RETURN_VISIT" | "FEEDBACK">("RETURN_VISIT");
   const [offer, setOffer] = useState("");
@@ -301,17 +304,59 @@ export default function RecoveryPage() {
           <p className="mt-1 text-xs sm:text-sm text-ink-secondary">{text.description}</p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setRefresh((v) => v + 1)}
-          disabled={listStatus === "loading"}
-          className="grid size-9 cursor-pointer place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:border-accent hover:text-ink disabled:opacity-50"
-          title={text.retry}
-        >
-          <RefreshCw size={15} className={listStatus === "loading" ? "animate-spin" : ""} />
-        </button>
+        {activeTab === "inactivity" && (
+          <button
+            type="button"
+            onClick={() => setRefresh((v) => v + 1)}
+            disabled={listStatus === "loading"}
+            className="grid size-9 cursor-pointer place-items-center rounded-xl border border-border-subtle bg-surface text-ink-secondary hover:border-accent hover:text-ink disabled:opacity-50"
+            title={text.retry}
+          >
+            <RefreshCw size={15} className={listStatus === "loading" ? "animate-spin" : ""} />
+          </button>
+        )}
       </header>
 
+      {/* Alternador de Abas: Radar de Churn Individual vs Recuperação por Inatividade */}
+      <div
+        role="tablist"
+        aria-label="Modos de retenção"
+        className="inline-flex flex-wrap gap-1 rounded-2xl border border-border-subtle bg-surface p-1.5"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "radar"}
+          onClick={() => setActiveTab("radar")}
+          className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            activeTab === "radar"
+              ? "bg-accent text-accent-ink shadow-xs"
+              : "text-ink-secondary hover:bg-subtle hover:text-ink"
+          }`}
+        >
+          <Radar size={14} aria-hidden="true" />
+          Radar de Churn Individual
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "inactivity"}
+          onClick={() => setActiveTab("inactivity")}
+          className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            activeTab === "inactivity"
+              ? "bg-accent text-accent-ink shadow-xs"
+              : "text-ink-secondary hover:bg-subtle hover:text-ink"
+          }`}
+        >
+          <Users size={14} aria-hidden="true" />
+          Recuperação por Inatividade
+        </button>
+      </div>
+
+      {activeTab === "radar" ? (
+        <IndividualChurnRadar />
+      ) : (
+        <>
       {/* 3 Cards de Resumo (KPIs) */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className={`${panel} p-4 shadow-xs flex items-center justify-between`}>
@@ -746,6 +791,8 @@ export default function RecoveryPage() {
             </div>
           </form>
         </AgendaDialog>
+      )}
+        </>
       )}
     </div>
   );

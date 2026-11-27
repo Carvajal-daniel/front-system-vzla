@@ -10,10 +10,15 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowRight,
   Bell,
+  Bot,
+  Check,
   CheckCheck,
+  ShieldAlert,
   Sparkles,
+  TrendingDown,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -25,8 +30,40 @@ import {
   intelligenceApi,
   type ProactiveInsightItem,
 } from "@/lib/intelligence-api";
+import {
+  OWNER_ALERTS_UPDATED_EVENT,
+  operationsApi,
+  type OwnerAlertRecord,
+  type OwnerAlertType,
+} from "@/lib/operations-api";
 import type { Appointment } from "@/lib/types/appointment";
 import { useSession } from "@/components/ui/auth-guard";
+
+const OWNER_ALERT_META: Record<
+  OwnerAlertType,
+  { label: string; badgeClass: string; Icon: typeof ShieldAlert }
+> = {
+  LOW_SURVEY_SCORE: {
+    label: "Nota Retida (1–3★)",
+    badgeClass: "border-rose-500/35 bg-rose-500/12 text-rose-700 dark:text-rose-300",
+    Icon: ShieldAlert,
+  },
+  COLLABORATOR_EMERGENCY: {
+    label: "Modo Imprevisto",
+    badgeClass: "border-amber-500/35 bg-amber-500/12 text-amber-800 dark:text-amber-300",
+    Icon: AlertTriangle,
+  },
+  CHURN_OPPORTUNITY: {
+    label: "Radar de Churn",
+    badgeClass: "border-accent/35 bg-accent-soft text-accent",
+    Icon: TrendingDown,
+  },
+  AI_HANDOFF: {
+    label: "Atendimento IA",
+    badgeClass: "border-sky-500/35 bg-sky-500/12 text-sky-700 dark:text-sky-300",
+    Icon: Bot,
+  },
+};
 
 const POLL_INTERVAL_MS = 30_000;
 const SOUND_STORAGE_KEY = "atelier_agenda_notification_sound";
@@ -88,6 +125,9 @@ export function NotificationsBell() {
   const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
   const [aiInsights, setAiInsights] = useState<ProactiveInsightItem[]>([]);
   const [aiPendingCount, setAiPendingCount] = useState(0);
+  const [ownerAlerts, setOwnerAlerts] = useState<OwnerAlertRecord[]>([]);
+  const [expandedAlertId, setExpandedAlertId] = useState<string | null>(null);
+  const [markingAlertId, setMarkingAlertId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const soundEnabled = useSyncExternalStore(
     subscribeSoundPreference,
@@ -126,6 +166,18 @@ export function NotificationsBell() {
     },
     [soundEnabled],
   );
+
+  const pollOwnerAlerts = useCallback(async () => {
+    if (!isOwner) return;
+    try {
+      const data = await operationsApi.listOwnerAlerts({ limit: 20 });
+      if (Array.isArray(data.alerts)) {
+        setOwnerAlerts(data.alerts);
+      }
+    } catch {
+      // Falha silenciosa no polling
+    }
+  }, [isOwner]);
 
   const pollAiInsights = useCallback(async () => {
     if (!isOwner) return;
@@ -209,20 +261,26 @@ export function NotificationsBell() {
       if (!active) return;
       void pollAppointments();
       void pollAiInsights();
+      void pollOwnerAlerts();
     };
     const initialTimer = window.setTimeout(run, 400);
     const interval = window.setInterval(run, POLL_INTERVAL_MS);
     const onInsightsUpdated = () => {
       if (active) void pollAiInsights();
     };
+    const onOwnerAlertsUpdated = () => {
+      if (active) void pollOwnerAlerts();
+    };
     window.addEventListener(INSIGHTS_UPDATED_EVENT, onInsightsUpdated);
+    window.addEventListener(OWNER_ALERTS_UPDATED_EVENT, onOwnerAlertsUpdated);
     return () => {
       active = false;
       window.clearTimeout(initialTimer);
       window.clearInterval(interval);
       window.removeEventListener(INSIGHTS_UPDATED_EVENT, onInsightsUpdated);
+      window.removeEventListener(OWNER_ALERTS_UPDATED_EVENT, onOwnerAlertsUpdated);
     };
-  }, [pollAppointments, pollAiInsights]);
+  }, [pollAppointments, pollAiInsights, pollOwnerAlerts]);
 
   useEffect(() => {
     if (!open) return;
@@ -268,7 +326,27 @@ export function NotificationsBell() {
     router.push(`${basePath}?appointmentId=${encodeURIComponent(appointmentId)}`);
   };
 
-  const totalBadgeCount = unreadIds.size + (isOwner ? aiPendingCount : 0);
+  const handleMarkOwnerAlertRead = async (alertId: string) => {
+    setMarkingAlertId(alertId);
+    try {
+      await operationsApi.markOwnerAlertRead(alertId);
+      setOwnerAlerts((prev) =>
+        prev.map((item) =>
+          item.id === alertId ? { ...item, isRead: true } : item,
+        ),
+      );
+    } catch {
+      // Mantém estado atual em caso de falha de rede
+    } finally {
+      setMarkingAlertId(null);
+    }
+  };
+
+  const unreadOwnerAlertsCount = isOwner
+    ? ownerAlerts.filter((item) => !item.isRead).length
+    : 0;
+  const totalBadgeCount =
+    unreadIds.size + (isOwner ? aiPendingCount + unreadOwnerAlertsCount : 0);
 
   return (
     <div ref={containerRef} className="relative inline-flex items-center">
@@ -284,7 +362,19 @@ export function NotificationsBell() {
         <Bell className="size-4" aria-hidden="true" />
         {totalBadgeCount > 0 && (
           <span className="absolute -right-1 -top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-accent px-1 font-mono text-xs leading-none font-semibold text-accent-ink tabular-nums">
-            {totalBadgeCount > 9 ? "9+" : totalBadgeCount}
+            {unreadOwnerAlertsCount > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-0 rounded-full bg-rose-500 opacity-75 motion-safe:animate-ping"
+              />
+            )}
+            <span
+              className={`relative z-10 flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 ${
+                unreadOwnerAlertsCount > 0 ? "bg-rose-600 text-white" : ""
+              }`}
+            >
+              {totalBadgeCount > 9 ? "9+" : totalBadgeCount}
+            </span>
           </span>
         )}
       </button>
@@ -339,6 +429,103 @@ export function NotificationsBell() {
               )}
             </div>
           </div>
+
+          {/* Central de Alertas do Dono (Reputação, Modo Imprevisto, Churn e IA) */}
+          {isOwner && (
+            <div className="border-b border-border-subtle bg-rose-500/[0.03]">
+              <div className="flex items-center justify-between px-3.5 py-2">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                  <ShieldAlert className="size-3.5" aria-hidden="true" />
+                  Alertas do Dono ({unreadOwnerAlertsCount})
+                </span>
+              </div>
+              {ownerAlerts.length === 0 ? (
+                <p className="px-3.5 pb-2.5 text-xs text-ink-muted">
+                  Nenhum alerta operacional ou de reputação no momento.
+                </p>
+              ) : (
+                <ul className="max-h-56 divide-y divide-border-subtle/60 overflow-y-auto">
+                  {ownerAlerts.slice(0, 8).map((alert) => {
+                    const meta = OWNER_ALERT_META[alert.type];
+                    const AlertIcon = meta.Icon;
+                    const expanded = expandedAlertId === alert.id;
+                    const score =
+                      typeof alert.metadata?.score === "number"
+                        ? alert.metadata.score
+                        : null;
+                    return (
+                      <li
+                        key={alert.id}
+                        className={alert.isRead ? "bg-surface/60" : "bg-rose-500/[0.06]"}
+                      >
+                        <div className="px-3.5 py-2.5 text-xs">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedAlertId((prev) =>
+                                prev === alert.id ? null : alert.id,
+                              )
+                            }
+                            className="w-full cursor-pointer text-left"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${meta.badgeClass}`}
+                              >
+                                <AlertIcon className="size-3" aria-hidden="true" />
+                                {meta.label}
+                              </span>
+                              {!alert.isRead && (
+                                <span className="size-2 shrink-0 rounded-full bg-rose-500 motion-safe:animate-pulse" />
+                              )}
+                            </div>
+                            <p className="mt-1 font-semibold text-ink">
+                              {alert.title}
+                            </p>
+                            <p
+                              className={`mt-0.5 text-ink-secondary ${
+                                expanded ? "whitespace-pre-wrap" : "line-clamp-2"
+                              }`}
+                            >
+                              {alert.description}
+                            </p>
+                          </button>
+
+                          {expanded && (
+                            <div className="mt-2 space-y-2 border-t border-border-subtle/60 pt-2">
+                              {score !== null && (
+                                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                                  Avaliação retida: ★ {score}/5
+                                </p>
+                              )}
+                              <p className="font-mono text-[10px] text-ink-muted tabular-nums">
+                                {formatDateTimeInTimezone(
+                                  alert.createdAt,
+                                  session.company.timezone,
+                                  locale,
+                                )}
+                              </p>
+                              {!alert.isRead && (
+                                <button
+                                  type="button"
+                                  disabled={markingAlertId === alert.id}
+                                  onClick={() => void handleMarkOwnerAlertRead(alert.id)}
+                                  className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-border-subtle bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Check className="size-3" aria-hidden="true" />
+                                  Marcar como lido
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Seção de Oportunidades e Alertas Proativos da IA */}
           {isOwner && (

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Plus, RotateCw, SlidersHorizontal, Users, Wallet, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Loader2, Plus, RotateCw, SlidersHorizontal, Users, Wallet, XCircle } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { agendaBoundary, agendaClock, agendaMonth, agendaRange, agendaViews, findAppointmentConflict, formatAgendaDay, isAppointmentPaid, isReadyToComplete, isUnpaidCompleted, localDayMinuteToUtcIso, overlapsScheduleBlock, shiftAgendaDay, shiftAgendaMonth, whatsAppReminder } from "@/lib/agenda";
 import type { AgendaView } from "@/lib/agenda";
@@ -12,6 +12,13 @@ import { agendaBookingSignal } from "@/lib/agenda-sync";
 import { formatDateTimeInTimezone, formatPriceFromCents, formatTimeInTimezone, getTodayIsoDateInTimezone } from "@/lib/format";
 import { agendaStrings } from "@/lib/i18n/agenda";
 import { useLocale } from "@/lib/i18n/locale-context";
+import {
+  notifyOwnerAlertsUpdated,
+  operationsApi,
+  type CascadeDelayMinutes,
+  type CascadeDelayOutput,
+  type EmergencyAbsenceOutput,
+} from "@/lib/operations-api";
 import { useTheme } from "@/lib/theme-context";
 import type { Appointment, AppointmentStatus, CreateAppointmentPayload, ScheduleBlock, UpdatableAppointmentStatus } from "@/lib/types/appointment";
 import type { MeResponse } from "@/lib/types/auth";
@@ -29,6 +36,7 @@ import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect } from "./agenda-c
 import type { AgendaPerson } from "./agenda-controls";
 import { AgendaEditor, type AgendaEditorTab } from "./agenda-editor";
 import { AwaitingClosureBadge, PaidBadge } from "./agenda-status";
+import { SmartWaitlistDrawer } from "./smart-waitlist-drawer";
 
 type StatusFilter = "" | AppointmentStatus | "CANCELED_OR_ABSENT";
 type AlertFilter = "readyToComplete" | "unpaidCompleted";
@@ -316,6 +324,24 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
     return ids;
   }, [clientRecords]);
   const [waitlistDrawerOpen, setWaitlistDrawerOpen] = useState(false);
+  const [smartWaitlistCount, setSmartWaitlistCount] = useState(0);
+  const [cascadeDelayConfirm, setCascadeDelayConfirm] = useState<{
+    person: AgendaPerson;
+    delayMinutes: CascadeDelayMinutes;
+  } | null>(null);
+  const [cascadeDelayResult, setCascadeDelayResult] = useState<{
+    personName: string;
+    result: CascadeDelayOutput;
+  } | null>(null);
+  const [emergencyConfirm, setEmergencyConfirm] = useState<{
+    person: AgendaPerson;
+    reason: string;
+  } | null>(null);
+  const [emergencyResult, setEmergencyResult] = useState<{
+    personName: string;
+    result: EmergencyAbsenceOutput;
+  } | null>(null);
+  const [operationsBusy, setOperationsBusy] = useState(false);
   const [pendingReschedule, setPendingReschedule] = useState<{
     appointment: Appointment;
     targetPersonId: string;
@@ -984,40 +1010,109 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
     </section>
   );
 
+    // Carrega contador de clientes ativos na Fila de Espera Inteligente para a data selecionada
+  useEffect(() => {
+    if (!isOwner) return;
+    const controller = new AbortController();
+    void operationsApi
+      .listWaitlist({ date: focus }, controller.signal)
+      .then(({ entries }) => {
+        if (controller.signal.aborted) return;
+        setSmartWaitlistCount(
+          entries.filter((item) => item.status === "WAITING" || item.status === "NOTIFIED").length,
+        );
+      })
+      .catch(() => {
+        // Silencioso para não bloquear a agenda
+      });
+    return () => controller.abort();
+  }, [focus, isOwner, refresh]);
+
+  async function confirmCascadeDelay() {
+    if (!cascadeDelayConfirm || operationsBusy) return;
+    setOperationsBusy(true);
+    try {
+      const result = await operationsApi.cascadeDelay({
+        collaboratorId: cascadeDelayConfirm.person.id,
+        date: focus,
+        delayMinutes: cascadeDelayConfirm.delayMinutes,
+      });
+      const personName = cascadeDelayConfirm.person.name;
+      setCascadeDelayConfirm(null);
+      setCascadeDelayResult({ personName, result });
+      setRefresh((v) => v + 1);
+      toast.success(
+        `Agenda de ${personName} atrasada em +${result.delayMinutes}m (${result.notifiedCount} cliente(s) notificado(s) via WhatsApp).`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError
+          ? error.message
+          : "Não foi possível aplicar o atraso em cascata.",
+      );
+    } finally {
+      setOperationsBusy(false);
+    }
+  }
+
+  async function confirmEmergencyAbsence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!emergencyConfirm || operationsBusy) return;
+    setOperationsBusy(true);
+    try {
+      const result = await operationsApi.emergencyAbsence(
+        emergencyConfirm.person.id,
+        {
+          date: focus,
+          reason: emergencyConfirm.reason.trim() || undefined,
+        },
+      );
+      const personName = emergencyConfirm.person.name;
+      setEmergencyConfirm(null);
+      setEmergencyResult({ personName, result });
+      setRefresh((v) => v + 1);
+      notifyOwnerAlertsUpdated();
+      toast.success(
+        `Modo Imprevisto ativado para ${personName}. ${result.notifiedCount} cliente(s) notificado(s) via WhatsApp.`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError
+          ? error.message
+          : "Não foi possível ativar o Modo Imprevisto.",
+      );
+    } finally {
+      setOperationsBusy(false);
+    }
+  }
+
   const sidebar = <>
     <div className="mx-auto w-full max-w-57 lg:max-w-none">
       <AgendaMonthGrid company={company} month={miniMonth} selected={focus} today={today} counts={miniCounts}
         onMonth={setMiniMonth} onSelect={(date) => { navigate(date); setAgendaFiltersOpen(false); if (view === "month") setView("day"); }} />
     </div>
 
-    {/* 2. Widget de Fila de Espera na Sidebar Auxiliar */}
-    <div className="space-y-1.5 rounded-xl border border-border-subtle bg-canvas/60 p-2.5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Users className="size-4 text-accent" />
-          <span className="text-xs font-semibold text-ink">{locale === "es" ? "Lista de espera" : "Fila de Espera"}</span>
+    {/* 2. Widget de Fila de Espera Inteligente na Sidebar Auxiliar */}
+    {isOwner && (
+      <div className="space-y-1.5 rounded-xl border border-border-subtle bg-canvas/60 p-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Users className="size-4 text-accent" />
+            <span className="text-xs font-semibold text-ink">{locale === "es" ? "Lista de espera" : "Fila de Espera"}</span>
+          </div>
+          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-bold text-accent tabular-nums">
+            {smartWaitlistCount}
+          </span>
         </div>
-        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-bold text-accent tabular-nums">
-          {waitlist.count}
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-1.5 pt-0.5">
         <button
           type="button"
           onClick={() => { setAgendaFiltersOpen(false); setWaitlistDrawerOpen(true); }}
-          className="cursor-pointer rounded-lg border border-border-subtle bg-surface px-2 py-1.5 text-[11px] font-medium text-ink hover:border-accent transition-colors truncate"
+          className="w-full cursor-pointer rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-semibold text-accent-ink hover:bg-accent-hover transition-colors truncate"
         >
-          {locale === "es" ? "Ver lista" : "Ver fila"} ({waitlist.count})
-        </button>
-        <button
-          type="button"
-          onClick={() => { setAgendaFiltersOpen(false); setEditor({ mode: "new", initialTab: "waitlist" }); }}
-          className="cursor-pointer rounded-lg bg-accent px-2 py-1.5 text-[11px] font-semibold text-accent-ink hover:bg-accent-hover transition-colors truncate"
-        >
-          {locale === "es" ? "+ Agregar" : "+ Adicionar"}
+          {locale === "es" ? "Abrir lista de espera" : "Abrir Fila de Espera"} ({smartWaitlistCount})
         </button>
       </div>
-    </div>
+    )}
 
     <div className={`min-w-0 space-y-2 border-t border-border-subtle pt-2 ${isOwner ? "sm:col-span-2 lg:col-span-1" : "sm:border-t-0 sm:pt-0 lg:border-t lg:pt-3"}`}>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-secondary">
@@ -1069,6 +1164,19 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
           </div>
           {isOwner && <div className="flex flex-wrap items-center gap-2">
             {refreshButton}
+            <button
+              type="button"
+              onClick={() => setWaitlistDrawerOpen(true)}
+              className={`${control} gap-1.5`}
+            >
+              <Users size={15} aria-hidden="true" className="text-accent" />
+              <span>Fila de Espera</span>
+              {smartWaitlistCount > 0 && (
+                <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-bold text-accent tabular-nums">
+                  {smartWaitlistCount}
+                </span>
+              )}
+            </button>
             <button type="button" onClick={() => setAgendaFiltersOpen(true)} className={`${control} lg:hidden`}>
               <SlidersHorizontal size={15} aria-hidden="true" />Filtros
             </button>
@@ -1122,7 +1230,10 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
               payments={displayedPayments} firstVisitClientIds={firstVisitClientIds}
               isOwner={isOwner} onSelect={(date) => { navigate(date); setView("day"); }} renderBlock={(row, compact) => renderEvent(row, compact)}
               onRescheduleDrop={handleRescheduleDrop} onRescheduleConflict={() => toast.warning(copy.professionalAlreadyBooked)}
-              collaboratorId={gridPersonId} onEmptySlotSelect={handleEmptySlotSelect} />}
+              collaboratorId={gridPersonId} onEmptySlotSelect={handleEmptySlotSelect}
+              onCascadeDelay={isOwner ? (person, delayMinutes) => setCascadeDelayConfirm({ person, delayMinutes }) : undefined}
+              onEmergencyAbsence={isOwner ? (person) => setEmergencyConfirm({ person, reason: "" }) : undefined}
+              operationsBusy={operationsBusy} />}
       </section>
     </div>
 
@@ -1218,104 +1329,199 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
         </AgendaDialog>
       )}
 
-    {waitlistDrawerOpen && (
+    {isOwner && (
+      <SmartWaitlistDrawer
+        open={waitlistDrawerOpen}
+        date={focus}
+        collaborators={activePeople}
+        onClose={() => setWaitlistDrawerOpen(false)}
+        onCountChange={setSmartWaitlistCount}
+      />
+    )}
+
+    {cascadeDelayConfirm && (
       <AgendaDialog
         centered
-        title={`Fila de Espera (${waitlist.count})`}
-        onClose={() => setWaitlistDrawerOpen(false)}
+        title={`Atrasar agenda em +${cascadeDelayConfirm.delayMinutes}m`}
+        closeDisabled={operationsBusy}
+        onClose={() => setCascadeDelayConfirm(null)}
       >
-        <div className="space-y-3">
-          <div className="flex items-center justify-between pb-1">
-            <p className="text-xs text-ink-muted">
-              Clientes aguardando liberação de horários
-            </p>
+        <div className="space-y-4">
+          <p className="text-sm text-ink-secondary">
+            Os agendamentos futuros pendentes ou confirmados de{" "}
+            <strong className="text-ink">{cascadeDelayConfirm.person.name}</strong> em{" "}
+            <strong className="text-ink">{focus}</strong> serão deslocados em{" "}
+            <strong className="text-accent">+{cascadeDelayConfirm.delayMinutes} minutos</strong> e os
+            clientes impactados serão avisados automaticamente via WhatsApp.
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => {
-                setWaitlistDrawerOpen(false);
-                setEditor({ mode: "new", initialTab: "waitlist" });
-              }}
-              className="rounded-lg bg-accent px-2.5 py-1 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors"
+              disabled={operationsBusy}
+              onClick={() => setCascadeDelayConfirm(null)}
+              className="min-h-10 cursor-pointer rounded-xl border border-border-subtle bg-surface px-4 text-sm font-semibold text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55"
             >
-              + Adicionar Cliente
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={operationsBusy}
+              onClick={() => void confirmCascadeDelay()}
+              className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-accent px-4 text-sm font-semibold text-accent-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {operationsBusy && <Loader2 className="size-4 animate-spin" />}
+              Confirmar atraso (+{cascadeDelayConfirm.delayMinutes}m)
             </button>
           </div>
+        </div>
+      </AgendaDialog>
+    )}
 
-          {waitlist.entries.length === 0 ? (
-            <div className="py-8 text-center text-xs text-ink-muted border border-dashed border-border-subtle rounded-xl">
-              Nenhum cliente na fila de espera no momento.
-            </div>
-          ) : (
-            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-              {waitlist.entries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="rounded-xl border border-border-subtle bg-canvas/40 p-3 space-y-2"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-bold text-ink">{entry.clientName}</p>
-                      <p className="font-mono text-xs text-ink-muted">{entry.clientPhone}</p>
-                    </div>
-                    <span className="rounded-md bg-accent-soft px-2 py-0.5 text-[10px] font-semibold text-accent">
-                      {entry.serviceName || "Serviço"}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-ink-secondary">
-                    <span>Profissional: {entry.collaboratorName || "Qualquer"}</span>
-                    <span>·</span>
-                    <span>
-                      {entry.preferredTiming === "SPECIFIC"
-                        ? `Preferência: ${entry.preferredDate || ""} ${entry.preferredTime || ""}`
-                        : "Horário flexível"}
-                    </span>
-                  </div>
-
-                  {entry.notes && (
-                    <p className="rounded-lg bg-subtle p-2 text-xs text-ink-secondary">
-                      {entry.notes}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-end gap-2 pt-1 border-t border-border-subtle/50">
-                    <button
-                      type="button"
-                      onClick={() => waitlist.removeEntry(entry.id)}
-                      className="rounded-lg px-2.5 py-1 text-xs font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
-                    >
-                      Remover
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setWaitlistDrawerOpen(false);
-                        const preferredDate = entry.preferredDate;
-                        const preferredTime = entry.preferredTime;
-                        const [hours, minutes] = preferredTime?.split(":").map(Number) ?? [];
-                        const hasPreferredSlot = preferredDate && Number.isFinite(Date.parse(preferredDate))
-                          && hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60;
-                        setEditor({
-                          mode: "new",
-                          initialTab: "appointment",
-                          initialClientName: entry.clientName,
-                          initialClientPhone: entry.clientPhone,
-                          initialServiceId: entry.serviceId,
-                          personId: entry.collaboratorId || undefined,
-                          date: preferredDate || undefined,
-                          time: hasPreferredSlot ? localDayMinuteToUtcIso(preferredDate, hours * 60 + minutes, timezone) : undefined,
-                          fromWaitlistId: entry.id,
-                        });
-                      }}
-                      className="rounded-lg bg-accent px-3 py-1 text-xs font-semibold text-accent-ink hover:bg-accent-hover transition-colors"
-                    >
-                      Agendar Agora
-                    </button>
-                  </div>
-                </div>
+    {cascadeDelayResult && (
+      <AgendaDialog
+        centered
+        title="Atraso em Cascata Aplicado"
+        onClose={() => setCascadeDelayResult(null)}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-ink">
+            <p className="font-semibold">
+              {cascadeDelayResult.personName} · +{cascadeDelayResult.result.delayMinutes} minutos
+            </p>
+            <p className="mt-1 text-xs text-ink-secondary">
+              <strong>{cascadeDelayResult.result.affectedCount}</strong> agendamento(s) deslocado(s) e{" "}
+              <strong>{cascadeDelayResult.result.notifiedCount}</strong> cliente(s) notificado(s) via WhatsApp.
+            </p>
+          </div>
+          {cascadeDelayResult.result.appointments.length > 0 && (
+            <ul className="max-h-56 divide-y divide-border-subtle overflow-y-auto rounded-xl border border-border-subtle">
+              {cascadeDelayResult.result.appointments.map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                  <span className="truncate font-semibold text-ink">{item.clientName}</span>
+                  <span className="shrink-0 font-mono text-ink-secondary tabular-nums">
+                    {formatTimeInTimezone(item.previousStartsAt, timezone, locale)} →{" "}
+                    <strong className="text-accent">
+                      {formatTimeInTimezone(item.newStartsAt, timezone, locale)}
+                    </strong>
+                  </span>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setCascadeDelayResult(null)}
+              className="min-h-9 cursor-pointer rounded-xl bg-accent px-4 text-xs font-semibold text-accent-ink hover:bg-accent-hover"
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
+      </AgendaDialog>
+    )}
+
+    {emergencyConfirm && (
+      <AgendaDialog
+        centered
+        title={`Modo Imprevisto · ${emergencyConfirm.person.name}`}
+        closeDisabled={operationsBusy}
+        onClose={() => setEmergencyConfirm(null)}
+      >
+        <form onSubmit={confirmEmergencyAbsence} className="space-y-4">
+          <div className="flex items-start gap-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 text-xs text-rose-700 dark:text-rose-300">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="space-y-1">
+              <p className="font-bold">A agenda do dia ({focus}) será bloqueada imediatamente.</p>
+              <p>
+                Todos os clientes com horário marcado com <strong>{emergencyConfirm.person.name}</strong>{" "}
+                receberão automaticamente via WhatsApp uma oferta de encaixe com outros barbeiros disponíveis.
+              </p>
+            </div>
+          </div>
+
+          <label className="block space-y-1.5 text-xs font-semibold text-ink">
+            <span>Motivo da ausência (opcional)</span>
+            <input
+              type="text"
+              maxLength={500}
+              value={emergencyConfirm.reason}
+              onChange={(event) =>
+                setEmergencyConfirm((prev) =>
+                  prev ? { ...prev, reason: event.target.value } : null,
+                )
+              }
+              placeholder="Ex.: Emergência médica / imprevisto pessoal"
+              className="min-h-10 w-full rounded-xl border border-border-subtle bg-surface px-3 text-sm font-normal text-ink outline-none focus-visible:border-accent"
+            />
+          </label>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              disabled={operationsBusy}
+              onClick={() => setEmergencyConfirm(null)}
+              className="min-h-10 cursor-pointer rounded-xl border border-border-subtle bg-surface px-4 text-sm font-semibold text-ink hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={operationsBusy}
+              className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-xl bg-rose-600 px-4 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {operationsBusy && <Loader2 className="size-4 animate-spin" />}
+              Bloquear dia e acionar clientes
+            </button>
+          </div>
+        </form>
+      </AgendaDialog>
+    )}
+
+    {emergencyResult && (
+      <AgendaDialog
+        centered
+        title="Modo Imprevisto Ativado"
+        onClose={() => setEmergencyResult(null)}
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-sm text-ink">
+            <p className="font-semibold">
+              Agenda de {emergencyResult.personName} bloqueada em {emergencyResult.result.date}
+            </p>
+            <p className="mt-1 text-xs text-ink-secondary">
+              <strong>{emergencyResult.result.affectedCount}</strong> atendimento(s) impactado(s) ·{" "}
+              <strong>{emergencyResult.result.notifiedCount}</strong> cliente(s) notificado(s) via WhatsApp com opções de encaixe.
+            </p>
+          </div>
+          {emergencyResult.result.affectedAppointments.length > 0 && (
+            <ul className="max-h-56 divide-y divide-border-subtle overflow-y-auto rounded-xl border border-border-subtle">
+              {emergencyResult.result.affectedAppointments.map((item) => (
+                <li key={item.appointmentId} className="space-y-0.5 px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-ink">{item.clientName}</span>
+                    <span className="shrink-0 font-mono text-ink-muted tabular-nums">
+                      {formatTimeInTimezone(item.originalStartsAt, timezone, locale)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-ink-secondary">
+                    {item.suggestedAlternative
+                      ? `Encaixe sugerido: ${item.suggestedAlternative.collaboratorName} às ${formatTimeInTimezone(item.suggestedAlternative.startsAt, timezone, locale)}`
+                      : "Sem encaixe automático compatível — cliente convidado a remarcar."}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setEmergencyResult(null)}
+              className="min-h-9 cursor-pointer rounded-xl bg-accent px-4 text-xs font-semibold text-accent-ink hover:bg-accent-hover"
+            >
+              Fechar
+            </button>
+          </div>
         </div>
       </AgendaDialog>
     )}

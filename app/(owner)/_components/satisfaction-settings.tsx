@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, Star } from "lucide-react";
+import { ExternalLink, ShieldCheck, Sparkles, Star } from "lucide-react";
 import { apiRequest } from "@/lib/api-client";
+import { defaultCompanySettings } from "@/lib/company-settings";
 import { formatDateTimeInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import type { Appointment } from "@/lib/types/appointment";
@@ -28,10 +29,17 @@ interface Analysis {
 
 export function SatisfactionSettings() {
   const { session } = useSession();
-  const { settings, refresh } = useCompanySettings(session.company.id);
+  const { settings, refresh } = useCompanySettings(
+    session.company.id,
+    defaultCompanySettings,
+    true,
+    true,
+  );
   const { locale, t } = useLocale();
   const es = locale === "es";
   const [enabled, setEnabled] = useState<boolean>();
+  const [postVisitEnabled, setPostVisitEnabled] = useState<boolean>();
+  const [googleReviewUrlInput, setGoogleReviewUrlInput] = useState<string>();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [invitationReviews, setInvitationReviews] = useState<Review[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -86,26 +94,102 @@ export function SatisfactionSettings() {
     finally { setPending(""); }
   }
 
+  const currentPostVisit = postVisitEnabled ?? settings.enablePostVisitSurvey ?? true;
+  const currentGoogleReviewUrl = googleReviewUrlInput ?? settings.googleReviewUrl ?? "";
+  const hasSurveyChanges =
+    enabled !== undefined ||
+    postVisitEnabled !== undefined ||
+    googleReviewUrlInput !== undefined;
+
   const reviewed = new Set(invitationReviews.map((review) => review.appointmentId));
   const available = appointments.filter((appointment) => !reviewed.has(appointment.id));
   const card = "space-y-4 rounded-2xl border border-border-subtle bg-surface p-4 sm:p-6";
   return <>
     <section className={card}>
       <h2 className="text-title-sm font-bold text-ink">{es ? "Encuesta de satisfacción" : "Pesquisa de Satisfação"}</h2>
-      <form className="space-y-3" onSubmit={(event) => {
+      <form className="space-y-4" onSubmit={(event) => {
         event.preventDefault();
-        if (enabled === undefined) return;
+        if (!hasSurveyChanges) return;
+        const trimmedUrl = currentGoogleReviewUrl.trim();
+        if (trimmedUrl) {
+          try {
+            new URL(trimmedUrl);
+          } catch {
+            setError(es ? "Ingresa una URL válida de Google Maps." : "Informe uma URL válida do Google Maps (ex.: https://g.page/r/...).");
+            return;
+          }
+        }
         void run("save", async () => {
-          await saveCompanySettings(session.company.id, { surveyEnabled: enabled });
+          await saveCompanySettings(session.company.id, {
+            ...(enabled !== undefined ? { surveyEnabled: enabled } : {}),
+            enablePostVisitSurvey: currentPostVisit,
+            googleReviewUrl: trimmedUrl ? trimmedUrl : null,
+          });
           setEnabled(undefined);
+          setPostVisitEnabled(undefined);
+          setGoogleReviewUrlInput(undefined);
           setStatus(t.common.profileUpdated);
         });
       }}>
-        <label className="flex min-h-11 items-center gap-2 text-sm font-medium">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
           <input type="checkbox" role="switch" className="size-4 cursor-pointer accent-accent" checked={enabled ?? settings.surveyEnabled} onChange={(event) => setEnabled(event.target.checked)} />
-          {es ? "Activar encuesta después de la atención" : "Ativar pesquisa pós-atendimento"}
+          {es ? "Activar encuesta manual por enlace" : "Ativar pesquisa manual por link"}
         </label>
-        <Button className="cursor-pointer" type="submit" disabled={!!pending || enabled === undefined}>{t.common.save}</Button>
+
+        {/* Blindagem de Reputação: Pesquisa Pós-Atendimento via WhatsApp + Link Google Maps */}
+        <div className="space-y-3 rounded-xl border border-border-subtle bg-canvas/50 p-3.5">
+          <div className="flex items-start gap-2">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold text-ink">
+                {es ? "Blindaje de reputación (WhatsApp)" : "Blindagem de Reputação (Pós-Atendimento WhatsApp)"}
+              </p>
+              <p className="text-xs text-ink-secondary">
+                {es
+                  ? "Envía la encuesta 2h después del cierre. Notas 1–3 se retienen y alertan al dueño; nota 5 invita a evaluar en Google Maps."
+                  : "Dispara pesquisa automática 2h após o fechamento da comanda. Notas 1 a 3 ficam retidas com alerta no painel do dono; nota 5 recebe o link do Google Maps."}
+              </p>
+            </div>
+          </div>
+
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-medium text-ink">
+            <input
+              type="checkbox"
+              role="switch"
+              className="size-4 cursor-pointer accent-accent"
+              checked={currentPostVisit}
+              onChange={(event) => setPostVisitEnabled(event.target.checked)}
+            />
+            {es ? "Activar encuesta automática post-atención" : "Ativar pesquisa automática pós-atendimento"}
+          </label>
+
+          <label className="block space-y-1.5 text-sm font-medium text-ink">
+            <span className="flex items-center justify-between gap-2">
+              <span>{es ? "Enlace de reseña en Google Maps (para nota 5)" : "Link de avaliação no Google Maps (para notas 5)"}</span>
+              {currentGoogleReviewUrl.trim() && (
+                <a
+                  href={currentGoogleReviewUrl.trim()}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex cursor-pointer items-center gap-1 text-xs font-semibold text-accent hover:underline"
+                >
+                  {es ? "Probar enlace" : "Testar link"}
+                  <ExternalLink className="size-3" aria-hidden="true" />
+                </a>
+              )}
+            </span>
+            <input
+              type="url"
+              value={currentGoogleReviewUrl}
+              onChange={(event) => setGoogleReviewUrlInput(event.target.value)}
+              placeholder="https://g.page/r/sua-barbearia/review"
+              maxLength={500}
+              className="min-h-11 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm font-normal text-ink outline-none focus-visible:border-accent"
+            />
+          </label>
+        </div>
+
+        <Button className="cursor-pointer" type="submit" disabled={!!pending || !hasSurveyChanges}>{t.common.save}</Button>
       </form>
       {settings.surveyEnabled && <div className="space-y-3 border-t border-border-subtle pt-4">
         <label className="grid gap-2 text-sm font-medium">
