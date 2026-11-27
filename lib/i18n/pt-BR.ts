@@ -8,6 +8,7 @@ export const ptBR: Dictionary = {
     panel: "Painel", agenda: "Agenda", calendar: "Calendário", blocks: "Bloqueios", listing: "Listagem", restore: "Restaurar",
     finance: "Financeiro", overviewReceipts: "Comandas", commissionsAdvances: "Comissões", accounts: "Contas a Pagar/Receber", cashStatement: "Controle Financeiro", paymentMethods: "Formas de Pagamento", onlinePayment: "Pagamento Online",
     clients: "Clientes", clientBase: "Base de Clientes", inactiveClients: "Clientes Sumidos", birthdays: "Aniversariantes", returns: "Retornos", loyalty: "Fidelidade",
+    club: "Clube de Assinaturas",
     services: "Serviços", serviceListing: "Listagem", categories: "Categorias", packages: "Pacotes",
     productsInventory: "Produtos & Estoque", productListingMovements: "Listagem e Movimentações", suppliers: "Fornecedores", purchaseOrders: "Ordens de Compra",
     team: "Equipe", professionalsList: "Profissionais", schedules: "Expedientes",

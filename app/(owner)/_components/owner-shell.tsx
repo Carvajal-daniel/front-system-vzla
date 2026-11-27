@@ -207,6 +207,7 @@ function GlobalSearchModal({
   const searchItems = [
     { label: `${product.agenda} · ${product.calendar}`, href: "/owner/appointments", category: product.agenda, icon: CalendarDays },
     { label: product.clientBase, href: "/owner/clients", category: product.clients, icon: Users },
+    { label: product.club, href: "/owner/clube", category: product.clients, icon: Users },
     { label: product.overviewReceipts, href: "/owner/finance", category: product.finance, icon: Receipt },
     { label: product.commissionsAdvances, href: "/owner/finance/commissions", category: product.finance, icon: Wallet },
     { label: product.accounts, href: "/owner/finance/payables", category: product.finance, icon: Wallet },
@@ -702,7 +703,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
   const { currentPlan } = usePlanLimits();
   const isTrial = currentPlan === "TRIAL";
   const { product } = t;
-  const [activeGroup, setActiveGroup] = useState<string | null>("agenda");
+  const [activeGroup, setActiveGroup] = useState<string | null>(pathname === "/owner/clube" ? "clients" : "agenda");
   const [searchOpen, setSearchOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [copilotInitialPrompt, setCopilotInitialPrompt] = useState<string | null>(null);
@@ -823,6 +824,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       { href: "/owner/clients/birthdays", label: product.birthdays },
       { href: "/owner/clients/returns", label: product.returns },
       { href: "/owner/clients/loyalty", label: product.loyalty },
+      { href: "/owner/clube", label: product.club },
     ] },
     { key: "services", label: product.services, icon: Wrench, items: [
       { href: "/owner/services", label: product.serviceListing },

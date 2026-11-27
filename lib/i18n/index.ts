@@ -11,7 +11,7 @@ export interface Dictionary {
     upgradeAction: string; whatsappConnected: string; whatsappDisconnected: string; comingSoon: string;
     panel: string; agenda: string; calendar: string; blocks: string; listing: string; restore: string;
     finance: string; overviewReceipts: string; commissionsAdvances: string; accounts: string; cashStatement: string; paymentMethods: string; onlinePayment: string;
-    clients: string; clientBase: string; inactiveClients: string; birthdays: string; returns: string; loyalty: string;
+    clients: string; clientBase: string; inactiveClients: string; birthdays: string; returns: string; loyalty: string; club: string;
     services: string; serviceListing: string; categories: string; packages: string;
     productsInventory: string; productListingMovements: string; suppliers: string; purchaseOrders: string;
     team: string; professionalsList: string; schedules: string;

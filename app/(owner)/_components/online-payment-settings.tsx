@@ -13,6 +13,7 @@ import type { OnlinePaymentSettings } from "@/lib/company-settings";
 import { toast } from "sonner";
 import { saveCompanySettings, useCompanySettings } from "@/lib/use-company-settings";
 import { useSession } from "@/components/ui/auth-guard";
+import { PaymentGatewaySettings } from "./payment-gateway-settings";
 
 const STORAGE_PREFIX = "salao_online_payment_config_";
 
@@ -65,18 +66,19 @@ export function OnlinePaymentSettingsPanel() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-bold text-accent-ink hover:bg-accent-hover transition-colors shadow-xs cursor-pointer self-start sm:self-auto"
-        >
-          <Save size={14} />
-          Salvar Configurações
-        </button>
       </div>
 
+      <PaymentGatewaySettings />
+
       <form onSubmit={handleSave} className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-base font-semibold text-ink">Regras do sinal</h3>
+          <button type="submit" disabled={saving}
+            className="flex cursor-pointer items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-bold text-accent-ink transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60">
+            <Save size={14} aria-hidden />
+            {saving ? "Salvando…" : "Salvar regras do sinal"}
+          </button>
+        </div>
         {/* Card de Status Principal */}
         <div className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">

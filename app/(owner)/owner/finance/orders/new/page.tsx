@@ -12,6 +12,7 @@ import {
   Loader2,
   Package,
   Plus,
+  QrCode,
   Receipt,
   Search,
   Trash2,
@@ -33,6 +34,8 @@ import type { Service } from "@/lib/types/service";
 import type { Collaborator } from "@/lib/types/team";
 import { useClients } from "@/lib/use-clients";
 import { useLoyalty } from "@/lib/use-loyalty";
+import { billingDocument, getBillingClients, type GatewaySettings, type PixRequest } from "@/lib/online-payments";
+import { PixChargeDialog } from "../../../../_components/pix-charge-dialog";
 
 /**
  * Normaliza respostas da API para sempre retornar um array válido,
@@ -337,6 +340,17 @@ export default function NewOrderPage() {
   const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const requestKeyRef = useRef<string>(crypto.randomUUID());
+  const [gateway, setGateway] = useState<GatewaySettings>();
+  const [onlinePix, setOnlinePix] = useState<{ request: PixRequest; loyaltyCode?: string } | null>(null);
+
+  useEffect(() => {
+    if (currency !== "BRL") return;
+    const controller = new AbortController();
+    void apiRequest<GatewaySettings>("/payments/config", { signal: controller.signal }).then((result) => {
+      if (!controller.signal.aborted) setGateway(result);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [currency]);
 
   // Limpa qualquer rascunho residual em storage e reinicia o formulário 100% zerado
   const resetOrderForm = () => {
@@ -709,8 +723,8 @@ export default function NewOrderPage() {
   };
 
   // Salvar Comanda Completa via endpoint atômico POST /finance/orders
-  const handleSubmitOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitOrder = async (payingOnline = false) => {
+    if (submitting || onlinePix) return;
     if (items.length === 0) {
       toast.error(copy.errorNoItems);
       return;
@@ -722,10 +736,25 @@ export default function NewOrderPage() {
         ? `${fixedDdi} ${clientPhone.trim()}`
         : null;
 
+    if (payingOnline && (!trimmedName || !normalizedPhone)) {
+      toast.error(isEs ? "Identifica al cliente y su teléfono para cobrar con Pix." : "Identifique o cliente e o telefone para cobrar via Pix.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       // 1. Se houver cliente informado com telefone e ainda não estiver na base, cadastra automaticamente
       let targetClientId = selectedClientId;
+      if (payingOnline && normalizedPhone) {
+        const phone = normalizedPhone.replace(/\D/g, "");
+        const registered = await getBillingClients(undefined, phone);
+        const matched = registered.find((client) => client.phone.replace(/\D/g, "") === phone);
+        if (gateway?.paymentProvider === "MERCADO_PAGO" && !(matched ? matched.email : clientEmail.trim())) {
+          toast.error(isEs ? "El cliente necesita un correo registrado para pagar con Mercado Pago." : "O cliente precisa ter um e-mail cadastrado para pagar pelo Mercado Pago.");
+          return;
+        }
+        targetClientId = matched?.id ?? "";
+      }
       if (trimmedName && normalizedPhone && !targetClientId) {
         try {
           targetClientId = await createClient({
@@ -735,9 +764,14 @@ export default function NewOrderPage() {
             document: clientDocument || undefined,
           });
         } catch {
+          if (payingOnline) {
+            toast.error(isEs ? "No se pudo vincular un cliente registrado a la comanda." : "Não foi possível vincular um cliente cadastrado à comanda.");
+            return;
+          }
           // Não bloqueia o fechamento da comanda caso o telefone já exista ou seja inválido
         }
       }
+      if (payingOnline && !targetClientId) return;
 
       // 2. Persiste comanda, pagamentos e baixa automática de estoque (SALE_OUT) em transação única no backend
       const addressNote =
@@ -751,7 +785,7 @@ export default function NewOrderPage() {
         clientPhone: normalizedPhone,
         clientDocument: saleMode === "CLIENT" && clientDocument.trim() ? clientDocument.trim() : null,
         orderDate,
-        status: orderStatus,
+        status: payingOnline ? "OPEN" : orderStatus,
         discountCents,
         notes: combinedNotes,
         items: items.map((item) => ({
@@ -769,20 +803,31 @@ export default function NewOrderPage() {
         })),
       };
 
-      if (editingOrderId) {
-        await apiRequest(`/finance/orders/${encodeURIComponent(editingOrderId)}`, {
-          method: "PATCH",
-          body: payloadBase,
+      const orderPath = editingOrderId ? `/finance/orders/${encodeURIComponent(editingOrderId)}` : "/finance/orders";
+      const saved = await apiRequest<SavedFinanceOrder>(orderPath, {
+        method: editingOrderId ? "PATCH" : "POST",
+        body: editingOrderId ? payloadBase : {
+          ...payloadBase, code: orderCode, appointmentId: appointmentId || null, requestKey: requestKeyRef.current,
+        },
+      }).catch((error: unknown) => {
+        if (payingOnline && editingOrderId && error instanceof ApiError &&
+          ["FINANCE_ORDER_PENDING_PAYMENT", "FINANCE_ORDER_CLOSED_REQUIRES_PIN"].includes(error.message)) {
+          toast.info(isEs ? "Se cargó el estado actual de la comanda." : "Foi carregado o estado atual da comanda.");
+          return apiRequest<SavedFinanceOrder>(orderPath);
+        }
+        throw error;
+      });
+
+      if (payingOnline && saved.status === "OPEN" && saved.openInCents > 0) {
+        setOnlinePix({
+          request: { referenceType: "ORDER", referenceId: saved.id, clientId: targetClientId, document: billingDocument(clientDocument) },
+          loyaltyCode: !editingOrderId ? saved.code : undefined,
         });
-      } else {
-        await apiRequest("/finance/orders", {
-          method: "POST",
-          body: {
-            ...payloadBase,
-            code: orderCode,
-            appointmentId: appointmentId || null,
-            requestKey: requestKeyRef.current,
-          },
+        return;
+      }
+      if (payingOnline && saved.status === "OPEN") {
+        await apiRequest(`/finance/orders/${encodeURIComponent(saved.id)}`, {
+          method: "PATCH", body: { ...payloadBase, status: "CLOSED" },
         });
       }
 
@@ -799,7 +844,7 @@ export default function NewOrderPage() {
       router.refresh();
     } catch (err) {
       // Gera nova requestKey para nova tentativa caso a validação/estoque tenha falhado
-      requestKeyRef.current = crypto.randomUUID();
+      if (!payingOnline) requestKeyRef.current = crypto.randomUUID();
       if (err instanceof ApiError && err.message.includes("INVENTORY_INSUFFICIENT_STOCK")) {
         toast.error(copy.errorInsufficientStock);
       } else if (err instanceof ApiError && err.message) {
@@ -842,7 +887,7 @@ export default function NewOrderPage() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmitOrder} autoComplete="off" className="space-y-6">
+      <form onSubmit={(event) => { event.preventDefault(); void handleSubmitOrder(); }} autoComplete="off" className="space-y-6">
         {/* ======================================================== */}
         {/* PARTE SUPERIOR: 2 COLUNAS (INFORMAÇÕES + PAGAMENTO) */}
         {/* ======================================================== */}
@@ -1135,6 +1180,16 @@ export default function NewOrderPage() {
                 <span className="block text-xs font-semibold text-ink-secondary">
                   {copy.addPaymentLabel}
                 </span>
+                {currency === "BRL" && gateway && (gateway.paymentProvider !== "NONE" || gateway.staticPixKey) && (
+                  <button type="button" disabled={submitting || !!onlinePix}
+                    onClick={(event) => { if (event.currentTarget.form?.reportValidity()) void handleSubmitOrder(true); }}
+                    className="flex min-h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-accent/40 bg-accent-soft px-3 py-2 text-sm font-semibold text-accent hover:border-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50">
+                    <QrCode size={16} aria-hidden />
+                    {gateway.paymentProvider === "NONE"
+                      ? (isEs ? "Pix manual / Código QR" : "Pix manual / QR Code")
+                      : (isEs ? "Pix Online / Código QR" : "Pix Online / QR Code")}
+                  </button>
+                )}
 
                 <div className="flex gap-2">
                   <select
@@ -1518,6 +1573,16 @@ export default function NewOrderPage() {
           </div>
         </div>
       </form>
+      {onlinePix && <PixChargeDialog request={onlinePix.request}
+        onClose={() => { setOnlinePix(null); router.push("/owner/finance"); }}
+        onConfirmed={() => {
+          if (onlinePix.loyaltyCode && program.autoPointOnCompletion) {
+            addPoints(onlinePix.request.clientId, 1, `Pontuação da comanda ${onlinePix.loyaltyCode}`);
+          }
+          setOnlinePix(null);
+          router.push("/owner/finance");
+          router.refresh();
+        }} />}
     </div>
   );
 }

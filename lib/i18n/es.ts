@@ -8,6 +8,7 @@ export const es: Dictionary = {
     panel: "Panel", agenda: "Agenda", calendar: "Calendario", blocks: "Bloqueos", listing: "Listado", restore: "Restaurar",
     finance: "Finanzas", overviewReceipts: "Comandas", commissionsAdvances: "Comisiones", accounts: "Cuentas por Pagar/Cobrar", cashStatement: "Control Financiero", paymentMethods: "Formas de Pago", onlinePayment: "Pago Online",
     clients: "Clientes", clientBase: "Base de Clientes", inactiveClients: "Clientes Inactivos", birthdays: "Cumpleaños", returns: "Retornos", loyalty: "Fidelidad",
+    club: "Club de Suscripciones",
     services: "Servicios", serviceListing: "Listado", categories: "Categorías", packages: "Paquetes",
     productsInventory: "Productos e Inventario", productListingMovements: "Listado y Movimientos", suppliers: "Proveedores", purchaseOrders: "Órdenes de Compra",
     team: "Equipo", professionalsList: "Profesionales", schedules: "Horarios",
