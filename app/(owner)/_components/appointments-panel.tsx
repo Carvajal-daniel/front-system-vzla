@@ -15,7 +15,7 @@ export function AppointmentsPanel() {
         key={initialDate}
         session={session}
         initialDate={initialDate}
-        renderReceipt={(props) => <ReceiptDialog {...props} />}
+        renderReceipt={(props) => <ReceiptDialog {...props} allowOnlinePix />}
       />
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { ArrowRight, Receipt, Sparkles, Wallet, X } from "lucide-react";
+import { ArrowRight, QrCode, Receipt, Sparkles, Wallet, X } from "lucide-react";
 import { PaidBadge } from "@/components/ui/agenda-status";
 import { useSession } from "@/components/ui/auth-guard";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { isAppointmentPaid } from "@/lib/agenda";
 import { formatDateTimeInTimezone, formatPriceFromCents, getTodayIsoDateInTimezone } from "@/lib/format";
 import { useLocale } from "@/lib/i18n/locale-context";
 import { agendaStrings } from "@/lib/i18n/agenda";
+import { billingDocument, getBillingClients, paymentError, type BillingClient, type GatewaySettings, type PaymentProvider, type PixRequest } from "@/lib/online-payments";
 import { useCompanySettings } from "@/lib/use-company-settings";
 import type { Appointment } from "@/lib/types/appointment";
 import type { Collaborator } from "@/lib/types/team";
@@ -24,6 +25,7 @@ import {
   type SavedFinanceOrder,
 } from "@/lib/types/finance";
 import { PrintableReceipt, type PrintableReceiptData } from "./printable-receipt";
+import { PixChargeDialog } from "./pix-charge-dialog";
 
 const disabledCursor = "disabled:pointer-events-auto disabled:cursor-not-allowed";
 const control = `h-10 w-full rounded-xl border border-border-strong bg-surface px-3 text-sm text-ink ${disabledCursor}`;
@@ -42,7 +44,7 @@ function currencyInput(cents: number) {
   return (Math.max(0, cents) / 100).toFixed(2);
 }
 
-export function ReceiptDialog({ appointmentId, order, candidates = [], timezone, onClose, onChanged, closingOrder = false }: {
+export function ReceiptDialog({ appointmentId, order, candidates = [], timezone, onClose, onChanged, closingOrder = false, allowOnlinePix = false }: {
   appointmentId?: string;
   order?: SavedFinanceOrder;
   candidates?: Candidate[];
@@ -50,6 +52,7 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
   onClose: () => void;
   onChanged?: () => void;
   closingOrder?: boolean;
+  allowOnlinePix?: boolean;
 }) {
   const { locale, t } = useLocale();
   const isEs = locale === "es";
@@ -59,6 +62,9 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
   const dialog = useRef<HTMLDialogElement>(null);
   const [selected, setSelected] = useState(appointmentId ?? "");
   const [busy, setBusy] = useState(false);
+  const [gateway, setGateway] = useState<GatewaySettings>();
+  const [pixRequest, setPixRequest] = useState<PixRequest | null>(null);
+  const showingPix = pixRequest !== null;
 
   const companyInfo = {
     companyName: session.company.companyName,
@@ -71,10 +77,19 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
   };
 
   useEffect(() => {
+    if (!allowOnlinePix) return;
+    const controller = new AbortController();
+    void apiRequest<GatewaySettings>("/payments/config", { signal: controller.signal }).then((result) => {
+      if (!controller.signal.aborted) setGateway(result);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [allowOnlinePix]);
+
+  useEffect(() => {
     const element = dialog.current;
-    element?.showModal();
+    if (!showingPix) element?.showModal();
     return () => { element?.close(); };
-  }, []);
+  }, [showingPix]);
 
   const orderReceiptData: PrintableReceiptData | null = order
     ? {
@@ -119,7 +134,7 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
       }
     : null;
 
-  return (
+  return <>
     <dialog ref={dialog}
       onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}
       aria-labelledby="receipt-dialog-title"
@@ -169,15 +184,21 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
               onChanged={onChanged}
               onBusy={setBusy}
               closingOrder={closingOrder}
+              pixProvider={gateway?.paymentProvider ?? "NONE"}
+              onPix={setPixRequest}
             />
           ) : !candidates.length && <p className="text-sm text-ink-muted">{f.noEligible}</p>}
         </>
       )}
     </dialog>
-  );
+    {pixRequest && <PixChargeDialog request={pixRequest} onClose={() => setPixRequest(null)} onConfirmed={() => {
+      onChanged?.();
+      onClose();
+    }} />}
+  </>;
 }
 
-function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onChanged, onBusy, closingOrder }: {
+function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onChanged, onBusy, closingOrder, pixProvider, onPix }: {
   appointmentId: string;
   companyInfo: {
     companyName: string;
@@ -190,15 +211,13 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
   onChanged?: () => void;
   onBusy: (busy: boolean) => void;
   closingOrder: boolean;
+  pixProvider: PaymentProvider;
+  onPix: (request: PixRequest) => void;
 }) {
   const { t } = useLocale();
   const [data, setData] = useState<AppointmentCollections | null>(null);
-  const [appointmentMeta, setAppointmentMeta] = useState<{
-    clientPhone?: string | null;
-    professionalName?: string | null;
-    startsAt?: string;
-    notes?: string | null;
-  } | null>(null);
+  const [appointment, setAppointment] = useState<Appointment | null>(null);
+  const [professionalName, setProfessionalName] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [version, setVersion] = useState(0);
 
@@ -215,12 +234,8 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
         const matchedPro = appDetails
           ? collabs.find((c) => c.id === appDetails.collaboratorId)?.name ?? null
           : null;
-        setAppointmentMeta({
-          clientPhone: appDetails?.clientPhone ?? null,
-          professionalName: matchedPro,
-          startsAt: appDetails?.startsAt,
-          notes: appDetails?.notes ?? null,
-        });
+        setAppointment(appDetails);
+        setProfessionalName(matchedPro);
         setData(response);
         setLoadFailed(false);
       }, () => {
@@ -241,11 +256,14 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
     <ReceiptDetails
       data={data}
       companyInfo={companyInfo}
-      appointmentMeta={appointmentMeta}
+      appointment={appointment}
+      professionalName={professionalName}
       timezone={timezone}
       onClose={onClose}
       onBusy={onBusy}
       closingOrder={closingOrder}
+      pixProvider={pixProvider}
+      onPix={onPix}
       onChanged={() => {
         setVersion((v) => v + 1);
         onChanged?.();
@@ -254,7 +272,7 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
   );
 }
 
-function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose, onChanged, onBusy, closingOrder }: {
+function ReceiptDetails({ data, companyInfo, appointment, professionalName, timezone, onClose, onChanged, onBusy, closingOrder, pixProvider, onPix }: {
   data: AppointmentCollections;
   companyInfo: {
     companyName: string;
@@ -262,17 +280,15 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
     companyDocument: string | null;
     currency: string;
   };
-  appointmentMeta: {
-    clientPhone?: string | null;
-    professionalName?: string | null;
-    startsAt?: string;
-    notes?: string | null;
-  } | null;
+  appointment: Appointment | null;
+  professionalName: string | null;
   timezone: string;
   onClose: () => void;
   onChanged: () => void;
   onBusy: (busy: boolean) => void;
   closingOrder: boolean;
+  pixProvider: PaymentProvider;
+  onPix: (request: PixRequest) => void;
 }) {
   const { locale, t } = useLocale();
   const f = t.finance;
@@ -283,6 +299,7 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
   const [split, setSplit] = useState(false);
   const [otherAmount, setOtherAmount] = useState("");
   const [otherMethod, setOtherMethod] = useState<PaymentMethod>("PIX");
+  const [pixDocument, setPixDocument] = useState("");
   const [refund, setRefund] = useState<{ id: string; amount: string; reason: string; date: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState("");
@@ -290,6 +307,8 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
   const idempotency = useRef<{ payload: string; key: string } | null>(null);
   const submitting = useRef(false);
   const [completedForClosure, setCompletedForClosure] = useState(false);
+  const canChargePix = pixProvider !== "NONE" && data.currency === "BRL" && data.openInCents > 0 &&
+    data.collectedInCents === 0 && !data.commissionPaidAt;
   const money = (cents: number) => formatPriceFromCents(cents, locale, data.currency);
   const localDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" });
 
@@ -363,6 +382,78 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
     void send("/finance/receipts", { appointmentId: data.appointmentId, effectiveOn: date, payments }, f.appliedReceipt);
   }
 
+  async function startPix() {
+    if (submitting.current || !canChargePix) return;
+    const phone = appointment?.clientPhone.replace(/\D/g, "");
+    if (!appointment || !phone) {
+      setError(locale === "es" ? "Verifica el teléfono del cliente en la cita." : "Confira o telefone do cliente no agendamento.");
+      return;
+    }
+    const document = billingDocument(pixDocument);
+    if (pixDocument.trim() && !document) {
+      setError(locale === "es" ? "Ingresa un CPF o CNPJ válido." : "Informe um CPF ou CNPJ válido.");
+      return;
+    }
+
+    submitting.current = true;
+    setSending(true);
+    onBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const [{ items: orders }, clients] = await Promise.all([
+        apiRequest<{ items: SavedFinanceOrder[] }>("/finance/orders"),
+        getBillingClients(undefined, phone),
+      ]);
+      const linkedOrders = orders.filter((order) => order.appointmentId === appointment.id);
+      const existingOrder = linkedOrders.find((order) => order.status === "CLOSED") ?? linkedOrders[0];
+      let client = clients.find((client) => client.phone.replace(/\D/g, "") === phone);
+      if (pixProvider === "MERCADO_PAGO" && !client?.email) {
+        setError(locale === "es"
+          ? "Registra el correo del cliente para cobrar con Mercado Pago."
+          : "Cadastre o e-mail do cliente para cobrar pelo Mercado Pago.");
+        return;
+      }
+      const order = existingOrder ?? await apiRequest<SavedFinanceOrder>("/finance/orders", {
+        method: "POST",
+        body: {
+          appointmentId: appointment.id,
+          requestKey: appointment.id,
+          clientName: appointment.clientName,
+          clientPhone: appointment.clientPhone,
+          orderDate: today,
+          status: "OPEN",
+          items: [{
+            itemType: "SERVICE",
+            referenceId: appointment.serviceId,
+            name: data.serviceName,
+            collaboratorId: appointment.collaboratorId,
+            quantity: 1,
+            unitPriceCents: data.openInCents,
+            commissionPercentage: appointment.commissionPercentageSnapshot,
+          }],
+        },
+      });
+      if (order.status !== "OPEN" || order.openInCents <= 0) {
+        setError(locale === "es" ? "La comanda de esta cita no tiene un saldo pendiente." : "A comanda deste agendamento não tem saldo em aberto.");
+        return;
+      }
+      if (!client) {
+        const result = await apiRequest<{ client: BillingClient }>("/v1/clients", {
+          method: "POST", body: { name: appointment.clientName, phone: appointment.clientPhone },
+        });
+        client = result.client;
+      }
+      onPix({ referenceType: "ORDER", referenceId: order.id, clientId: client.id, document: document ?? billingDocument(order.clientDocument ?? "") });
+    } catch (failure) {
+      setError(paymentError(failure, locale === "es" ? "No se pudo preparar la comanda para Pix." : "Não foi possível preparar a comanda para o Pix."));
+    } finally {
+      submitting.current = false;
+      setSending(false);
+      onBusy(false);
+    }
+  }
+
   function submitRefund(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!refund) return;
@@ -391,10 +482,10 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
     companyPhone: companyInfo.companyPhone,
     companyDocument: companyInfo.companyDocument,
     receiptCode: `#REC-${data.appointmentId.slice(0, 8).toUpperCase()}`,
-    issuedAt: data.receipts[0]?.recordedAt ?? appointmentMeta?.startsAt ?? new Date().toISOString(),
+    issuedAt: data.receipts[0]?.recordedAt ?? appointment?.startsAt ?? new Date().toISOString(),
     clientName: data.clientName,
-    clientPhone: appointmentMeta?.clientPhone ?? null,
-    professionals: appointmentMeta?.professionalName ? [appointmentMeta.professionalName] : [],
+    clientPhone: appointment?.clientPhone ?? null,
+    professionals: professionalName ? [professionalName] : [],
     items: [
       {
         id: data.appointmentId,
@@ -402,7 +493,7 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
         quantity: 1,
         unitPriceCents: data.netInCents,
         subtotalCents: data.netInCents,
-        collaboratorName: appointmentMeta?.professionalName ?? null,
+        collaboratorName: professionalName,
       },
     ],
     subtotalCents: data.netInCents,
@@ -411,7 +502,7 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
     paidCents: data.collectedInCents,
     openInCents: data.openInCents,
     payments: activePayments,
-    notes: appointmentMeta?.notes ?? null,
+    notes: appointment?.notes ?? null,
     currency: data.currency,
     timezone,
   };
@@ -512,7 +603,20 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
                 </label>
               </>}
             </fieldset>
-            <Button type="submit" disabled={sending} className={actionCursor}>{sending ? t.common.saving : f.saveReceipt}</Button>
+            {canChargePix && pixProvider === "ASAAS" && (
+              <label className="block space-y-1 text-xs">
+                <span>{locale === "es" ? "CPF o CNPJ para Pix Online" : "CPF ou CNPJ para Pix Online"}</span>
+                <Input inputMode="numeric" maxLength={18} value={pixDocument} disabled={sending}
+                  onChange={(event) => setPixDocument(event.target.value)} className={control} />
+              </label>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={sending} className={actionCursor}>{sending ? t.common.saving : f.saveReceipt}</Button>
+              {canChargePix && <Button type="button" variant="outline" disabled={sending} className={actionCursor} onClick={() => void startPix()}>
+                <QrCode aria-hidden="true" />
+                {locale === "es" ? "Generar código QR Pix" : "Gerar QR Code Pix"}
+              </Button>}
+            </div>
           </form>
         )}
 
