@@ -21,6 +21,7 @@ export interface Appointment {
   startsAt: string;
   endsAt: string;
   status: AppointmentStatus;
+  awaitingClosure?: boolean;
   cancellationReason: string | null;
   notes?: string | null;
   serviceNameSnapshot: string;

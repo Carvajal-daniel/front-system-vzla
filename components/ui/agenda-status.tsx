@@ -1,7 +1,25 @@
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Clock3 } from "lucide-react";
 import type { AppointmentStatus } from "@/lib/types/appointment";
 
 export const agendaStatuses = ["CONFIRMED", "PENDING", "CANCELED", "NO_SHOW", "COMPLETED"] as const;
+
+const closureColors = "border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] text-[var(--status-warning-ink)]";
+
+export function AwaitingClosureBadge({ label, actionLabel, clientName, onClick, calendar = false }: {
+  label: string;
+  actionLabel: string;
+  clientName: string;
+  onClick: () => void;
+  calendar?: boolean;
+}) {
+  return <button type="button" data-agenda-quick-action
+    title={label} aria-label={`${label} · ${actionLabel} · ${clientName}`}
+    onClick={(event) => { event.stopPropagation(); onClick(); }}
+    className={`inline-flex min-w-0 cursor-pointer items-center gap-1 rounded-md border font-semibold hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current ${closureColors} ${calendar ? "m-0.5 max-w-[65%] self-start px-1 text-[10px] leading-4" : "relative z-10 min-h-7 px-2 text-xs"}`}>
+    <Clock3 size={12} aria-hidden="true" className="shrink-0" />
+    <span className={calendar ? "sr-only @min-[10rem]:not-sr-only @min-[10rem]:truncate" : undefined}>{label}</span>
+  </button>;
+}
 
 export function AgendaStatusBadge({ status, label }: { status: AppointmentStatus; label: string }) {
   return <span data-agenda-status={status} data-agenda-status-badge className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-semibold">

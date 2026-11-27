@@ -42,13 +42,14 @@ function currencyInput(cents: number) {
   return (Math.max(0, cents) / 100).toFixed(2);
 }
 
-export function ReceiptDialog({ appointmentId, order, candidates = [], timezone, onClose, onChanged }: {
+export function ReceiptDialog({ appointmentId, order, candidates = [], timezone, onClose, onChanged, closingOrder = false }: {
   appointmentId?: string;
   order?: SavedFinanceOrder;
   candidates?: Candidate[];
   timezone: string;
   onClose: () => void;
   onChanged?: () => void;
+  closingOrder?: boolean;
 }) {
   const { locale, t } = useLocale();
   const isEs = locale === "es";
@@ -133,7 +134,7 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
           ) : (
             <>
               <Wallet className="size-5 text-accent" aria-hidden="true" />
-              {f.registerReceipt}
+              {closingOrder ? agendaStrings(locale).closeOrder : f.registerReceipt}
             </>
           )}
         </h2>
@@ -167,6 +168,7 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
               onClose={onClose}
               onChanged={onChanged}
               onBusy={setBusy}
+              closingOrder={closingOrder}
             />
           ) : !candidates.length && <p className="text-sm text-ink-muted">{f.noEligible}</p>}
         </>
@@ -175,7 +177,7 @@ export function ReceiptDialog({ appointmentId, order, candidates = [], timezone,
   );
 }
 
-function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onChanged, onBusy }: {
+function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onChanged, onBusy, closingOrder }: {
   appointmentId: string;
   companyInfo: {
     companyName: string;
@@ -187,6 +189,7 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
   onClose: () => void;
   onChanged?: () => void;
   onBusy: (busy: boolean) => void;
+  closingOrder: boolean;
 }) {
   const { t } = useLocale();
   const [data, setData] = useState<AppointmentCollections | null>(null);
@@ -242,6 +245,7 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
       timezone={timezone}
       onClose={onClose}
       onBusy={onBusy}
+      closingOrder={closingOrder}
       onChanged={() => {
         setVersion((v) => v + 1);
         onChanged?.();
@@ -250,7 +254,7 @@ function ReceiptAppointment({ appointmentId, companyInfo, timezone, onClose, onC
   );
 }
 
-function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose, onChanged, onBusy }: {
+function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose, onChanged, onBusy, closingOrder }: {
   data: AppointmentCollections;
   companyInfo: {
     companyName: string;
@@ -268,6 +272,7 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
   onClose: () => void;
   onChanged: () => void;
   onBusy: (busy: boolean) => void;
+  closingOrder: boolean;
 }) {
   const { locale, t } = useLocale();
   const f = t.finance;
@@ -284,8 +289,33 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
   const [error, setError] = useState("");
   const idempotency = useRef<{ payload: string; key: string } | null>(null);
   const submitting = useRef(false);
+  const [completedForClosure, setCompletedForClosure] = useState(false);
   const money = (cents: number) => formatPriceFromCents(cents, locale, data.currency);
   const localDate = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" });
+
+  async function completeForClosure() {
+    if (submitting.current) return;
+    submitting.current = true;
+    setSending(true);
+    onBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest(`/appointments/${encodeURIComponent(data.appointmentId)}/status`, {
+        method: "PATCH", body: { status: "COMPLETED" },
+      });
+      setCompletedForClosure(true);
+      setNotice(agendaStrings(locale).completedSuccess);
+      onChanged();
+    } catch {
+      setError(t.errors.unexpectedDescription);
+    } finally {
+      submitting.current = false;
+      setSending(false);
+      onBusy(false);
+    }
+  }
+
   async function send(path: string, payload: object, success: string) {
     if (submitting.current) return;
     submitting.current = true;
@@ -414,8 +444,14 @@ function ReceiptDetails({ data, companyInfo, appointmentMeta, timezone, onClose,
         <div>
           <p className="text-sm font-semibold">{data.clientName} · {data.serviceName}</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-ink-secondary">{t.status[data.status]}</span>
+            <span className="text-xs text-ink-secondary">{t.status[completedForClosure ? "COMPLETED" : data.status]}</span>
             {isAppointmentPaid(data) && <PaidBadge label={agendaStrings(locale).paid} />}
+            {closingOrder && data.status === "CONFIRMED" && !completedForClosure && (
+              <Button type="button" variant="outline" size="sm" className={actionCursor} disabled={sending}
+                onClick={() => void completeForClosure()}>
+                {agendaStrings(locale).completeForClosure}
+              </Button>
+            )}
           </div>
           {data.historical && <p className="mt-1 text-xs text-ink-muted">{f.legacy}</p>}
         </div>

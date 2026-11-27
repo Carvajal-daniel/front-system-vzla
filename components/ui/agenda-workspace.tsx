@@ -28,7 +28,7 @@ import { AgendaMonthGrid, agendaRangeLabel, AgendaTimeGrid } from "./agenda-cale
 import { AgendaDialog, AgendaProfessionalFilter, AgendaSelect } from "./agenda-controls";
 import type { AgendaPerson } from "./agenda-controls";
 import { AgendaEditor, type AgendaEditorTab } from "./agenda-editor";
-import { PaidBadge } from "./agenda-status";
+import { AwaitingClosureBadge, PaidBadge } from "./agenda-status";
 
 type StatusFilter = "" | AppointmentStatus | "CANCELED_OR_ABSENT";
 type AlertFilter = "readyToComplete" | "unpaidCompleted";
@@ -237,7 +237,13 @@ function filterStatus(row: Appointment, filter: StatusFilter) {
 export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
   session: MeResponse;
   initialDate?: string;
-  renderReceipt?: (props: { appointmentId: string; timezone: string; onClose: () => void; onChanged: () => void }) => ReactNode;
+  renderReceipt?: (props: {
+    appointmentId: string;
+    timezone: string;
+    onClose: () => void;
+    onChanged: () => void;
+    closingOrder: boolean;
+  }) => ReactNode;
 }) {
   const { locale, t } = useLocale();
   const { mode } = useTheme();
@@ -316,7 +322,7 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
     targetStartsAt: string;
     targetEndsAt: string;
   } | null>(null);
-  const [receiptId, setReceiptId] = useState("");
+  const [receipt, setReceipt] = useState<{ id: string; closingOrder: boolean } | null>(null);
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const [catalog, setCatalog] = useState<{ people: Collaborator[]; services: Service[]; error: boolean }>({ people: [], services: [], error: false });
@@ -424,6 +430,8 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
   const bookingSignal = agendaBookingSignal(company.id);
   const sameMonthRange = month.from === range.from && month.to === range.to;
   const main = useAgendaRange(path, range.from, range.to, timezone, refresh, emptyAppointments, true, bookingSignal, onSyncedAppointments);
+  const awaitingClosureCount = useMemo(() => main.rows.filter((row) =>
+    row.awaitingClosure === true && clock(row.startsAt).date === focus).length, [main.rows, clock, focus]);
   const mini = useAgendaRange(path, month.from, month.to, timezone, refresh, emptyAppointments, !sameMonthRange, bookingSignal, onSyncedAppointments);
   const openedAppointment = opened && (main.rows.find((row) => row.id === opened.id) ?? opened);
   const schedule = useAgendaRange(isOwner ? "/schedule-blocks" : "/me/schedule-blocks",
@@ -739,13 +747,13 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
     setOpened(row);
   }
 
-  function openPayments(appointmentId: string) {
+  function openPayments(appointmentId: string, closingOrder = false) {
     setOpened(null);
     if (openedFromAlert) {
       setStatus("");
       setOpenedFromAlert(false);
     }
-    setReceiptId(appointmentId);
+    setReceipt({ id: appointmentId, closingOrder });
   }
 
   async function offerPayment(row: Appointment) {
@@ -851,9 +859,10 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
       companyName: company?.companyName, reminders: settings.reminders, bookingAppUrl,
       isFirstVisit: firstVisitClientIds.has(getCanonicalClientId(row.clientPhone, row.clientName)),
       ...(canManagePayments ? {
-      payment: displayedPayments?.get(row.id),
+        payment: displayedPayments?.get(row.id),
         paymentError,
         onPayments: () => openPayments(row.id),
+        onCloseOrder: row.awaitingClosure === true ? () => openPayments(row.id, true) : undefined,
       } : {}),
       commissionLabel: isOwner ? undefined : `+${formatPriceFromCents(Math.round(row.servicePriceInCentsSnapshot * row.commissionPercentageSnapshot / 100), locale, currency)}`,
       actions: {
@@ -901,7 +910,8 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
     const end = formatTimeInTimezone(row.endsAt, timezone, locale);
     const payment = displayedPayments?.get(row.id);
     const paid = isAppointmentPaid(payment);
-    const readyToComplete = showAlertActions && isReadyToComplete(row, now);
+    const awaitingClosure = canManagePayments && row.awaitingClosure === true;
+    const readyToComplete = showAlertActions && !awaitingClosure && isReadyToComplete(row, now);
     const unpaidCompleted = showAlertActions && isUnpaidCompleted(row, payment);
     const description = [row.clientName, row.serviceNameSnapshot, `${start} – ${end}`, person?.name, t.status[row.status],
       unpaidCompleted ? copy.unpaidCompleted : paid ? copy.paid : null].filter(Boolean).join(" · ");
@@ -934,6 +944,8 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
           </span>
         </>}
       </button>
+      {awaitingClosure && <AwaitingClosureBadge calendar label={copy.awaitingClosure} actionLabel={copy.closeOrder}
+        clientName={row.clientName} onClick={() => openPayments(row.id, true)} />}
       {showAlertActions && (!compact || alertAction) && <div className="hidden shrink-0 flex-col items-center gap-0.5 border-s border-border-subtle px-0.5 py-0.5 @min-[5rem]:flex [&_a]:size-6 [&_svg]:size-3.5 [&:empty]:hidden">
         {!compact && <WhatsAppLink
           appointment={row}
@@ -1062,6 +1074,12 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
             </button>
             <button type="button" onClick={() => setEditor("new")} className="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-xs font-semibold text-accent-ink shadow-xs hover:bg-accent-hover sm:text-sm"><Plus size={16} />{t.owner.newAppointment}</button>
           </div>}
+          {canManagePayments && !main.loading && !main.error && <p role="status"
+            className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] px-2.5 py-1.5 text-xs font-semibold text-[var(--status-warning-ink)]">
+            <Clock3 size={14} className="shrink-0" aria-hidden="true" />
+            {copy.awaitingClosureForDay(awaitingClosureCount)}
+            {view !== "day" && <span>· {formatAgendaDay(focus, locale, { day: "numeric", month: "short" })}</span>}
+          </p>}
         </div>
 
         {(alertItems.some(({ rows }) => rows.length > 0) || global.paymentsError) &&
@@ -1161,7 +1179,7 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
         setRefresh((v) => v + 1);
       }}
     />}
-    {vacancy && !editor && !opened && !canceling && !waitlistDrawerOpen && !pendingReschedule && !missingPhoneConfirm && !receiptId &&
+    {vacancy && !editor && !opened && !canceling && !waitlistDrawerOpen && !pendingReschedule && !missingPhoneConfirm && !receipt &&
       (offer?.vacancy === vacancy || offerError) && (
         <AgendaDialog centered title="Encaixe Automático da Fila de Espera" closeDisabled={placingWaitlist} onClose={dismissWaitlistOffer}>
           <div className="space-y-4">
@@ -1424,6 +1442,15 @@ export function AgendaWorkspace({ session, initialDate, renderReceipt }: {
         <button type="submit" disabled={!!busy} className="min-h-10 cursor-pointer rounded-xl bg-[var(--status-danger-bg)] px-4 text-sm font-semibold text-[var(--status-danger-ink)] disabled:cursor-not-allowed disabled:opacity-55">{t.common.actionCancel}</button>
       </form>
     </AgendaDialog>}
-    {receiptId && renderReceipt?.({ appointmentId: receiptId, timezone, onClose: () => setReceiptId(""), onChanged: () => setChangedPayment((value) => value + 1) })}
+    {receipt && renderReceipt?.({
+      appointmentId: receipt.id,
+      timezone,
+      onClose: () => setReceipt(null),
+      closingOrder: receipt.closingOrder,
+      onChanged: () => {
+        setChangedPayment((value) => value + 1);
+        if (receipt.closingOrder) setRefresh((value) => value + 1);
+      },
+    })}
   </div>;
 }

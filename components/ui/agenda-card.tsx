@@ -43,7 +43,7 @@ import type {
 import type { PaymentMethod } from "@/lib/types/finance";
 import { AgendaDialog, ProfessionalAvatar } from "./agenda-controls";
 import type { AgendaPerson } from "./agenda-controls";
-import { AgendaStatusBadge, PaidBadge } from "./agenda-status";
+import { AgendaStatusBadge, AwaitingClosureBadge, PaidBadge } from "./agenda-status";
 import { getCanonicalClientId } from "@/lib/use-clients";
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon";
 
@@ -66,6 +66,7 @@ type AppointmentActions = {
 export type AgendaItemProps = {
   appointment: Appointment; timezone: string; currency: string; person?: AgendaPerson; now: number;
   busy: boolean; actions: AppointmentActions; payment?: AgendaPayment; paymentError?: boolean;
+  onCloseOrder?: () => void;
   onPayments?: () => void; commissionLabel?: string; isFirstVisit?: boolean; isOwner?: boolean;
   companyName?: string; reminders?: ReminderSettings | null; bookingAppUrl?: string;
 };
@@ -356,7 +357,8 @@ export function AgendaCard({ onDetails, ...props }: AgendaItemProps & { onDetail
     </div>
     <div className="flex flex-wrap items-center gap-2">
       <AgendaStatusBadge status={appointment.status} label={t.status[appointment.status]} />
-      {isReadyToComplete(appointment, props.now) && <button type="button" disabled={props.busy}
+      {props.onCloseOrder ? <AwaitingClosureBadge label={copy.awaitingClosure} actionLabel={copy.closeOrder}
+        clientName={appointment.clientName} onClick={props.onCloseOrder} /> : isReadyToComplete(appointment, props.now) && <button type="button" disabled={props.busy}
         onClick={(event) => { event.stopPropagation(); props.actions.onStatusChange("COMPLETED"); }}
         className="relative z-10 inline-flex min-h-7 cursor-pointer items-center gap-1.5 rounded-lg border border-accent/30 bg-accent-soft px-2 text-xs font-semibold text-ink hover:border-accent focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-55">
         <Clock3 size={13} aria-hidden="true" />{copy.endedComplete}

@@ -34,6 +34,12 @@ const pt = {
   alerts: "Alertas da agenda",
   pendingConfirmationCount: (count: number) => count === 1 ? "1 agendamento aguardando confirmação" : `${count} agendamentos aguardando confirmação`,
   readyToComplete: "Aguardando conclusão",
+  awaitingClosure: "Aguardando fechamento",
+  awaitingClosureForDay: (count: number) => count === 1
+    ? "1 comanda aguardando fechamento no dia"
+    : `${count} comandas aguardando fechamento no dia`,
+  closeOrder: "Fechamento da comanda",
+  completeForClosure: "Concluir atendimento",
   endedComplete: "Encerrado · Concluir",
   unpaidCompleted: "Pagamento pendente",
   unpaidCompletedShort: "Pendente",
@@ -79,6 +85,12 @@ const es: typeof pt = {
   alerts: "Alertas de la agenda",
   pendingConfirmationCount: (count: number) => count === 1 ? "1 cita pendiente de confirmación" : `${count} citas pendientes de confirmación`,
   readyToComplete: "Pendiente de completar",
+  awaitingClosure: "Pendiente de cierre",
+  awaitingClosureForDay: (count: number) => count === 1
+    ? "1 comanda pendiente de cierre en el día"
+    : `${count} comandas pendientes de cierre en el día`,
+  closeOrder: "Cierre de la comanda",
+  completeForClosure: "Completar atención",
   endedComplete: "Finalizada · Completar",
   unpaidCompleted: "Pago pendiente",
   unpaidCompletedShort: "Pendiente",
