@@ -71,7 +71,10 @@ function formatConversationTime(iso: string, locale: string): string {
   }).format(date);
 }
 
-function formatToolLabel(tool: AiExecutedToolAction["tool"], es: boolean): string {
+function formatToolLabel(
+  tool: AiExecutedToolAction["tool"] | string | undefined,
+  es: boolean,
+): string | null {
   switch (tool) {
     case "listar_servicos_e_profissionais":
       return es ? "Catálogo consultado" : "Catálogo consultado";
@@ -83,6 +86,8 @@ function formatToolLabel(tool: AiExecutedToolAction["tool"], es: boolean): strin
       return es ? "Cita reagendada" : "Agendamento reagendado";
     case "cancelar_agendamento":
       return es ? "Cita cancelada" : "Agendamento cancelado";
+    default:
+      return null;
   }
 }
 
@@ -320,13 +325,34 @@ export default function WhatsAppInboxPage() {
 
     setTogglingMode(true);
     try {
-      const res = currentlyPaused
+      const updated = currentlyPaused
         ? await whatsappInboxApi.resumeAi(activeConversation.id)
         : await whatsappInboxApi.pauseAi(activeConversation.id);
-      setActiveConversation(res.conversation);
+
+      // Faz merge apenas dos campos de estado atualizados para preservar messages e dados locais da conversa.
+      setActiveConversation((prev) =>
+        prev
+          ? {
+              ...prev,
+              assignedMode: updated.assignedMode,
+              aiPausedUntil: updated.aiPausedUntil,
+              status: updated.status,
+              updatedAt: updated.updatedAt,
+              ...(prev.messages ? { messages: prev.messages } : {}),
+            }
+          : updated,
+      );
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === res.conversation.id ? { ...c, ...res.conversation } : c,
+          c.id === updated.id
+            ? {
+                ...c,
+                assignedMode: updated.assignedMode,
+                aiPausedUntil: updated.aiPausedUntil,
+                status: updated.status,
+                updatedAt: updated.updatedAt,
+              }
+            : c,
         ),
       );
       toast.success(
@@ -680,7 +706,7 @@ export default function WhatsAppInboxPage() {
                     variant="outline"
                     disabled={togglingMode}
                     onClick={() => void handleToggleMode()}
-                    className="rounded-xl border-border-subtle text-xs font-semibold"
+                    className="cursor-pointer rounded-xl border-border-subtle text-xs font-semibold"
                   >
                     {togglingMode ? (
                       <Loader2 size={13} className="animate-spin" />
@@ -708,12 +734,14 @@ export default function WhatsAppInboxPage() {
                     {es ? "Cargando mensajes..." : "Carregando mensagens..."}
                   </div>
                 ) : (
-                  messages.map((msg) => {
+                  (messages ?? activeConversation.messages ?? []).map((msg) => {
                     const isInbound = msg.direction === "INBOUND";
                     const isAi = msg.senderType === "AI_AGENT";
-                    const actions = Array.isArray(msg.metadata?.actions)
-                      ? msg.metadata.actions
-                      : [];
+                    const validActions = (
+                      Array.isArray(msg.metadata?.actions)
+                        ? msg.metadata.actions
+                        : []
+                    ).filter((action) => Boolean(formatToolLabel(action?.tool, es)));
 
                     return (
                       <div
@@ -757,35 +785,39 @@ export default function WhatsAppInboxPage() {
 
                           <p>{msg.content}</p>
 
-                          {actions.length > 0 && (
+                          {validActions.length > 0 && (
                             <div className="mt-2 space-y-1 border-t border-border-subtle/50 pt-2">
-                              {actions.map((action, idx) => (
-                                <div
-                                  key={`${msg.id}-act-${idx}`}
-                                  className="flex items-center justify-between gap-2 rounded-lg bg-canvas/70 px-2 py-1 text-[10px] text-ink"
-                                >
-                                  <span className="inline-flex items-center gap-1 font-semibold">
-                                    <CheckCircle2
-                                      size={11}
-                                      className={
-                                        action.ok
-                                          ? "text-emerald-500"
-                                          : "text-rose-500"
-                                      }
-                                    />
-                                    {formatToolLabel(action.tool, es)}
-                                  </span>
-                                  {action.tool === "criar_agendamento" &&
-                                    action.ok && (
-                                      <Link
-                                        href={bookingAgendaHref(action, msg.content, clock)}
-                                        className="font-semibold text-accent underline"
-                                      >
-                                        Ver agenda
-                                      </Link>
-                                    )}
-                                </div>
-                              ))}
+                              {validActions.map((action, idx) => {
+                                const label = formatToolLabel(action.tool, es);
+                                if (!label) return null;
+                                return (
+                                  <div
+                                    key={`${msg.id}-act-${idx}`}
+                                    className="flex items-center justify-between gap-2 rounded-lg bg-canvas/70 px-2 py-1 text-[10px] text-ink"
+                                  >
+                                    <span className="inline-flex items-center gap-1 font-semibold">
+                                      <CheckCircle2
+                                        size={11}
+                                        className={
+                                          action.ok
+                                            ? "text-emerald-500"
+                                            : "text-rose-500"
+                                        }
+                                      />
+                                      {label}
+                                    </span>
+                                    {action.tool === "criar_agendamento" &&
+                                      action.ok && (
+                                        <Link
+                                          href={bookingAgendaHref(action, msg.content, clock)}
+                                          className="font-semibold text-accent underline"
+                                        >
+                                          Ver agenda
+                                        </Link>
+                                      )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
 

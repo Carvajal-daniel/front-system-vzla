@@ -22,6 +22,7 @@ export interface WhatsAppConversationItem {
   createdAt: string;
   updatedAt: string;
   lastMessagePreview?: string | null;
+  messages?: WhatsAppMessageItem[];
 }
 
 export interface AiExecutedToolAction {
@@ -111,23 +112,36 @@ export const whatsappInboxApi = {
       },
     ),
 
-  pauseAi: (conversationId: string, durationMinutes?: number) =>
-    apiRequest<{ conversation: WhatsAppConversationItem }>(
+  pauseAi: async (
+    conversationId: string,
+    durationMinutes?: number,
+  ): Promise<WhatsAppConversationItem> => {
+    const res = await apiRequest<
+      WhatsAppConversationItem | { conversation: WhatsAppConversationItem }
+    >(
       `/v1/whatsapp/conversations/${encodeURIComponent(conversationId)}/pause-ai`,
       {
         method: "POST",
         body: durationMinutes ? { durationMinutes } : {},
       },
-    ),
+    );
+    return "conversation" in res ? res.conversation : res;
+  },
 
-  resumeAi: (conversationId: string) =>
-    apiRequest<{ conversation: WhatsAppConversationItem }>(
+  resumeAi: async (
+    conversationId: string,
+  ): Promise<WhatsAppConversationItem> => {
+    const res = await apiRequest<
+      WhatsAppConversationItem | { conversation: WhatsAppConversationItem }
+    >(
       `/v1/whatsapp/conversations/${encodeURIComponent(conversationId)}/resume-ai`,
       {
         method: "POST",
         body: {},
       },
-    ),
+    );
+    return "conversation" in res ? res.conversation : res;
+  },
 
   simulateInbound: (body: {
     phone: string;
