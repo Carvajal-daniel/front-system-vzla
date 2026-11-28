@@ -44,6 +44,7 @@ export interface MeResponse {
   specialty?: string;
   commissionPercentage?: number;
   isActive: boolean;
+  isSuperAdmin?: boolean;
   company: Company;
 }
 

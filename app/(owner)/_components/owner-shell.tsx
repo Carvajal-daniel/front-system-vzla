@@ -49,6 +49,7 @@ import {
   Search,
   Send,
   Settings,
+  ShieldCheck,
   Smartphone,
   Sparkles,
   UserPlus,
@@ -1491,6 +1492,20 @@ export function OwnerShell({ children }: { children: ReactNode }) {
               {!collapsed && product.settings}
               {isActive("/owner/settings") && (collapsed ? <span className="absolute right-2">{sidebarActiveDot}</span> : sidebarActiveDot)}
             </Link>
+            {session.isSuperAdmin && (
+              <Link
+                href="/owner/admin"
+                aria-current={isActive("/owner/admin") ? "page" : undefined}
+                className={`relative flex min-h-10 cursor-pointer items-center rounded-lg text-sm font-medium ${
+                  collapsed ? "justify-center" : "gap-2.5 px-3"
+                } ${isActive("/owner/admin") ? sidebarActive : sidebarInactive}`}
+                title={collapsed ? "Painel Super-Admin" : undefined}
+              >
+                <ShieldCheck className="size-4 shrink-0 text-amber-400" aria-hidden="true" />
+                {!collapsed && "Painel Super-Admin"}
+                {isActive("/owner/admin") && (collapsed ? <span className="absolute right-2">{sidebarActiveDot}</span> : sidebarActiveDot)}
+              </Link>
+            )}
           </nav>
 
           {/* Rodapé da Sidebar: Perfil do Usuário e Logout */}

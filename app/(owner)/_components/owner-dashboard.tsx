@@ -19,6 +19,7 @@ import { appointmentStatusTone, StatusBadge } from "@/components/ui/status-badge
 import type { Appointment } from "@/lib/types/appointment";
 import type { Collaborator } from "@/lib/types/team";
 import type { FinanceSummaryResponse } from "@/lib/types/finance";
+import { ExecutiveKpisSection } from "./executive-kpis-section";
 import { GoalGauge, goalStageColors, RevenueColumns, RevenueComparisonChart, revenueComparisonColors, smoothPath } from "./revenue-charts";
 
 type GoalResponse = { monthlyGoalInCents: number; currency: FinanceSummaryResponse["currency"] };
@@ -440,6 +441,7 @@ export function OwnerDashboard() {
         </section>
       </aside>
     </div>
+    <ExecutiveKpisSection from={nowRange.from} to={nowRange.to} />
     <Modal open={goalOpen} title={t.dashboard.goalModalTitle} maxWidth="max-w-md" onClose={() => setGoalOpen(false)}>
       <div className="space-y-4">
         <p className="text-xs text-ink-muted">{t.dashboard.goalModalHint}</p>
