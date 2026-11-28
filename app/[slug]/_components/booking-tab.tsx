@@ -472,7 +472,7 @@ export function BookingTab({
             {bookingResult.coveredByClub && (
               <Crown className="size-3.5" aria-hidden="true" />
             )}
-            Agendamento Confirmado!
+            Agendamento confirmado com sucesso!
           </span>
           <h2 className="mt-2.5 text-xl font-bold text-ink">
             Tudo certo, {clientName.trim().split(" ")[0]}!

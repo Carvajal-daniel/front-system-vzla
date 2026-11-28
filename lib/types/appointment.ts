@@ -24,6 +24,8 @@ export interface Appointment {
   awaitingClosure?: boolean;
   cancellationReason: string | null;
   notes?: string | null;
+  isGuest?: boolean;
+  usesClubBenefit?: boolean;
   serviceNameSnapshot: string;
   servicePriceInCentsSnapshot: number;
   serviceDurationMinutesSnapshot: number;

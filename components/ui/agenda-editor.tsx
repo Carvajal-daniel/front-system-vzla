@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Clock3,
+  Crown,
   Flame,
   Info,
   LoaderCircle,
@@ -42,6 +43,8 @@ import type { PhoneCountryCode, PublicAvailabilityResponse } from "@/lib/types/p
 import type { Service, ServiceCollaboratorsResponse } from "@/lib/types/service";
 import type { Collaborator } from "@/lib/types/team";
 import { useWaitlist } from "@/lib/use-waitlist";
+import { useCompanySettings } from "@/lib/use-company-settings";
+import type { ClubSubscription } from "@/lib/online-payments";
 import { AgendaBlockForm } from "./agenda-block-form";
 import { AgendaMonthGrid } from "./agenda-calendar";
 import { AgendaDialog, AgendaSelect } from "./agenda-controls";
@@ -101,6 +104,23 @@ export function AgendaEditor({
   const copy = agendaStrings(locale);
   const waitlist = useWaitlist(company.id);
   const { clients, loading: clientsLoading, createClient } = useClients(company.id);
+  const { settings } = useCompanySettings(company.id, undefined, !appointment, !appointment);
+  const [clubSubscriptions, setClubSubscriptions] = useState<ClubSubscription[]>([]);
+
+  useEffect(() => {
+    if (appointment) return;
+    const controller = new AbortController();
+    void apiRequest<ClubSubscription[]>("/client-subscriptions", { signal: controller.signal })
+      .then((rows) => {
+        if (!controller.signal.aborted && Array.isArray(rows)) {
+          setClubSubscriptions(rows);
+        }
+      })
+      .catch(() => {
+        // Sem assinaturas ou permissão não-owner: mantém lista vazia sem bloquear o agendamento.
+      });
+    return () => controller.abort();
+  }, [appointment]);
 
   // Controle de abas: Novo Agendamento, Bloquear Agenda, Fila de Espera
   const [activeTab, setActiveTab] = useState<AgendaEditorTab>(
@@ -307,6 +327,32 @@ export function AgendaEditor({
   ))), [clients, phoneKey, selectedClientId]);
   const isClientBlocked = matchedClients.some((client) => client.isBlocked) || getClientBookingStatus(company.id, clientPhone).isBlocked;
   const pendingDebt = matchedClients.reduce((sum, client) => sum + client.pendingDebtCents, 0);
+
+  // Regra única de sinal anti-no-show: assinante ativo do Clube VIP é sempre isento de sinal,
+  // inclusive ao escolher serviços extras fora do plano.
+  const matchedClientIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (selectedClientId) ids.add(selectedClientId);
+    for (const c of matchedClients) ids.add(c.id);
+    return ids;
+  }, [matchedClients, selectedClientId]);
+
+  const activeClientSubscription = useMemo(() => {
+    if (matchedClientIds.size === 0) return null;
+    return (
+      clubSubscriptions.find(
+        (sub) =>
+          matchedClientIds.has(sub.clientId) &&
+          (sub.status === "ACTIVE" || sub.status === "PAST_DUE"),
+      ) ?? null
+    );
+  }, [clubSubscriptions, matchedClientIds]);
+
+  const depositEnabled = Boolean(
+    settings.onlinePayment?.enabled && (settings.onlinePayment?.depositPercentage ?? 0) > 0,
+  );
+  const depositPercentage = settings.onlinePayment?.depositPercentage ?? 0;
+
   const canSaveAppointment = !!activeSlots?.some((slot) => Date.parse(slot.startsAt) === Date.parse(time)) && !isClientBlocked && !clientsLoading;
   const isChecking =
     !!serviceId && !!personId && from <= to && availability.key !== availabilityKey;
@@ -392,7 +438,9 @@ export function AgendaEditor({
         },
       );
       toast.success(
-        appointment ? "Agendamento reprogramado com sucesso!" : "Agendamento criado com sucesso!",
+        appointment
+          ? "Agendamento reprogramado com sucesso!"
+          : "Agendamento confirmado com sucesso!",
       );
       onSaved(saved);
     } catch (failure) {
@@ -481,7 +529,7 @@ export function AgendaEditor({
             type="button"
             disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("appointment")}
-            className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 cursor-pointer rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed ${
               activeTab === "appointment"
                 ? "bg-accent text-accent-ink shadow-xs"
                 : "text-ink-secondary hover:text-ink"
@@ -495,7 +543,7 @@ export function AgendaEditor({
             type="button"
             disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("block")}
-            className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 cursor-pointer rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed ${
               activeTab === "block"
                 ? "bg-accent text-accent-ink shadow-xs"
                 : "text-ink-secondary hover:text-ink"
@@ -509,7 +557,7 @@ export function AgendaEditor({
             type="button"
             disabled={savingBlock || savingAppointment || savingWaitlist}
             onClick={() => setActiveTab("waitlist")}
-            className={`flex-1 rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 cursor-pointer rounded-lg py-2 font-semibold transition-all flex items-center justify-center gap-1.5 disabled:cursor-not-allowed ${
               activeTab === "waitlist"
                 ? "bg-accent text-accent-ink shadow-xs"
                 : "text-ink-secondary hover:text-ink"
@@ -581,7 +629,7 @@ export function AgendaEditor({
                                     : [...prev, extra.id],
                                 );
                               }}
-                              className={`rounded-lg px-2 py-1 text-[11px] font-medium transition-colors border ${
+                              className={`cursor-pointer rounded-lg px-2 py-1 text-[11px] font-medium transition-colors border ${
                                 isSelected
                                   ? "border-accent bg-accent/15 text-accent font-semibold"
                                   : "border-border-subtle bg-surface text-ink-secondary hover:text-ink"
@@ -716,6 +764,22 @@ export function AgendaEditor({
             <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs font-semibold text-amber-800 dark:text-amber-300">
               <Info aria-hidden="true" size={18} className="shrink-0" />
               <span>{locale === "es" ? "Saldo pendiente" : "Saldo devedor"} · {formatPriceFromCents(pendingDebt, locale, company.currency)}</span>
+            </div>
+          )}
+          {!appointment && activeClientSubscription && (
+            <div role="status" className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+              <Crown aria-hidden="true" size={16} className="shrink-0" />
+              <span>
+                Assinante Clube VIP{activeClientSubscription.planName ? ` (${activeClientSubscription.planName})` : ""} — Isento de sinal em qualquer serviço.
+              </span>
+            </div>
+          )}
+          {!appointment && !activeClientSubscription && depositEnabled && (
+            <div role="status" className="flex items-center gap-2 rounded-xl border border-border-subtle bg-canvas/40 p-2.5 text-xs text-ink-secondary">
+              <Info aria-hidden="true" size={15} className="shrink-0 text-accent" />
+              <span>
+                Regra de sinal anti-no-show ativa ({depositPercentage}%). Assinantes do Clube VIP são isentos automaticamente.
+              </span>
             </div>
           )}
           {!appointment && (

@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Clock,
   Clock3,
+  Crown,
   Edit,
   ExternalLink,
   History,
@@ -411,7 +412,9 @@ export function AgendaAppointmentDetails({
   const copy = agendaStrings(locale);
   const { appointment, timezone, currency, person, actions, busy, onPayments } = props;
   const isOwner = props.isOwner ?? Boolean(onPayments);
+  const isClubCovered = Boolean(appointment.usesClubBenefit) || appointment.servicePriceInCentsSnapshot === 0;
   const isPaid =
+    isClubCovered ||
     isAppointmentPaid(props.payment) ||
     Boolean(props.payment && props.payment.openInCents === 0 && props.payment.collectedInCents > 0);
   const router = useRouter();
@@ -697,11 +700,11 @@ export function AgendaAppointmentDetails({
     appUrl: props.bookingAppUrl,
   });
 
-  // Ação 2: Finalizar e Faturar (para Owner) ou Concluir Atendimento (para Colaborador, sem cobrança)
+  // Ação 2: Finalizar e Faturar (para Owner em avulso) ou Concluir Atendimento (Clube VIP ou Colaborador, sem cobrança)
   const handleCompleteAndInvoice = () => {
     if (!Number.isNaN(startsAtMs) && Date.now() < startsAtMs) return;
     actions.onStatusChange("COMPLETED");
-    if (isOwner && onPayments && !isPaid) {
+    if (isOwner && onPayments && !isPaid && !isClubCovered) {
       setTimeout(() => {
         onPayments();
       }, 350);
@@ -818,9 +821,9 @@ export function AgendaAppointmentDetails({
             </p>
           )}
 
-          {(props.onPayments || (canRegisterClient && !effectiveIsRegistered)) && (
+          {(props.onPayments && !isClubCovered) || (canRegisterClient && !effectiveIsRegistered) ? (
             <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-border-subtle/50">
-              {props.onPayments && <AgendaPaymentState {...props} />}
+              {props.onPayments && !isClubCovered && <AgendaPaymentState {...props} />}
               {canRegisterClient && !effectiveIsRegistered && (
                 <button
                   type="button"
@@ -832,8 +835,16 @@ export function AgendaAppointmentDetails({
                 </button>
               )}
             </div>
-          )}
+          ) : null}
         </div>
+
+        {/* Banner exclusivo para agendamentos cobertos pela assinatura do Clube VIP */}
+        {isClubCovered && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+            <Crown size={16} className="shrink-0" aria-hidden="true" />
+            <span>Coberto pelo Clube VIP (R$ 0,00)</span>
+          </div>
+        )}
 
         {/* ======================================================== */}
         {/* LISTA VERTICAL DE AÇÕES RÁPIDAS COM ÍCONES */}
@@ -844,8 +855,8 @@ export function AgendaAppointmentDetails({
           </p>
 
           <div className="grid gap-2">
-            {/* 1) Cobrar Agora — oculto se já estiver pago (evita cobrança duplicada) ou se for Colaborador */}
-            {isOwner && onPayments && !isPaid && (
+            {/* 1) Cobrar Agora — oculto para Clube VIP, já pago ou Colaborador */}
+            {isOwner && onPayments && !isPaid && !isClubCovered && (
               <button
                 type="button"
                 disabled={busy}
@@ -862,7 +873,7 @@ export function AgendaAppointmentDetails({
               </button>
             )}
 
-            {/* 2) Finalizar e Faturar (Owner) / Concluir Atendimento (Colaborador, sem cobrança) */}
+            {/* 2) Finalizar e Faturar (Owner avulso) / Concluir Atendimento (Clube VIP ou Colaborador, sem cobrança) */}
             {appointment.status !== "COMPLETED" && appointment.status !== "CANCELED" && (
               <div className="space-y-1">
                 <button
@@ -878,7 +889,7 @@ export function AgendaAppointmentDetails({
                 >
                   <span className="flex items-center gap-2">
                     <CheckCircle2 size={16} />
-                    {isOwner && onPayments && !isPaid
+                    {isOwner && onPayments && !isPaid && !isClubCovered
                       ? isEs
                         ? "Finalizar y Cobrar"
                         : "Finalizar e Faturar"
@@ -887,7 +898,11 @@ export function AgendaAppointmentDetails({
                         : "Concluir Atendimento"}
                   </span>
                   <span className="text-[10px] font-medium opacity-80">
-                    {isEs ? "Marcar como completado" : "Concluir atendimento"}
+                    {isClubCovered
+                      ? "Finalizar sem cobrança"
+                      : isEs
+                        ? "Marcar como completado"
+                        : "Concluir atendimento"}
                   </span>
                 </button>
                 {isBeforeStart && (
@@ -945,7 +960,7 @@ export function AgendaAppointmentDetails({
                 type="button"
                 disabled={busy}
                 onClick={() => actions.onStatusChange("CONFIRMED")}
-                className="flex w-full items-center justify-between rounded-xl border border-border-subtle bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink hover:border-accent transition-colors disabled:opacity-50"
+                className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border-subtle bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink hover:border-accent transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="flex items-center gap-2">
                   <UserCheck size={16} className="text-emerald-500" />
@@ -961,7 +976,7 @@ export function AgendaAppointmentDetails({
                 type="button"
                 disabled={busy}
                 onClick={() => actions.onStatusChange("NO_SHOW")}
-                className="flex w-full items-center justify-between rounded-xl border border-border-subtle bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink hover:border-accent transition-colors disabled:opacity-50"
+                className="flex w-full cursor-pointer items-center justify-between rounded-xl border border-border-subtle bg-surface px-3.5 py-2.5 text-xs font-semibold text-ink hover:border-accent transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="flex items-center gap-2">
                   <UserX size={16} className="text-purple-500" />
@@ -1055,7 +1070,7 @@ export function AgendaAppointmentDetails({
               href={whatsAppLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#2B9155] px-4 text-xs font-bold text-white shadow-xs hover:bg-[#237746] transition-colors"
+              className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#2B9155] px-4 text-xs font-bold text-white shadow-xs hover:bg-[#237746] transition-colors"
             >
               <WhatsAppIcon className="size-4 text-white" />
               Enviar Mensagem WhatsApp
@@ -1065,7 +1080,7 @@ export function AgendaAppointmentDetails({
           <button
             type="button"
             onClick={() => setAuditOpen((prev) => !prev)}
-            className="flex min-h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors"
+            className="flex min-h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 text-xs font-semibold text-ink-secondary hover:text-ink hover:border-accent transition-colors"
           >
             <History size={14} />
             {auditOpen ? "Ocultar Registro de Alterações" : "Registro de Alterações"}

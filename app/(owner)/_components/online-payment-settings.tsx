@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
+  CheckCircle2,
+  ExternalLink,
   Globe2,
   QrCode,
   Save,
@@ -10,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { OnlinePaymentSettings } from "@/lib/company-settings";
+import type { PaymentConnectionStatus } from "@/lib/online-payments";
 import { toast } from "sonner";
 import { saveCompanySettings, useCompanySettings } from "@/lib/use-company-settings";
 import { useSession } from "@/components/ui/auth-guard";
@@ -30,6 +34,7 @@ export function OnlinePaymentSettingsPanel() {
   });
   const [draft, setDraft] = useState<Partial<OnlinePaymentSettings>>({});
   const [saving, setSaving] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<PaymentConnectionStatus | null>(null);
   const current = {
     enabled: false, depositPercentage: 30, pixKeyType: "CNPJ", pixKey: "", autoRefundHours: 24,
     noShowPolicy: "Em caso de não comparecimento ou cancelamento com menos de 24 horas, o valor do sinal não será reembolsado.",
@@ -37,6 +42,7 @@ export function OnlinePaymentSettingsPanel() {
   } satisfies OnlinePaymentSettings;
   const { enabled, depositPercentage, pixKeyType, pixKey, autoRefundHours, noShowPolicy } = current;
   const update = (patch: Partial<OnlinePaymentSettings>) => setDraft((previous) => ({ ...previous, ...patch }));
+  const publicPortalPath = settings.slug ? `/${encodeURIComponent(settings.slug)}` : null;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,17 +74,45 @@ export function OnlinePaymentSettingsPanel() {
 
       </div>
 
-      <PaymentGatewaySettings />
+      <PaymentGatewaySettings onStatusChange={setConnectionStatus} />
 
       <form onSubmit={handleSave} className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-base font-semibold text-ink">Regras do sinal</h3>
+          <div>
+            <h3 className="text-base font-semibold text-ink">Regras do sinal anti-no-show</h3>
+            <p className="text-xs text-ink-muted">
+              Defina o percentual de adiantamento e o prazo de reembolso aplicados no Portal Público.
+            </p>
+          </div>
           <button type="submit" disabled={saving}
             className="flex cursor-pointer items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-bold text-accent-ink transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-60">
             <Save size={14} aria-hidden />
             {saving ? "Salvando…" : "Salvar regras do sinal"}
           </button>
         </div>
+
+        {connectionStatus?.connected && enabled && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-700 dark:text-emerald-300">
+            <div className="flex items-center gap-2 font-medium">
+              <CheckCircle2 size={16} className="shrink-0" aria-hidden />
+              <span>
+                Tudo pronto! O sinal de {depositPercentage}% já está ativo para reservas no seu Portal Público
+                {publicPortalPath ? ` (${publicPortalPath})` : ""}.
+              </span>
+            </div>
+            {publicPortalPath && (
+              <Link
+                href={publicPortalPath}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex cursor-pointer items-center gap-1 font-bold underline"
+              >
+                Abrir portal público
+                <ExternalLink size={13} aria-hidden />
+              </Link>
+            )}
+          </div>
+        )}
         {/* Card de Status Principal */}
         <div className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -135,7 +169,7 @@ export function OnlinePaymentSettingsPanel() {
                     key={pct}
                     type="button"
                     onClick={() => update({ depositPercentage: pct })}
-                    className={`rounded-xl border py-2.5 text-xs font-bold transition-all ${
+                    className={`cursor-pointer rounded-xl border py-2.5 text-xs font-bold transition-all ${
                       depositPercentage === pct
                         ? "border-accent bg-accent/15 text-accent shadow-xs"
                         : "border-border-subtle bg-canvas/40 text-ink-secondary hover:text-ink"
@@ -161,7 +195,7 @@ export function OnlinePaymentSettingsPanel() {
                     key={type}
                     type="button"
                     onClick={() => update({ pixKeyType: type })}
-                    className={`rounded-lg border py-1.5 text-[11px] font-semibold transition-colors ${
+                    className={`cursor-pointer rounded-lg border py-1.5 text-[11px] font-semibold transition-colors ${
                       pixKeyType === type
                         ? "border-accent bg-accent text-accent-ink"
                         : "border-border-subtle bg-canvas/40 text-ink-secondary hover:text-ink"
@@ -196,7 +230,7 @@ export function OnlinePaymentSettingsPanel() {
               <select
                 value={autoRefundHours}
                 onChange={(e) => update({ autoRefundHours: Number(e.target.value) })}
-                className="w-full rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
+                className="w-full cursor-pointer rounded-xl border border-border-subtle bg-canvas/40 px-3 py-2 text-xs text-ink"
               >
                 <option value={6}>Até 6 horas antes do horário</option>
                 <option value={12}>Até 12 horas antes do horário</option>
